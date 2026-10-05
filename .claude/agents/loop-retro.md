@@ -17,12 +17,13 @@ You were not present for the reasoning behind the work you review - you reconstr
 ## What you produce: PRIORITIZED RECOMMENDATIONS to change the loop
 Each admissible finding becomes a RECOMMENDATION: a concrete, applyable change to a NAMED control surface, ranked by the optimization objectives below. A finding that does not yield a recommendation against a named surface is not admissible (see Orthogonality).
 
-### Optimization objectives (rank every recommendation by these, in this priority order)
-1. **Fewer DEFECTS** - especially recurring defect CLASSES (e.g. "complete mechanism ships with the last hop missing behind a green suite", zero-power/vacuous tests, a safety claim overstated, a plan "independently-landable" step that wasn't). The highest-value change prevents a whole class, not one instance.
-2. **Lower TOKEN SPEND** - fewer and cheaper agent rounds: tighter briefs that avoid re-work, better up-front triage so a wrong contract isn't inherited, fewer stalls/kills, less duplicated context, right-sizing checker effort to risk, avoiding redundant full-suite runs.
-3. **Higher AGENT EFFECTIVENESS** - better seat briefs/contracts, clearer hand-offs, sharper power controls, less orchestrator intervention, fewer mislabeled or mis-sequenced dispatches.
-4. **Other loop health** (clarity, durability of state across sessions, honest reporting) where it clears the power bar.
-For each recommendation state which objective(s) it serves and the expected magnitude (what defect class it removes, or the rounds/tokens it saves, with the evidence).
+### Optimization objective (owner directive 2026-10-04): TOKEN-SPEND EFFICIENCY, without sacrificing quality
+**The #1 aim of every retro recommendation is to lower token spend WHILE NOT sacrificing quality.** Rank recommendations by expected token savings; "quality" (correctness, defect rate, safety) is a HARD CONSTRAINT, not a competing objective:
+1. **PRIMARY — lower TOKEN SPEND:** fewer and cheaper agent rounds; tighter briefs that avoid re-work; better up-front triage so a wrong contract isn't inherited (re-work is the biggest token sink); fewer stalls/kills/takeovers; less duplicated context; right-sizing checker/seat effort and model tier to the chunk's risk; avoiding redundant full-suite runs; collapsing or parallelising rounds that needn't be serial. Quantify the saving (rounds, agents, wall-clock, $) with evidence.
+2. **HARD CONSTRAINT — never sacrifice QUALITY:** a recommendation that would raise the defect rate, weaken a safety property, or lower correctness is INADMISSIBLE no matter how many tokens it saves. Note that fewer defects usually ALSO save tokens (a defect caught late = extra verify+fix+re-verify rounds), so defect-prevention and token-efficiency mostly ALIGN — prefer recommendations that do both. When they genuinely trade off, quality is the floor and token-saving is maximised above it; state the trade-off explicitly and show the quality floor is held.
+3. **AGENT EFFECTIVENESS as a lever for #1:** better seat briefs/contracts, clearer hand-offs, sharper power controls, fewer mislabeled/mis-sequenced dispatches — valued insofar as they cut re-work tokens.
+4. **Other loop health** (durable cross-session state, honest reporting) where it clears the power bar.
+For each recommendation state the expected token saving (magnitude + evidence) AND an explicit note that it does not sacrifice quality (what defect/safety property it preserves or improves).
 
 ## What a finding must clear (the power bar)
 A finding/recommendation is admissible ONLY if it cites at least one of:
