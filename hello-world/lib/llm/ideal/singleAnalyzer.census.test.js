@@ -9,9 +9,10 @@
 //
 //   A  import census   N105-owned files reach lib/review only through the barrel
 //                      (and only the pipeline does), plus the verdict, presentation
-//                      and enum modules that are SHARED, never the detectors, the
-//                      reference selector or the validators. A second path into the
-//                      internals is how a second analyzer starts.
+//                      and enum modules that are SHARED, and the one pure id -> text
+//                      join (idealSurface only), never the detectors, the reference
+//                      selector or the validators. A second path into the internals
+//                      is how a second analyzer starts.
 //   B  shape census    no function exported by an N105-owned module returns the
 //                      review result shape when handed a valid reviewer input. The
 //                      predicate is the RETURN SHAPE, not a name, as in N106's.
@@ -78,6 +79,10 @@ const REVIEW_IMPORT_POLICY = {
   "lib/review/reviewVerdict": { names: ["reviewVerdict", "REVIEW_KIND"] },
   "lib/review/flagPresentation": { names: null },
   "lib/review/contract": { names: ["CATEGORY", "ORIGIN"] },
+  // N113: the id -> text join for flag excerpts. A pure helper, not an analyzer (it
+  // returns the flags it was handed with quotable lines joined on); the band's bridge
+  // is its one N105-owned importer, so the join has one implementation, not two.
+  "lib/review/resolveFlagExcerpts": { only: ["lib/tailor/idealSurface.js"], names: ["resolveFlagExcerpts"] },
 };
 
 function targetOf(file, spec) {
@@ -125,7 +130,7 @@ function reviewImportViolations(file, code) {
       problems.push(`${file} imports ${target}: only the barrel and the shared verdict/presentation/enum modules are allowed`);
       continue;
     }
-    if (rule.only && !rule.only.includes(file)) problems.push(`${file} imports the barrel: only ${rule.only.join(", ")} may`);
+    if (rule.only && !rule.only.includes(file)) problems.push(`${file} imports ${target}: only ${rule.only.join(", ")} may`);
     if (rule.names) {
       for (const name of names) {
         if (!rule.names.includes(name)) problems.push(`${file} imports ${name} from ${target}: allowed ${rule.names.join(", ")}`);
@@ -167,6 +172,47 @@ describe("AC-16 A - N105-owned code reaches the reviewer only through the shared
     // ...and passes what the feature legitimately uses.
     expect(reviewImportViolations(file, `import { reviewDocuments } from "@/lib/review";`)).toEqual([]);
     expect(reviewImportViolations("lib/tailor/idealSurface.js", `import { ORIGIN } from "../review/contract.js";`)).toEqual([]);
+  });
+
+  // N113: the policy opens exactly ONE pure-helper edge (the id -> text join), for
+  // exactly ONE importer and ONE name. It is not an analyzer: it returns the flags it
+  // was handed with lines joined on, never a review.
+  describe("the one pure-helper edge: idealSurface -> lib/review/resolveFlagExcerpts", () => {
+    const SURFACE = "lib/tailor/idealSurface.js";
+    const HELPER = "lib/review/resolveFlagExcerpts.js";
+
+    it("allows idealSurface.js to import resolveFlagExcerpts, by either spelling", () => {
+      expect(reviewImportViolations(SURFACE, `import { resolveFlagExcerpts } from "../review/resolveFlagExcerpts.js";`)).toEqual([]);
+      expect(reviewImportViolations(SURFACE, `import { resolveFlagExcerpts } from "@/lib/review/resolveFlagExcerpts";`)).toEqual([]);
+    });
+
+    it("allows it for NO other N105-owned file, and for no other name", () => {
+      const line = `import { resolveFlagExcerpts } from "../review/resolveFlagExcerpts.js";`;
+      expect(reviewImportViolations("lib/tailor/idealBandState.js", line)).toHaveLength(1);
+      expect(reviewImportViolations("lib/llm/ideal/idealPipeline.js", line.replace("../review", "../../review"))).toHaveLength(1);
+      expect(reviewImportViolations("app/components/preview/IdealResultBands.js", line.replace("../review", "@/lib/review"))).toHaveLength(1);
+      expect(reviewImportViolations(SURFACE, `import { resolveFlagExcerpts, other } from "../review/resolveFlagExcerpts.js";`)).toHaveLength(1);
+      expect(reviewImportViolations(SURFACE, `import * as join from "../review/resolveFlagExcerpts.js";`)).toHaveLength(1);
+      expect(reviewImportViolations(SURFACE, `import join from "../review/resolveFlagExcerpts.js";`)).toHaveLength(1);
+    });
+
+    it("still forbids analyzer import-back from the same file: the barrel, the analyzer module, the detectors, the selector, a re-export", () => {
+      expect(reviewImportViolations(SURFACE, `import { reviewDocuments } from "@/lib/review";`)).toHaveLength(1);
+      expect(reviewImportViolations(SURFACE, `import { reviewDocuments } from "../review/index.js";`)).toHaveLength(1);
+      expect(reviewImportViolations(SURFACE, `import { reviewDocuments } from "../review/reviewDocuments.js";`)).toHaveLength(1);
+      expect(reviewImportViolations(SURFACE, `import { detectRepetition } from "../review/mechanicalDetectors.js";`)).toHaveLength(1);
+      expect(reviewImportViolations(SURFACE, `import { selectAuthorityReference } from "../review/referenceSelect.js";`)).toHaveLength(1);
+      expect(reviewImportViolations(SURFACE, `export { reviewDocuments } from "../review/reviewDocuments.js";`)).toHaveLength(1);
+    });
+
+    it("the helper is pure: it imports only the shared enum module and no export of it returns a review", async () => {
+      const code = stripComments(readFileSync(join(ROOT, HELPER), "utf8"));
+      const targets = importsOf(code).map((i) => targetOf(HELPER, i.spec));
+      expect(targets).toEqual(["lib/review/contract"]);
+      const { found, ran } = await scanExports(await import(new URL(`../../../${HELPER}`, import.meta.url).href), HELPER);
+      expect(ran).toBeGreaterThanOrEqual(1);
+      expect(found).toEqual([]);
+    });
   });
 });
 

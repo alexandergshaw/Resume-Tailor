@@ -19,6 +19,7 @@ import { revokeAttachmentPreview } from "../../lib/chat/chatbot";
 import { requestSalaryEstimate } from "../../lib/chat/salaryEstimateRequest";
 import { formatSalary } from "../../lib/feed/salary";
 import { safeExternalHref } from "@/lib/url/safeExternalHref";
+import { visuallyHidden } from "@/lib/copilot/answerStatus";
 import { TOUCH_ICON_SX, TOUCH_SWITCH_SX } from "@/app/theme/mobileSx";
 
 const ANSWER_AS_ME_NOTE_ID = "chat-answer-as-me-note";
@@ -75,10 +76,12 @@ export default function ChatPanel({
   // why it is not a prop.
   const chatErrorSeq = useChatErrorAnnouncementSeq();
   // N103: a finished review is announced through the progress region below (a
-  // short cue, never the findings), so the review adds no live region of its own.
-  // It clears itself after a moment, so a stale cue can never come back later.
+  // short cue, never the findings). It clears itself after a moment, so a stale cue
+  // can never come back later. N113: a review that could not run is NOT a polite cue
+  // -- the user has to act (try again), so it goes to the assertive region beside the
+  // progress one and persists, exactly as the preview modal announces it.
   const { announce: announceReview, regionProps: reviewCue } = useCopyFeedback("chat-review");
-  const reviewCueText = reviewCue.polite || reviewCue.alert;
+  const reviewCueText = reviewCue.polite;
   // AC-31h: the Send button's own unavailable state, computed once and used
   // both for `aria-disabled` and for the visual affordance that replaces
   // MUI's `.Mui-disabled` now that the `disabled` attribute is gone (see the
@@ -569,6 +572,16 @@ export default function ChatPanel({
             <span key={`review-${reviewCue.seq}`}>{reviewCueText}</span>
           ) : null}
         </Box>
+        {/* N113: the assertive counterpart, for a review that could not run. A
+            sibling of the progress region (never inside the aria-busy turn list
+            above, which would silence it), always mounted so the first failure is
+            read, and empty until one happens. `role="alert"` is implicitly assertive
+            and atomic; the cue is a short fixed sentence, never the findings. The
+            node carrying the text is keyed by the announcement counter so a second
+            identical failure is still a tree modification inside the region. */}
+        <Box role="alert" data-chat-status="review-alert" sx={visuallyHidden}>
+          {reviewCue.alert ? <span key={`review-alert-${reviewCue.seq}`}>{reviewCue.alert}</span> : null}
+        </Box>
         {/* AC-33: unconditionally mounted (never `chatError ? … : null`) so
             the region exists in the accessibility tree BEFORE the first
             error ever appears -- assistive tech that starts observing only
@@ -615,7 +628,7 @@ export default function ChatPanel({
           surface="chat"
           request={chatReviewDocument}
           busy={chatSending}
-          announce={(outcome) => announceReview({ polite: outcome.polite || outcome.alert })}
+          announce={announceReview}
         />
         {chatAttachedFiles.length > 0 ? (
           <Box sx={{ display: "flex", flexWrap: "wrap", gap: 0.5 }}>

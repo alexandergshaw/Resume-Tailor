@@ -23,8 +23,8 @@
 // unknown into "no findings".
 
 import { editedForScope } from "../document/previewBlob.js";
-import { ORIGIN } from "../review/contract.js";
 import { textRows } from "../review/flagPresentation.js";
+import { resolveFlagExcerpts } from "../review/resolveFlagExcerpts.js";
 import { FRESHNESS, idealBandState } from "./idealBandState.js";
 import { resolveActiveDocumentTitle } from "./documentScopes.js";
 
@@ -32,47 +32,12 @@ const RESUME_TAB_LABEL = "Application-ready";
 const HYPOTHETICAL_TAB_LABEL = "HYPOTHETICAL";
 
 const isObject = (v) => v !== null && typeof v === "object" && !Array.isArray(v);
-const hasText = (v) => typeof v === "string" && v.trim() !== "";
-const own = (obj, key) =>
-  isObject(obj) && typeof key === "string" && Object.prototype.hasOwnProperty.call(obj, key) ? obj[key] : undefined;
-
-function textAt(table, id) {
-  const text = own(table, id);
-  return hasText(text) ? text : "";
-}
-
-// Where an evidenceRef's id lives, by the origin it claims.
-function evidenceTable(ref, spanTexts) {
-  if (ref.origin === ORIGIN.POSTING) return own(spanTexts, "posting");
-  if (ref.origin === ORIGIN.REAL_MATERIAL) return own(spanTexts, "realMaterial");
-  if (ref.origin === ORIGIN.DRAFT) return own(spanTexts, ref.draftKind);
-  return undefined;
-}
 
 // A reviewer flag carries span ids, never text. When the response supplies the
 // id -> text tables (`ideal.spanTexts`: { applicationReady, hypothetical,
-// realMaterial, posting }, each { [id]: text }) the lines are resolved onto
-// `excerpt` and `evidenceExcerpt` so the panel can quote them. A flag that
-// already carries its own excerpt (the orchestrator may join them server-side)
-// keeps it, and an id with no entry in the tables is left unquoted.
-function resolveFlagExcerpts(flags, spanTexts) {
-  if (!Array.isArray(flags) || !isObject(spanTexts)) return flags;
-  return flags.map((flag) => {
-    if (!isObject(flag)) return flag;
-    const next = { ...flag };
-    if (!hasText(flag.excerpt)) {
-      const text = textAt(own(spanTexts, flag.draftKind), flag.spanId);
-      if (text) next.excerpt = text;
-    }
-    const ref = flag.evidenceRef;
-    if (isObject(ref) && !hasText(flag.evidenceExcerpt)) {
-      const text = textAt(evidenceTable(ref, spanTexts), ref.spanId);
-      if (text) next.evidenceExcerpt = text;
-    }
-    return next;
-  });
-}
-
+// realMaterial, posting }, each { [id]: text }) the shared join
+// (lib/review/resolveFlagExcerpts.js, also N103's) resolves the lines onto
+// `excerpt` and `evidenceExcerpt` so the panel can quote them.
 function bandIdealFor(ideal) {
   const review = isObject(ideal.review) ? ideal.review : null;
   const hasGateOutput = Array.isArray(ideal.removed) || Array.isArray(ideal.leftOut);

@@ -4,11 +4,15 @@ import { useEffect, useId, useRef, useState } from "react";
 import Box from "@mui/material/Box";
 import Button from "@mui/material/Button";
 import CircularProgress from "@mui/material/CircularProgress";
+import ExpandMoreIcon from "@mui/icons-material/ExpandMore";
 import FactCheckOutlinedIcon from "@mui/icons-material/FactCheckOutlined";
 import { TOUCH_TARGET_SX } from "@/app/theme/mobileSx";
+import { recordDecision } from "@/lib/activityLog/appActivityLog.js";
 import { DRAFT_KIND } from "@/lib/review/flagPresentation";
+import { REVIEW_DECISION_ID, reviewDecisionFor } from "@/lib/review/reviewDecision";
 import { runDocumentReview } from "@/lib/review/runDocumentReview.js";
 import { REVIEW_FRESHNESS, REVIEW_STATE, reviewPresentationState } from "@/lib/review/reviewPresentation";
+import ActivityLogButton from "../ActivityLogButton";
 import DocumentReviewResult from "./DocumentReviewResult";
 
 // N103 Step 6 -- the review control and its result, ONE component for both
@@ -19,7 +23,8 @@ import DocumentReviewResult from "./DocumentReviewResult";
 //   surface   "modal" | "chat"
 //   announce  the host's announcer ({ polite } | { alert, persist }); the modal
 //             hands in its already-mounted live-region pair, the chat its progress
-//             cue. This component mounts NO live region of its own.
+//             cue (polite) and review-alert region (a failure). This component
+//             mounts NO live region of its own.
 //   busy      the host is mid-send (chat): a review does not interleave with it
 //   covered   another surface already shows a live review of exactly this text, so
 //             activating says so instead of showing a second verdict
@@ -40,6 +45,19 @@ import DocumentReviewResult from "./DocumentReviewResult";
 // text it was run on: it shows as stale once the text moves on, never over a
 // different document, and a review that resolves after the document changed (or
 // the section unmounted) is discarded. Nothing is persisted.
+//
+// The modal's strip has one more control, a Hide / Show results toggle (N103 UX 6.3:
+// on an Ideal job two bands can share a short viewport). The result starts shown and
+// a fresh review always shows it again; the choice is held in state only, never
+// stored. The hidden result stays in the document (`hidden`), so the toggle's
+// aria-controls always resolves and the result keeps its content and its own state.
+// The chat card has no collapse: its panel's turn list scrolls.
+//
+// Every activation that starts (or declines to start) a review leaves ONE record in
+// the app's activity log (lib/review/reviewDecision.js: counts and codes, never any
+// of the document), and once a result is on screen the same download the rest of the
+// app uses is offered beside it. This module is the DECISION_LEDGER `module` for the
+// "document-review" entry (lib/activityLog/activityChannels.js).
 
 const NOUN = { resume: "resume", cover: "cover letter", hypothetical: "hypothetical resume" };
 
@@ -79,8 +97,10 @@ export default function DocumentReviewSection({
   regenerateRow = null,
 }) {
   const helperId = useId();
+  const resultId = useId();
   const [entry, setEntry] = useState(null);
   const [runningKey, setRunningKey] = useState(null);
+  const [resultHidden, setResultHidden] = useState(false);
   const inFlightRef = useRef(null);
   const currentKeyRef = useRef(null);
 
@@ -129,11 +149,17 @@ export default function DocumentReviewSection({
       }
     }
 
+    // Recorded for every review that ran, even one whose result is discarded below:
+    // the log says what the app did, not what the user got to see.
+    const decision = reviewDecisionFor({ surface, request, result });
+    recordDecision(REVIEW_DECISION_ID, decision.outcome, decision.fields);
+
     if (inFlightRef.current === key) inFlightRef.current = null;
     setRunningKey((current) => (current === key ? null : current));
     if (currentKeyRef.current !== key) return;
 
     setEntry({ docKey, textKey, ...result });
+    setResultHidden(false);
     if (result.outcome && !result.covered) onReviewed?.({ text: textKey, outcome: result.outcome });
     const spoken = reviewPresentationState({ ...result, documentLevelMissingKeyword: DOCUMENT_LEVEL_KEYWORD });
     if (spoken.announce) {
@@ -165,6 +191,11 @@ export default function DocumentReviewSection({
   const unavailable = running || busy;
   const label = running ? "Reviewing..." : shown ? "Review again" : `Review ${noun}`;
   const caption = surface === "chat" ? request.title : `Checks this ${noun} for weak, unsupported and repeated lines.`;
+  const hasResult = Boolean(presentation || regenerateReport);
+  const canCollapse = surface === "modal" && hasResult;
+  // The regenerate report already carries the download, so a second one in the same
+  // region would only duplicate it.
+  const offerDownload = Boolean(presentation) && !regenerateReport;
 
   return (
     <Box component="section" aria-label={`Review of this ${noun}`} sx={ROOT_SX[surface] ?? ROOT_SX.modal}>
@@ -187,8 +218,31 @@ export default function DocumentReviewSection({
         </Box>
       </Box>
 
-      {presentation || regenerateReport ? (
-        <Box sx={RESULT_SX[surface] ?? RESULT_SX.modal}>
+      {canCollapse || offerDownload ? (
+        <Box sx={{ display: "flex", alignItems: "center", flexWrap: "wrap", columnGap: 1.25, rowGap: 0.5, mt: 0.5 }}>
+          {canCollapse ? (
+            <Button
+              type="button"
+              size="small"
+              aria-expanded={!resultHidden}
+              aria-controls={resultId}
+              onClick={() => setResultHidden((hidden) => !hidden)}
+              endIcon={<ExpandMoreIcon fontSize="small" sx={{ transform: resultHidden ? "none" : "rotate(180deg)" }} />}
+              sx={{ textTransform: "none", ...TOUCH_TARGET_SX }}
+            >
+              {resultHidden ? "Show results" : "Hide results"}
+            </Button>
+          ) : null}
+          {offerDownload ? (
+            <Box sx={{ flex: "1 1 11rem", minWidth: 0 }}>
+              <ActivityLogButton />
+            </Box>
+          ) : null}
+        </Box>
+      ) : null}
+
+      {hasResult ? (
+        <Box id={resultId} hidden={canCollapse && resultHidden} sx={RESULT_SX[surface] ?? RESULT_SX.modal}>
           {regenerateReport}
           {presentation ? <DocumentReviewResult outcome={shown.outcome} presentation={presentation} /> : null}
         </Box>

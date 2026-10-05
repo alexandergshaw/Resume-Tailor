@@ -317,4 +317,19 @@ export const DECISION_LEDGER = [
     ],
     outcomes: ["acted", "skipped", "refused", "failed"],
   },
+  {
+    module: "app/components/preview/DocumentReviewSection.js",
+    id: "document-review",
+    label: "Adversarial-review button decisions",
+    // N113 (N103 UX 8.4): one record per activation of the review control, from the
+    // section both surfaces share (the preview modal and the Ask-AI chat). A review
+    // that ran ("acted"), an empty document ("refused"), a tab the band above already
+    // covers ("skipped") and a run that could not finish ("failed"). `surface` and
+    // `scope` are whitelisted codes, `kind` the verdict kind or the state's own name,
+    // `reason` a canned code, `engineMode` the reviewer's code name, and the rest are
+    // plain counts or a boolean. Never the title, a company, an excerpt, a flag's
+    // message or a line of the resume (N77).
+    fields: ["surface", "scope", "kind", "reason", "flagCount", "lineCount", "engineMode", "coverageComplete"],
+    outcomes: ["acted", "skipped", "refused", "failed"],
+  },
 ];

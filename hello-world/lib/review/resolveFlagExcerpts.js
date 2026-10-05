@@ -3,11 +3,10 @@
 // A reviewer flag carries span IDS, never text (reviewDocuments.js normalizeFlag).
 // This module joins the id -> text tables onto `excerpt` / `evidenceExcerpt` so
 // ReviewFlagsPanel can quote them. It is the join N103's chokepoint
-// (runDocumentReview.js) uses. N105's band (lib/tailor/idealSurface.js) still
-// carries the identical private join it was extracted from: the single-analyzer
-// census (lib/llm/ideal/singleAnalyzer.census.test.js, REVIEW_IMPORT_POLICY) does
-// not let an N105-owned file import this module, so the two cannot share it until
-// that policy names it (or flagPresentation.js re-exports it).
+// (runDocumentReview.js) AND N105's band bridge (lib/tailor/idealSurface.js) use:
+// one implementation. The single-analyzer census (lib/llm/ideal/
+// singleAnalyzer.census.test.js, REVIEW_IMPORT_POLICY) names exactly that one
+// N105-owned importer, because this is a pure helper and not an analyzer.
 
 import { ORIGIN } from "./contract.js";
 
