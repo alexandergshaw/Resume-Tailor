@@ -10,6 +10,8 @@ import TextField from "@mui/material/TextField";
 import { useIsMobile } from "../hooks/useResponsive";
 import { useChatErrorAnnouncementSeq } from "../hooks/useChat";
 import { useEngine } from "../settings/engine";
+import { useCopyFeedback } from "./preview/CopyFeedback";
+import DocumentReviewSection from "./preview/DocumentReviewSection";
 import { revokeAttachmentPreview } from "../../lib/chat/chatbot";
 import { requestSalaryEstimate } from "../../lib/chat/salaryEstimateRequest";
 import { formatSalary } from "../../lib/feed/salary";
@@ -35,6 +37,9 @@ export default function ChatPanel({
   setChatError,
   chatPinnedContext,
   setChatPinnedContext,
+  // N103: the tailored document the pin points at (lib/review/selectReviewDocument.js),
+  // or null when nothing reviewable is pinned.
+  chatReviewDocument = null,
   chatSending,
   chatProgress,
   chatCopiedIndex,
@@ -61,6 +66,11 @@ export default function ChatPanel({
   // (never rendered). See app/hooks/useChat.js for the whole mechanism and for
   // why it is not a prop.
   const chatErrorSeq = useChatErrorAnnouncementSeq();
+  // N103: a finished review is announced through the progress region below (a
+  // short cue, never the findings), so the review adds no live region of its own.
+  // It clears itself after a moment, so a stale cue can never come back later.
+  const { announce: announceReview, regionProps: reviewCue } = useCopyFeedback("chat-review");
+  const reviewCueText = reviewCue.polite || reviewCue.alert;
   // AC-31h: the Send button's own unavailable state, computed once and used
   // both for `aria-disabled` and for the visual affordance that replaces
   // MUI's `.Mui-disabled` now that the `disabled` attribute is gone (see the
@@ -547,6 +557,8 @@ export default function ChatPanel({
             <span key="sending">Sending…</span>
           ) : chatProgress === "ready" ? (
             <span key="ready">Reply ready</span>
+          ) : reviewCueText ? (
+            <span key={`review-${reviewCue.seq}`}>{reviewCueText}</span>
           ) : null}
         </Box>
         {/* AC-33: unconditionally mounted (never `chatError ? … : null`) so
@@ -588,6 +600,15 @@ export default function ChatPanel({
           backgroundColor: "var(--bg-surface)",
         }}
       >
+        {/* N103: one review control for the pinned tailored document, above the
+            composer and never gated on the engine (the review is key-free). It
+            does not read, clear or send the composer text. */}
+        <DocumentReviewSection
+          surface="chat"
+          request={chatReviewDocument}
+          busy={chatSending}
+          announce={(outcome) => announceReview({ polite: outcome.polite || outcome.alert })}
+        />
         {chatAttachedFiles.length > 0 ? (
           <Box sx={{ display: "flex", flexWrap: "wrap", gap: 0.5 }}>
             {chatAttachedFiles.map((f, i) => {

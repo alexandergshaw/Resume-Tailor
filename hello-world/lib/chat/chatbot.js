@@ -466,16 +466,20 @@ export function createChatHandlers(deps) {
     }
   }
 
-  function askAiAbout({ label, content, prompt = "", sourceJobId = null, posting = null }) {
+  function askAiAbout({ label, content, prompt = "", sourceJobId = null, posting = null, documentScope = null }) {
     // N65 step 3: `posting` carries the pinned job's title/company/location +
     // a computed `salaryStated` so the ChatPanel "Estimate salary" affordance
     // (chatPinnedContext.posting) can appear. Safe default null: a caller that
     // passes none (resume/cover-letter/material subjects) must never light it.
+    // N103: `documentScope` ({ jobId, scope }) names WHICH document of a job is
+    // pinned, so the chat's review can tell a resume from a hypothetical of the
+    // same job. Safe default null: an unscoped pin is never given a scope.
     setChatPinnedContext({
       label: label || "Context",
       content: content || "",
       sourceJobId: sourceJobId || null,
       posting: posting || null,
+      documentScope: documentScope || null,
     });
     setChatError("");
     // Always prefix any button-triggered chat with a consistent

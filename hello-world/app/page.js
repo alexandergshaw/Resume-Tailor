@@ -36,6 +36,7 @@ import {
 } from "../lib/document/docx";
 import { parseDocxToModel, linesToModel } from "../lib/document/docxPreview";
 import { resolveDefaultTemplateFile } from "../lib/document/defaultTemplateClient";
+import { selectChatReviewDocument } from "../lib/review/selectReviewDocument";
 import { rowToSavedSearchEntry } from "../lib/feed/savedSearchEntry";
 import { weaveSources } from "../lib/document/coverLetterWeave";
 import { editFingerprint } from "../lib/tailor/editMining";
@@ -2883,6 +2884,7 @@ export default function Home() {
           setChatError={chat.setChatError}
           chatPinnedContext={chat.chatPinnedContext}
           setChatPinnedContext={chat.setChatPinnedContext}
+          chatReviewDocument={selectChatReviewDocument(chat.chatPinnedContext, tailoringMap)}
           chatSending={chat.chatSending}
           chatProgress={chat.chatProgress}
           chatCopiedIndex={chat.chatCopiedIndex}

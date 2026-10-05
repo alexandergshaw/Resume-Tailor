@@ -25,7 +25,7 @@
 import { editedForScope } from "../document/previewBlob.js";
 import { ORIGIN } from "../review/contract.js";
 import { textRows } from "../review/flagPresentation.js";
-import { idealBandState } from "./idealBandState.js";
+import { FRESHNESS, idealBandState } from "./idealBandState.js";
 import { resolveActiveDocumentTitle } from "./documentScopes.js";
 
 const RESUME_TAB_LABEL = "Application-ready";
@@ -106,6 +106,9 @@ function hypotheticalLinesOf(hypothetical) {
  *                        belongs to the file on screen (the tab reads "Resume")
  *      announces,        the band has Copy-line rows, so it needs the preview's
  *                        live-region pair to announce a copy
+ *      reviewCovered,    the band shows a live reviewer result for exactly the
+ *                        text on screen (fresh, with usable coverage), so N103's
+ *                        on-demand review says so instead of a second verdict
  *      hypothetical,     { available, text, fileName, tabLabel } for the dialog's
  *                        `scopes.hypothetical`; fileName is the marked name the
  *                        download resolves to
@@ -125,6 +128,7 @@ export function idealSurfaceFor(entry, { title = "", company = "" } = {}) {
     handEdited,
     resumeTabLabel: state.tabReverts ? null : RESUME_TAB_LABEL,
     announces: state.groups === "all" && textRows(ideal.review?.removed).length > 0,
+    reviewCovered: state.freshness === FRESHNESS.FRESH && state.coverage.usable,
     hypothetical: {
       available: hypotheticalText.trim().length > 0,
       text: hypotheticalText,

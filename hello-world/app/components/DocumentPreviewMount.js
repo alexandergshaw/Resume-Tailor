@@ -8,6 +8,7 @@ import InsertedFactsStrip from "./preview/InsertedFactsStrip";
 import AutoInsertFactsMessage from "./preview/AutoInsertFactsMessage";
 import HypotheticalBand from "./preview/HypotheticalBand";
 import IdealResultBands from "./preview/IdealResultBands";
+import DocumentReviewSection from "./preview/DocumentReviewSection";
 import { useCopyFeedback } from "./preview/CopyFeedback";
 import { planMoveFact } from "../../lib/acceptedFacts/factMove";
 import {
@@ -16,10 +17,15 @@ import {
   declineSmoothTransition,
   undoSmoothTransition,
 } from "../../lib/coverFacts/smoothTransition";
-import { getDownloadFileNameForTitle, getDownloadCoverLetterFileNameForTitle } from "../../lib/document/docx";
+import {
+  buildTemplateLinesForUpload,
+  getDownloadFileNameForTitle,
+  getDownloadCoverLetterFileNameForTitle,
+} from "../../lib/document/docx";
 import { linesToModel } from "../../lib/document/docxPreview";
 import { emailPreviewText, visibleScopesFor } from "../../lib/tailor/documentScopes";
 import { idealSurfaceFor } from "../../lib/tailor/idealSurface";
+import { reviewDocumentFor } from "../../lib/review/selectReviewDocument";
 import { useDriveDocuments } from "../hooks/useDriveDocuments";
 import { recordDecision } from "@/lib/activityLog/appActivityLog.js";
 import { visuallyHidden } from "@/lib/copilot/answerStatus";
@@ -391,6 +397,19 @@ export default function DocumentPreviewMount({
     title: preview.resumePreview.title,
     company: preview.resumePreview.company,
   });
+  // N103: the name a document goes by on the two places that name it (Ask AI's pin
+  // and the review's subject line), so the two can never describe it differently.
+  const documentLabel = (scope) =>
+    `${preview.resumePreview.company || "Job"}${preview.resumePreview.title ? ` · ${preview.resumePreview.title}` : ""} — ${scope === "cover" ? "Cover letter" : scope === "hypothetical" ? "HYPOTHETICAL resume (not the candidate's real record)" : "Resume"}`;
+  // N103: one review request per tab that has text to review (never the email
+  // tab, which is plain text for a mail client). A tab with no text gets none, so
+  // an empty job mounts no strip.
+  const reviewRequests = {};
+  for (const scope of visibleScopesFor(tailoringMap[insertedFactsJobId])) {
+    const request = reviewDocumentFor(tailoringMap, insertedFactsJobId, scope, documentLabel(scope));
+    if (request) reviewRequests[scope] = request;
+  }
+  const reviewStripMounted = Object.keys(reviewRequests).length > 0;
   async function handleMove(factId, direction) {
     setFactOpPending({ factId, kind: "move" });
     announce({ polite: "Moving the fact." });
@@ -515,7 +534,7 @@ export default function DocumentPreviewMount({
   const insertedFactsStrip = (
     <>
       <AutoInsertFactsMessage severity={autoInsertMessage?.severity} text={autoInsertMessage?.text} />
-      {insertedFacts.length > 0 || idealSurface?.announces ? (
+      {insertedFacts.length > 0 || idealSurface?.announces || reviewStripMounted ? (
         <>
           {/* N95: the two hidden live regions only (no visible chip -- the
               row is already dense) -- reused verbatim from CopyFeedback.js's
@@ -526,7 +545,10 @@ export default function DocumentPreviewMount({
               role=status/alert pair for DriveResultRegion. N105 Step 7: the
               Application-ready band's Copy-line rows announce through this SAME
               pair (its onOutcome), mounted only while that band has rows, so the
-              band adds no live region of its own. */}
+              band adds no live region of its own. N103: the review strip
+              announces its result through this pair too, so it is mounted
+              whenever a strip is -- BEFORE the first click, since only a text
+              change on an already-mounted region reliably announces. */}
           <Box component="span" role="status" aria-live="polite" data-copy-status="polite" sx={visuallyHidden}>
             {regionProps.polite ? <span key={regionProps.seq}>{regionProps.polite}</span> : null}
           </Box>
@@ -565,31 +587,61 @@ export default function DocumentPreviewMount({
   // N105 Step 7: the Ideal run's two bands, keyed by the dialog's OWN tab so the
   // HYPOTHETICAL banner appears in the same commit as the tab (a mount-chosen
   // single band would lag one commit behind a click, via onActiveScopeChange).
-  // Null for a level 1-5 job, so its preview is unchanged.
-  const resultBands = idealSurface
-    ? {
-        resume: (
-          <IdealResultBands
-            ideal={idealSurface.ideal}
-            currentText={idealSurface.currentText}
-            handEdited={idealSurface.handEdited}
-            onOutcome={announce}
-          />
-        ),
-        hypothetical: (
-          <HypotheticalBand
-            fileName={idealSurface.hypothetical.fileName}
-            busy={!!preview.resumePreview.busy?.hypothetical}
-            onDownload={() =>
-              preview.downloadDocumentPreview("hypothetical", {
-                text: idealSurface.hypothetical.text,
-                fileName: idealSurface.hypothetical.fileName,
-              })
-            }
-          />
-        ),
-      }
-    : null;
+  // N103: the review strip stacks BELOW whichever band the tab has, so a level 1-5
+  // job (no band) gets the strip alone, and the safety banner stays first. The
+  // uploaded resume is read on activation (async, cached per file) as the real
+  // material the strip's authority check compares against; no file, no material,
+  // and the result says so.
+  const loadRealMaterialLines = resumeFile ? () => buildTemplateLinesForUpload(resumeFile) : null;
+  const reviewStrip = (scope) =>
+    reviewRequests[scope] ? (
+      <DocumentReviewSection
+        key={`review-${insertedFactsJobId}-${scope}`}
+        surface="modal"
+        request={reviewRequests[scope]}
+        announce={announce}
+        covered={scope === "resume" && !!idealSurface?.reviewCovered}
+        loadRealMaterialLines={loadRealMaterialLines}
+      />
+    ) : null;
+  const resultBands =
+    idealSurface || reviewStripMounted
+      ? {
+          resume: (
+            <>
+              {idealSurface ? (
+                <IdealResultBands
+                  ideal={idealSurface.ideal}
+                  currentText={idealSurface.currentText}
+                  handEdited={idealSurface.handEdited}
+                  onOutcome={announce}
+                />
+              ) : null}
+              {reviewStrip("resume")}
+            </>
+          ),
+          cover: reviewStrip("cover"),
+          ...(idealSurface
+            ? {
+                hypothetical: (
+                  <>
+                    <HypotheticalBand
+                      fileName={idealSurface.hypothetical.fileName}
+                      busy={!!preview.resumePreview.busy?.hypothetical}
+                      onDownload={() =>
+                        preview.downloadDocumentPreview("hypothetical", {
+                          text: idealSurface.hypothetical.text,
+                          fileName: idealSurface.hypothetical.fileName,
+                        })
+                      }
+                    />
+                    {reviewStrip("hypothetical")}
+                  </>
+                ),
+              }
+            : {}),
+        }
+      : null;
   // The hook's loader falls back to the application-ready resume for any scope
   // it does not name (F-3), which would show the WRONG document under the
   // HYPOTHETICAL banner. The hypothetical previews from its own lines instead.
@@ -653,9 +705,12 @@ export default function DocumentPreviewMount({
       onSetAsDefaultTemplate={preview.setDefaultTemplateFromPreview}
       onAskAi={(scope, payload) =>
         chat.askAiAbout({
-          label: `${preview.resumePreview.company || "Job"}${preview.resumePreview.title ? ` · ${preview.resumePreview.title}` : ""} — ${scope === "cover" ? "Cover letter" : scope === "hypothetical" ? "HYPOTHETICAL resume (not the candidate's real record)" : "Resume"}`,
+          label: documentLabel(scope),
           content: payload?.text || "",
           sourceJobId: preview.resumePreview.jobId,
+          // N103: which document of the job is pinned, so the chat's review can
+          // tell this resume from the same job's hypothetical.
+          documentScope: { jobId: preview.resumePreview.jobId, scope },
         })
       }
       onScrapePosting={
