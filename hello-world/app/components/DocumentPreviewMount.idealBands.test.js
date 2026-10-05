@@ -155,23 +155,46 @@ describe("the Application-ready band, mounted from the pipeline's gate output", 
     expect(polite.textContent).toMatch(/copied the removed line/i);
   });
 
-  it("adds exactly the one existing live-region pair, and no band-local role=status/alert", async () => {
-    await renderMount(baseProps({ "job-1": { result: "Resume text" } }));
-    const ordinary = {
-      status: count('[role="status"]'),
-      alert: count('[role="alert"]'),
+  it("mounts EXACTLY the one N95 pair whenever the review strip mounts -- ordinary AND Ideal -- and no band adds a second (N103 R-1 re-baseline)", async () => {
+    // N103 R-1 (ledger-authorized edit). The N95 pair shares identical markup with
+    // the always-mounted CopyFeedback region (both are role=status + data-copy-status),
+    // so the pair cannot be isolated by selector. The faithful re-baseline measures
+    // a STRIP-LESS baseline job (no reviewable text -> no N103 strip -> no N95 pair)
+    // and asserts each reviewable render adds EXACTLY ONE pair over it.
+    //
+    // Teeth: the R-1 fix is that an ordinary reviewable job now mounts the pair
+    // (base + 1) via the widened reviewStripMounted gate -- a build that does NOT
+    // widen it leaves the ordinary render at `base` (not base+1) and reds; a
+    // band-local LocalOutcome on the Ideal render makes it base+2 and reds; a
+    // dropped pair makes it `base` and reds. The old relative form (Ideal =
+    // ordinary + 1) now passes 0-delta and no longer bites; this is why the edit
+    // is required. See N103.plan.r1.md S8 / F3.
+    await renderMount(baseProps({ "job-1": {} }));
+    const base = {
       polite: count('[data-copy-status="polite"]'),
-      copyAlert: count('[data-copy-status="alert"]'),
+      alert: count('[data-copy-status="alert"]'),
+      status: count('[role="status"]'),
+      roleAlert: count('[role="alert"]'),
     };
+
+    await act(async () => {
+      root.render(createElement(DocumentPreviewMount, baseProps({ "job-1": { result: "Resume text" } })));
+    });
+    // `\breview` matches "Review..."/"Reviewing..." but NOT "Preview" (R-7).
+    expect(buttonByText(/\breview/i), "the ordinary render must mount the review strip").toBeTruthy();
+    expect(count('[data-copy-status="polite"]')).toBe(base.polite + 1);
+    expect(count('[data-copy-status="alert"]')).toBe(base.alert + 1);
+    expect(count('[role="status"]')).toBe(base.status + 1);
+    expect(count('[role="alert"]')).toBe(base.roleAlert + 1);
+
     await act(async () => {
       root.render(createElement(DocumentPreviewMount, baseProps({ "job-1": idealEntry() })));
     });
-    // Exactly the mount's N95 pair is added (a band-local LocalOutcome would add a
-    // second role=status and role=alert on top of it).
-    expect(count('[role="status"]')).toBe(ordinary.status + 1);
-    expect(count('[role="alert"]')).toBe(ordinary.alert + 1);
-    expect(count('[data-copy-status="polite"]')).toBe(ordinary.polite + 1);
-    expect(count('[data-copy-status="alert"]')).toBe(ordinary.copyAlert + 1);
+    // The Ideal render adds the SAME single pair and no band-local second pair.
+    expect(count('[data-copy-status="polite"]')).toBe(base.polite + 1);
+    expect(count('[data-copy-status="alert"]')).toBe(base.alert + 1);
+    expect(count('[role="status"]')).toBe(base.status + 1);
+    expect(count('[role="alert"]')).toBe(base.roleAlert + 1);
   });
 });
 
