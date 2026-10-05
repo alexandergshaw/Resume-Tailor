@@ -15,7 +15,9 @@ import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
-const read = (rel) => readFileSync(fileURLToPath(new URL(rel, import.meta.url)), "utf8");
+import { importsMatching } from "../../test/helpers/resolveImports.js";
+
+const read =(rel) => readFileSync(fileURLToPath(new URL(rel, import.meta.url)), "utf8");
 
 const codeLines = (src) =>
   src
@@ -69,6 +71,53 @@ describe("the materials locker moved to useMaterialsLocker.js", () => {
     // The orphaned import must be gone too, not left dangling.
     expect(PAGE_CODE).not.toMatch(/triggerBlobDownload/);
     expect(PAGE_CODE).not.toMatch(/lib\/supabase\/materials/);
+  });
+
+  // The text match above sees a SPELLING. This resolves every import page.js
+  // makes -- static, dynamic, re-export -- to its repo-relative target first,
+  // so `../lib/supabase/materials`, `@/lib/supabase/materials.js` and a
+  // dynamic `import()` of either are one thing. See test/helpers/resolveImports.js.
+  const MATERIALS_TARGET = /^lib\/supabase\/materials(?![\w-])/;
+  const materialsImports = (src) => importsMatching(src, "app/page.js", MATERIALS_TARGET);
+
+  it("[resolved] no import page.js makes -- however spelled -- resolves to lib/supabase/materials", () => {
+    expect(materialsImports(PAGE)).toEqual([]);
+  });
+
+  it("[control] the resolved check fires on a spelling the text match above passes", () => {
+    // A path that wanders: the substring `lib/supabase/materials` never appears,
+    // yet it is the same module.
+    const wandering = 'import { listMaterials } from "../lib/supabase/./materials.js";\nexport const x = listMaterials;\n';
+    expect(wandering).not.toMatch(/lib\/supabase\/materials/);
+    expect(materialsImports(wandering).map((e) => e.target)).toEqual(["lib/supabase/materials.js"]);
+    // An import written WITHOUT the extension, through a detour.
+    const detour = 'import { listMaterials } from "../lib/supabase/../supabase/materials";\nexport const x = listMaterials;\n';
+    expect(detour).not.toMatch(/lib\/supabase\/materials/);
+    expect(materialsImports(detour)).toHaveLength(1);
+  });
+
+  it("[control] the resolved check still fires on the plain relative and aliased spellings, a dynamic import and a re-export", () => {
+    expect(materialsImports('import { listMaterials } from "../lib/supabase/materials";\n')).toHaveLength(1);
+    expect(materialsImports('import { listMaterials } from "@/lib/supabase/materials.js";\n')).toHaveLength(1);
+    expect(materialsImports('const m = async () => (await import("../lib/supabase/materials")).listMaterials;\n')).toHaveLength(1);
+    expect(materialsImports('export { listMaterials } from "../lib/supabase/materials";\n')).toHaveLength(1);
+  });
+
+  it("[control] page.js's other supabase imports, and a comment naming the module, are not flagged", () => {
+    expect(materialsImports('import { createClient } from "../lib/supabase/client";\n')).toEqual([]);
+    expect(materialsImports('// import { listMaterials } from "../lib/supabase/materials";\nexport const x = 1;\n')).toEqual([]);
+  });
+
+  it("[control] against the real tree, the resolver reads page.js's own relative supabase imports to repo-relative targets", () => {
+    // page.js writes `../lib/supabase/client` (and four more under it); the
+    // resolver must land those on real files, or the check above could be
+    // passing over a page it never parsed.
+    const pageEdges = importsMatching(PAGE, "app/page.js", /^lib\/supabase\//);
+    expect(pageEdges.map((e) => e.target)).toContain("lib/supabase/client.js");
+    expect(pageEdges.every((e) => e.kind === "module")).toBe(true);
+    // The hook is where the locker's own supabase import now lives.
+    const hookEdges = importsMatching(HOOK, "app/hooks/useMaterialsLocker.js", /^lib\/supabase\//);
+    expect(hookEdges.map((e) => e.target)).toContain("lib/supabase/client.js");
   });
 });
 

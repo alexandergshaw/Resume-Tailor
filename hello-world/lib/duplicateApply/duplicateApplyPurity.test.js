@@ -3,6 +3,8 @@ import { readFileSync, readdirSync, statSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 
+import { resolvedImports } from "../../test/helpers/resolveImports.js";
+
 // ---------------------------------------------------------------------------
 // AC-duplicate-apply-r4.md C-8a + 1g SEC-3 + 1g SEC-2 (source half). A
 // source-text sweep over this chunk's OWN directory, not a lint rule (C-8a's
@@ -158,6 +160,54 @@ describe("[purity] lib/duplicateApply/ -- C-8a source sweep, with a positive con
     expect(stripComments(plantedLlm)).toMatch(LLM_DIR_RE);
     expect(stripComments(plantedSupabase)).toMatch(SUPABASE_RE);
     expect(stripComments(plantedFetch)).toMatch(FETCH_CALL_RE);
+  });
+
+  // The forbidden-pattern regexes above are TEXT matches, and LLM_DIR_RE /
+  // ATSLOOKUP_OR_SCRAPE_RE name `lib/llm` and `lib/scrape` in the aliased
+  // spelling only: a relative `../llm/gemini.js` or `../scrape/fetchJobs.js` (live
+  // convention in this repo) contains neither string and passes them. The check
+  // below applies the SAME regexes to the RESOLVED repo-relative target of every
+  // import (static, dynamic, re-export), so every spelling of one module is one
+  // thing. See test/helpers/resolveImports.js; the allowlist-shaped complement
+  // is duplicateApplyImportAllowlist.sweep.test.js.
+  const FORBIDDEN_TARGET_RES = [ATSLOOKUP_OR_SCRAPE_RE, GENAI_RE, LLM_DIR_RE, SUPABASE_RE];
+  const forbiddenImportsIn = (src, name) =>
+    resolvedImports(src, `lib/duplicateApply/${name}`).filter((edge) => FORBIDDEN_TARGET_RES.some((re) => re.test(edge.target)));
+
+  it("[SEC-3, resolved] no shipped source file imports atsLookup, lib/scrape, lib/llm, a Supabase module or @google/genai -- relative, aliased, dynamic or re-exported", () => {
+    for (const [name, src] of sourceFiles()) {
+      const hits = forbiddenImportsIn(src, name).map((edge) => `${edge.spec} -> ${edge.target}`);
+      expect(hits, `${name} must not import a forbidden module`).toEqual([]);
+    }
+    // Non-vacuity: the sweep parsed real import edges and resolved them, so an
+    // empty verdict is not "parsed nothing".
+    const resolved = sourceFiles().flatMap(([name, src]) => resolvedImports(src, `lib/duplicateApply/${name}`).map((e) => e.target));
+    expect(resolved).toEqual(expect.arrayContaining(["lib/tracking/stages.js", "lib/duplicateApply/postingIdentity.js"]));
+  });
+
+  it("[positive control, resolved] the resolved check fires on the relative spellings the text matches above pass", () => {
+    const relativeLlm = 'import { runPrompt } from "../llm/gemini.js";\nexport const x = runPrompt;\n';
+    const relativeScrape = 'import { fetchJobs } from "../scrape/fetchJobs.js";\nexport const x = fetchJobs;\n';
+    // The old matchers are blind to both -- that is the gap being closed.
+    expect(stripComments(relativeLlm)).not.toMatch(LLM_DIR_RE);
+    expect(stripComments(relativeScrape)).not.toMatch(ATSLOOKUP_OR_SCRAPE_RE);
+    expect(forbiddenImportsIn(relativeLlm, "planted.js").map((e) => e.target)).toEqual(["lib/llm/gemini.js"]);
+    expect(forbiddenImportsIn(relativeScrape, "planted.js").map((e) => e.target)).toEqual(["lib/scrape/fetchJobs.js"]);
+  });
+
+  it("[positive control, resolved] it still fires on the aliased spelling, a dynamic import, a re-export, the SDK and a Supabase client", () => {
+    expect(forbiddenImportsIn('import { runPrompt } from "@/lib/llm/gemini.js";\n', "planted.js")).toHaveLength(1);
+    expect(forbiddenImportsIn('import { n } from "@/lib/scrape/atsLookup.js";\n', "planted.js")).toHaveLength(1);
+    expect(forbiddenImportsIn('export async function bad() { return import("../llm/gemini.js"); }\n', "planted.js")).toHaveLength(1);
+    expect(forbiddenImportsIn('export { runPrompt } from "../llm/gemini.js";\n', "planted.js")).toHaveLength(1);
+    expect(forbiddenImportsIn('import { GoogleGenAI } from "@google/genai";\n', "planted.js")).toHaveLength(1);
+    expect(forbiddenImportsIn('import { createClient } from "@supabase/supabase-js";\n', "planted.js")).toHaveLength(1);
+    expect(forbiddenImportsIn('import { createClient } from "../supabase/client.js";\n', "planted.js")).toHaveLength(1);
+  });
+
+  it("[positive control, resolved] a relative import of a PERMITTED sibling, and a comment naming a forbidden one, are not flagged", () => {
+    expect(forbiddenImportsIn('import { x } from "./postingIdentity.js";\nimport { y } from "../tracking/stages.js";\n', "planted.js")).toEqual([]);
+    expect(forbiddenImportsIn('// import { runPrompt } from "../llm/gemini.js";\n/* import "../scrape/atsLookup.js"; */\nexport const x = 1;\n', "planted.js")).toEqual([]);
   });
 
   it("[positive control, comment-only] the SAME planted violations, written as comments instead of code, are correctly NOT flagged -- proves the sweep discriminates code from documentation rather than being blind to the pattern entirely", () => {

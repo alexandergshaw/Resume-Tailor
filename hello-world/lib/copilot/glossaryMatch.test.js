@@ -21,6 +21,7 @@ import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
+import { importsMatching } from "../../test/helpers/resolveImports.js";
 import {
   MAX_MARKS_PER_LINE,
   EMPTY_GLOSSARY_INDEX,
@@ -327,5 +328,39 @@ describe("AC-M15 -- the matcher is pure", () => {
       "utf8",
     );
     expect(sibling).toMatch(IMPURE);
+  });
+
+  // IMPURE is a text match in ONE spelling (`@/lib/supabase`, `lib/llm/`), so a
+  // relative `../llm/geminiClient.js` -- live convention in this repo -- passes
+  // it. The check below RESOLVES every import (static, dynamic, re-export) to
+  // its repo-relative target before matching, so every spelling of the same
+  // module is one thing. See test/helpers/resolveImports.js.
+  const SELF = "lib/copilot/glossaryMatch.js";
+  const FORBIDDEN_TARGET = /^lib\/(supabase|llm)(\/|$)/;
+  const forbiddenImports = (src) => importsMatching(src, SELF, FORBIDDEN_TARGET);
+
+  it("[resolved] no import -- relative, aliased, dynamic or re-exported -- resolves into lib/supabase or lib/llm", () => {
+    expect(forbiddenImports(SOURCE)).toEqual([]);
+  });
+
+  it("[control] the resolved check fires on the relative spelling IMPURE passes", () => {
+    const llm = 'import { getGeminiClient } from "../llm/geminiClient.js";\nexport const x = getGeminiClient;\n';
+    const db = 'import { createClient } from "../supabase/client.js";\nexport const x = createClient;\n';
+    expect(llm).not.toMatch(IMPURE);
+    expect(db).not.toMatch(IMPURE);
+    expect(forbiddenImports(llm).map((e) => e.target)).toEqual(["lib/llm/geminiClient.js"]);
+    expect(forbiddenImports(db).map((e) => e.target)).toEqual(["lib/supabase/client.js"]);
+  });
+
+  it("[control] the resolved check still fires on the aliased spelling, a dynamic import and a re-export", () => {
+    expect(forbiddenImports('import { a } from "@/lib/supabase/client";\n')).toHaveLength(1);
+    expect(forbiddenImports('import { a } from "@/lib/llm/gemini.js";\n')).toHaveLength(1);
+    expect(forbiddenImports('export async function f() { return import("../llm/geminiClient.js"); }\n')).toHaveLength(1);
+    expect(forbiddenImports('export { a } from "../supabase/client.js";\n')).toHaveLength(1);
+  });
+
+  it("[control] a comment or string that NAMES a forbidden import is not an import", () => {
+    expect(forbiddenImports('// import { a } from "../llm/geminiClient.js";\nexport const s = "../supabase/client.js";\n')).toEqual([]);
+    expect(forbiddenImports('import { a } from "./glossaryTerms.js";\n')).toEqual([]);
   });
 });

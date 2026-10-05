@@ -20,6 +20,7 @@ import { describe, it, expect, beforeEach, vi, afterEach } from "vitest";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
+import { importsMatching } from "../../test/helpers/resolveImports.js";
 import {
   EXPANSION_STORE_MAX,
   beginExpansion,
@@ -181,6 +182,34 @@ describe("what the store must never do", () => {
 
   it("[control] the storage sweep can actually fail", () => {
     expect('localStorage.setItem("x", "1")').toMatch(/localStorage/);
+  });
+
+  // The `@/lib/supabase/` text match above sees one spelling only; a relative
+  // `../supabase/client.js` passes it. This check RESOLVES each module's imports
+  // (static, dynamic, re-export) to a repo-relative target first, so every
+  // spelling is the same thing. See test/helpers/resolveImports.js.
+  const SUPABASE_TARGET = /^lib\/supabase(\/|$)/;
+  const supabaseImports = (src, name) => importsMatching(src, `lib/copilot/${name}`, SUPABASE_TARGET);
+
+  it("[resolved] neither module imports anything that resolves into lib/supabase, however it is spelled", () => {
+    expect(supabaseImports(STORE_SRC, "expansionStore.js")).toEqual([]);
+    expect(supabaseImports(CLIENT_SRC, "expansionClient.js")).toEqual([]);
+  });
+
+  it("[control] the resolved check fires on the relative spelling the text match passes", () => {
+    const relative = 'import { createClient } from "../supabase/client.js";\nexport const x = createClient;\n';
+    expect(relative).not.toMatch(/@\/lib\/supabase\//);
+    expect(supabaseImports(relative, "expansionClient.js").map((e) => e.target)).toEqual(["lib/supabase/client.js"]);
+  });
+
+  it("[control] the resolved check still fires on the aliased spelling, a dynamic import and a re-export", () => {
+    expect(supabaseImports('import { a } from "@/lib/supabase/client";\n', "expansionStore.js")).toHaveLength(1);
+    expect(supabaseImports('export const f = () => import("../supabase/client.js");\n', "expansionStore.js")).toHaveLength(1);
+    expect(supabaseImports('export { a } from "../supabase/client.js";\n', "expansionClient.js")).toHaveLength(1);
+  });
+
+  it("[control] a comment that NAMES a supabase import is not an import (the header prose is allowed)", () => {
+    expect(supabaseImports('// import { createClient } from "../supabase/client.js";\nexport const x = 1;\n', "expansionStore.js")).toEqual([]);
   });
 
   it("holds no React and subscribes to nothing itself", () => {

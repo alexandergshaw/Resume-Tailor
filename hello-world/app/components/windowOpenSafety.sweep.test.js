@@ -101,6 +101,7 @@ import { describe, it, expect } from "vitest";
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import path from "node:path";
 import { tokenizeSource as tokenize } from "../../lib/sourceScan/tokenizeSource.js";
+import { importsMatching } from "../../test/helpers/resolveImports.js";
 
 const ROOT = process.cwd();
 const SCAN_DIRS = ["app", "lib"];
@@ -521,6 +522,9 @@ describe("every direct window/location navigation in app/ and lib/ passes throug
     expect(isGated(site, site.readable)).toBe(true);
   });
 
+  // Matched against the RESOLVED target of each import app/login/page.js makes.
+  const safeExternalHrefImports = (src) => importsMatching(src, "app/login/page.js", /^lib\/url\/safeExternalHref(?![\w-])/);
+
   it("positive control: app/login/page.js's redirect is gated directly by safeRedirectPath, no wrapper needed", () => {
     // The dedicated test the comment above this describe block points to --
     // see it for the history. `redirectTo` is bound from safeRedirectPath,
@@ -536,6 +540,33 @@ describe("every direct window/location navigation in app/ and lib/ passes throug
     // `safeExternalHref(...)`-around-a-concatenated-origin.
     expect(src).not.toMatch(/safeExternalHref\(/);
     expect(src).not.toMatch(/from ["']@\/lib\/url\/safeExternalHref["']/);
+    // The two text matches above see one spelling each (`safeExternalHref(` as
+    // a call, and the `@/` alias with no extension). The resolved check below
+    // is spelling-independent: it resolves every import to its repo-relative
+    // target first. See test/helpers/resolveImports.js.
+    expect(safeExternalHrefImports(src)).toEqual([]);
+  });
+
+  it("[control] the resolved safeExternalHref-import check fires on spellings the text match above passes", () => {
+    const relative = 'import { safeExternalHref } from "../../lib/url/safeExternalHref";\nexport const x = safeExternalHref;\n';
+    const withExt = 'import { safeExternalHref } from "@/lib/url/safeExternalHref.js";\nexport const x = safeExternalHref;\n';
+    const textMatch = /from ["']@\/lib\/url\/safeExternalHref["']/;
+    expect(relative).not.toMatch(textMatch);
+    expect(withExt).not.toMatch(textMatch);
+    expect(safeExternalHrefImports(relative).map((e) => e.target)).toEqual(["lib/url/safeExternalHref.js"]);
+    expect(safeExternalHrefImports(withExt).map((e) => e.target)).toEqual(["lib/url/safeExternalHref.js"]);
+    // Non-vacuity: the real page parses, and its real aliased import of the
+    // OTHER gate resolves to the file the planted one above names.
+    const real = importsMatching(readFileSync(path.join(ROOT, "app/login/page.js"), "utf8"), "app/login/page.js", /^lib\/url\//);
+    expect(real.map((e) => e.target)).toEqual(["lib/url/safeRedirectPath.js"]);
+  });
+
+  it("[control] the resolved check still fires on the plain aliased spelling, a dynamic import and a re-export, and spares the sanctioned gate", () => {
+    expect(safeExternalHrefImports('import { safeExternalHref } from "@/lib/url/safeExternalHref";\n')).toHaveLength(1);
+    expect(safeExternalHrefImports('export const f = () => import("../../lib/url/safeExternalHref.js");\n')).toHaveLength(1);
+    expect(safeExternalHrefImports('export { safeExternalHref } from "../../lib/url/safeExternalHref";\n')).toHaveLength(1);
+    expect(safeExternalHrefImports('import { safeRedirectPath } from "@/lib/url/safeRedirectPath";\n')).toEqual([]);
+    expect(safeExternalHrefImports('// import { safeExternalHref } from "../../lib/url/safeExternalHref";\nexport const x = 1;\n')).toEqual([]);
   });
 });
 
