@@ -11,6 +11,7 @@ import { createClient } from "@/lib/supabase/server";
 import { listPages } from "@/lib/supabase/experiencePages";
 import { buildTailorContextBlock } from "@/lib/experience/tailorContext";
 import { TAILOR_MODE_IDEAL } from "@/lib/tailor/tailorLevel";
+import { idealLevelEnabled, idealUnavailableRefusal } from "@/lib/tailor/idealDelivery";
 import { gateIdealRequest, runIdealBranch } from "@/app/api/tailor/idealBranch";
 
 export const runtime = "nodejs";
@@ -237,6 +238,12 @@ export async function POST(request) {
     // is never folded into `aggressiveness`, which is clamped to 1..5 and would
     // silently absorb it into "Strong".
     const idealRun = formData.get("tailorMode")?.toString().trim().toLowerCase() === TAILOR_MODE_IDEAL;
+    // The server half of the Ideal gate: while the level is off, a crafted POST is
+    // refused here (422, no artifact) before the resume is read or any model runs.
+    if (idealRun && !idealLevelEnabled()) {
+      const off = idealUnavailableRefusal();
+      return NextResponse.json(off.body, { status: off.status });
+    }
     const contextDocuments = await parseContextDocuments(formData);
 
     // Feed the caller's own "Professional Experience" project pages into the

@@ -42,11 +42,13 @@ import { editFingerprint } from "../lib/tailor/editMining";
 import { recordMatchGaps, annotateAndRank, promotedEditRules } from "../lib/tailor/localSignals";
 import { runWithConcurrency } from "../lib/tailor/runWithConcurrency";
 import { appendTailorLevel } from "../lib/tailor/tailorLevelRequest";
+import { resolveIdealChipDelivery, idealChipPreviewContext } from "../lib/tailor/idealDelivery";
 import { useProfileEntries } from "./hooks/useProfileEntries";
 import { useScreenshots } from "./hooks/useScreenshots";
 import { useCompanyResearch } from "./hooks/useCompanyResearch";
 import { useCoverFactPlacement } from "./hooks/useCoverFactPlacement";
 import { useDocumentPreview } from "./hooks/useDocumentPreview";
+import { useLatestRef } from "./hooks/useLatestRef";
 import { useManualTailor } from "./hooks/useManualTailor";
 import { useManualPostings } from "./hooks/useManualPostings";
 import { useChat } from "./hooks/useChat";
@@ -75,6 +77,7 @@ import Autocomplete from "@mui/material/Autocomplete";
 import Chip from "@mui/material/Chip";
 import DescriptionIcon from "@mui/icons-material/Description";
 import { GREENHOUSE_COMPANIES, COMPANY_CATEGORIES } from "../lib/greenhouse/companies";
+import { buildGreenhouseSearchUrl } from "../lib/greenhouse/searchUrl";
 import { createClient } from "../lib/supabase/client";
 import { upsertPosition } from "../lib/supabase/upsertPosition";
 import { upsertApplication } from "../lib/supabase/upsertApplication";
@@ -668,21 +671,6 @@ export default function Home() {
   // re-fetching, and how many parallel prewarm requests we'll fire at once.
   const PREWARM_FRESH_MS = 5 * 60 * 1000;
   const PREWARM_CONCURRENCY = 3;
-
-  // Build the /api/greenhouse search URL. `runJobSearch`, this comment's
-  // other consumer, is gone (see the orphaning note on `prewarmedResults`
-  // above) — only the saved-search pre-warmer below calls this now.
-  function buildGreenhouseSearchUrl(query, companies) {
-    let params = "";
-    const list = Array.isArray(companies) ? companies : [];
-    if (list.length > 0) {
-      const slugs = list.filter((c) => typeof c !== "string").map((c) => c.slug);
-      const names = list.filter((c) => typeof c === "string");
-      if (slugs.length > 0) params += `&companies=${slugs.join(",")}`;
-      if (names.length > 0) params += names.map((n) => `&companyName=${encodeURIComponent(n)}`).join("");
-    }
-    return `/api/greenhouse?query=${encodeURIComponent(query)}${params}`;
-  }
 
   // Pre-warm saved-search results in the background. Runs whenever the
   // saved-search list (re)loads. Skips entries we already have fresh results
@@ -1459,6 +1447,8 @@ export default function Home() {
     // localStorage with no check ever having run against it this session.
     onCheckDuplicate: dupeApply.runDuplicateCheck,
   });
+  // Whether a preview is open NOW, for handlers that act after a long await.
+  const previewOpenRef = useLatestRef(preview.resumePreview.open);
 
   // Screenshots → tailored-documents pipeline (Manual Applying › Screenshots).
   const screenshots = useScreenshots({
@@ -1886,7 +1876,7 @@ export default function Home() {
   }
 
   async function handleTailorJob(job, opts = {}) {
-    const { skipDownload = false, scope = "both" } = opts;
+    const { scope = "both" } = opts;
     const applyResume = scope !== "cover";
     const applyCover = scope !== "resume";
     // E2's fire point: before handleTrackJob's own write (1c U-7 #8).
@@ -1908,6 +1898,7 @@ export default function Home() {
       error: "",
       result: "",
       resultLines: [],
+      ideal: null,
       generatedJobTitle: "",
       downloaded: false,
     });
@@ -1916,7 +1907,8 @@ export default function Home() {
       const formData = new FormData();
       formData.append("jobPosting", job.description);
       formData.append("additionalContext", additionalContext);
-      appendTailorLevel(formData, tailorMode, aggressiveness, { engine: tailorEngine });
+      // `scope` rides along so a cover-only regenerate never takes the Ideal level.
+      appendTailorLevel(formData, tailorMode, aggressiveness, { engine: tailorEngine, scope });
       formData.append("engine", tailorEngine);
       // Promoted recurring hand-edits (localStorage) — the embedded engine
       // applies them document-wide so consistent fixes are pre-made.
@@ -1990,7 +1982,8 @@ export default function Home() {
         error: tailorWarning,
         emailSubject,
         emailResultLines,
-        ...(applyResume ? { result, resultLines, docxB64 } : {}),
+        // An Ideal run's review block rides the entry so the preview can render it.
+        ...(applyResume ? { result, resultLines, docxB64, ideal: payload.ideal ?? null } : {}),
         ...(applyCover ? { coverLetterResultLines, coverLetterDocxB64 } : {}),
       }));
 
@@ -2051,10 +2044,14 @@ export default function Home() {
         }
       }
 
-      if (skipDownload) {
-        // Caller (e.g. batch tailoring in "no download" mode) doesn't want a
-        // file save prompt for every job. The result is still persisted and
-        // available via the per-job card download button.
+      const delivery = resolveIdealChipDelivery({ payload, previewOpen: previewOpenRef.current, opts });
+      if (delivery.openPreview) preview.finishByOpeningPreview(idealChipPreviewContext(job, generatedJobTitle));
+      if (!delivery.autoDownload) {
+        // Either the caller (e.g. batch tailoring in "no download" mode) doesn't
+        // want a file save prompt for every job, or this is an Ideal result, which
+        // is reviewed in the preview and never saved on the user's behalf. The
+        // result is still persisted and available via the per-job card download
+        // button.
         return { ok: true };
       }
 
@@ -2188,7 +2185,7 @@ export default function Home() {
       const formData = new FormData();
       formData.append("jobPostingUrl", trimmedUrl);
       formData.append("additionalContext", additionalContext);
-      appendTailorLevel(formData, tailorMode, aggressiveness, { engine: tailorEngine });
+      appendTailorLevel(formData, tailorMode, aggressiveness, { engine: tailorEngine, scope });
       formData.append("engine", tailorEngine);
       // Promoted recurring hand-edits (localStorage) — the embedded engine
       // applies them document-wide so consistent fixes are pre-made.

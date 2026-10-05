@@ -4,11 +4,12 @@
 // render halves) are jsdom component rows left to the Step 6/7 render pass; the
 // RULES those surfaces obey are pinned here, purely and deterministically.
 //
-// WHY K14 IS A POWER ROW (SILENT, NEW F2/P-DARK). Slice 1 builds the whole Ideal
-// path but it must be UNREACHABLE by users until Step 9 + N106 land, because its
-// review is only ever the honest `no-review` state. The gate predicate is the
-// single flip-point; it must default OFF. A mutant forcing it ON (with no Step-9
-// wiring) makes review-less Ideal generation reachable -> this test reds.
+// WHY K14 IS A POWER ROW (SILENT, NEW F2/P-DARK). Slice 1 shipped the whole Ideal
+// path dark: the gate predicate is the single flip-point and defaulted OFF. N107
+// is the owner's go-live, which flipped it ON and retired the OFF-by-default row
+// into the ON row below; lib/tailor/idealGoLiveFlip.test.js measures the same
+// default through the real slider model. A mutant setting the constant back to
+// false (the kill-switch state) reds this test.
 //
 // RED on HEAD: module absent (collection failure); satisfiability proven by the
 // scratchpad reference.
@@ -19,9 +20,9 @@ import {
   shouldAutoOpenIdealPreview,
 } from "./idealDelivery.js";
 
-describe("idealLevelEnabled — the P-DARK dark-launch gate (K14)", () => {
-  it("defaults OFF in slice 1 (the Ideal stop is not user-reachable)", () => {
-    expect(idealLevelEnabled()).toBe(false);
+describe("idealLevelEnabled — the Ideal-level gate (K14), live since the N107 go-live", () => {
+  it("defaults ON after go-live (the Ideal stop is user-reachable)", () => {
+    expect(idealLevelEnabled()).toBe(true);
   });
 });
 

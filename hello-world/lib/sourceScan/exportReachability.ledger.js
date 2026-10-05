@@ -466,30 +466,28 @@ export const ORPHAN_EXPORTS = [
     name: "writeSignals",
     why: "the writer half of a read/write localStorage pair, used seven more times inside localSignals.js by the higher-level recorders that ARE imported; nothing outside calls the raw writer",
   },
-  // --- N105's slider caption copy: declared ahead of a caption leaf that is not
-  // built. lib/tailor/tailorLevel.js's own header says the slider, "the caption
-  // leaf", the route and the tests share this one table; the slider
-  // (ApplyingControls.js via levelAriaValueText) and the route (idealBranch.js
-  // via idealRefusalMessage) do, and the caption leaf has not landed. None of the
-  // three below is read anywhere -- not by shipping code, not by a test, not even
-  // inside tailorLevel.js -- so they cannot be un-exported without leaving an
-  // unused declaration (a lint warning), and deleting them is a feature decision
-  // for the caption work, not for this census. Delete each line the day the leaf
-  // imports it. ------------------------------------------------------------
-  {
-    file: "lib/tailor/tailorLevel.js",
-    name: "LEVEL_CAPTIONS",
-    why: "the standard / ideal / switched-to-Gemini caption strings for the slider's caption leaf, which has not been built; declared and exported and not referenced even inside tailorLevel.js, and no test reads it -- the ARIA text beside it (LEVEL_STOPS, levelAriaValueText) is the part the slider actually consumes",
-  },
+  // --- N105's slider "cannot run" caption copy: declared ahead of a leaf that is
+  // not built. lib/tailor/tailorLevel.js's own header says the slider, the
+  // caption leaf, the route and the tests share this one table. The slider
+  // (ApplyingControls.js via levelAriaValueText), the standard / Ideal caption
+  // under it (ApplyingControls.js via LEVEL_CAPTIONS, which left this ledger at
+  // the N107 go-live) and the route (idealBranch.js via idealRefusalMessage) do.
+  // The two below are the engine-cannot-run state, and wiring them needs an
+  // engine-support prop on ApplyingControls that no design specifies yet. Neither
+  // is read anywhere -- not by shipping code, not by a test, not even inside
+  // tailorLevel.js -- so they cannot be un-exported without leaving an unused
+  // declaration (a lint warning), and wire-or-trim is a feature decision for a
+  // later round, not for this census. Delete each line the day the leaf imports
+  // it. --------------------------------------------------------------------
   {
     file: "lib/tailor/tailorLevel.js",
     name: "idealCannotRunCaption",
-    why: "the visible caption for Ideal selected on an engine that cannot run it, for the same unbuilt caption leaf as LEVEL_CAPTIONS; not referenced anywhere, including its own module. The route's refusal sentence for the same state (idealRefusalMessage) IS wired, so the user-facing refusal exists; only this slider-side caption is pending",
+    why: "the visible caption for Ideal selected on an engine that cannot run it, for the not-yet-built cannot-run caption leaf; not referenced anywhere, including its own module. The route's refusal sentence for the same state (idealRefusalMessage) IS wired, so the user-facing refusal exists; only this slider-side caption is pending",
   },
   {
     file: "lib/tailor/tailorLevel.js",
     name: "idealCannotRunAnnouncement",
-    why: "the hidden announcer's short form of idealCannotRunCaption, for the same unbuilt caption leaf; not referenced anywhere, including its own module, and delete-or-wire together with its visible twin",
+    why: "the hidden announcer's short form of idealCannotRunCaption, for the same not-yet-built cannot-run caption leaf; not referenced anywhere, including its own module, and delete-or-wire together with its visible twin",
   },
   {
     file: "lib/techwatch/item.js",

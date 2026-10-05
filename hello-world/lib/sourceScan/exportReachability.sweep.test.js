@@ -408,7 +408,9 @@ describe("every export of a shipping module is asked for, or is on a ledger with
     // tailorLevel.js's three unwired caption symbols. MIN_CONTENT_OVERLAP and
     // REMOVED_COPY_MESSAGES also surfaced and were un-exported, not ledgered.
     // Details are in the ledger beside each entry.
-    expect(ORPHAN_EXPORTS).toHaveLength(67);
+    // 67 -> 66 (N107): LEVEL_CAPTIONS out (ApplyingControls.js renders the slider
+    // caption from it); none in.
+    expect(ORPHAN_EXPORTS).toHaveLength(66);
   });
 
   it("[RULE TR-1] counts the exports whose only consumer is a test, exactly", () => {
@@ -738,8 +740,9 @@ describe("every export of a shipping module is asked for, or is on a ledger with
     //     these names);
     //   RemovedClaimsList.js#default (IdealResultBands imports its named
     //   LeftOutGroup/RemovedGroup instead), idealChainConfig.js#IDEAL_WORST_CASE_MS
-    //   and idealDelivery.js#shouldAutoOpenIdealPreview, one each. The last has no
-    //   production caller yet -- the Ideal level is dark-launched.
+    //   and idealDelivery.js#shouldAutoOpenIdealPreview, one each. The last stays
+    //   here at the N107 go-live: only resolveIdealChipDelivery calls it, inside
+    //   its own module, and page.js imports that wrapper instead.
     // OUT (1): lib/resume/parseEmployment.js#extractDateRange, which gained real
     // shipping importers (idealChronology.js and idealRealMaterial.js).
     // ORPHAN_EXPORTS moved separately (70 -> 67).
@@ -873,7 +876,11 @@ describe("every export of a shipping module is asked for, or is on a ledger with
     // independent change.
     // 438 -> 453 (N105/N106 slice): TEST_REFERENCED's +18 (368 -> 386) and
     // ORPHAN_EXPORTS' -3 (70 -> 67), described at their own assertions above.
-    expect(UNUSED_IN_SHIPPING_MODULES.length).toBe(453);
+    // 453 -> 452 (N107): exactly ORPHAN_EXPORTS' -1 (67 -> 66, LEVEL_CAPTIONS),
+    // with TEST_REFERENCED unmoved at 386. The go-live's other new exports
+    // (resolveIdealChipDelivery, idealChipPreviewContext, idealUnavailableRefusal,
+    // useLatestRef, buildGreenhouseSearchUrl) each have a shipping importer.
+    expect(UNUSED_IN_SHIPPING_MODULES.length).toBe(452);
   });
 
   it("still reports the two symbol-level cases this sweep was built for", () => {

@@ -16,7 +16,7 @@ import {
   EDUCATION_SECTION,
   EMPLOYMENT_SECTION,
 } from "./applying/sectionConfigs";
-import { IDEAL_STOP, TAILOR_MODE_IDEAL, levelAriaValueText } from "../../lib/tailor/tailorLevel";
+import { IDEAL_STOP, TAILOR_MODE_IDEAL, LEVEL_CAPTIONS, levelAriaValueText } from "../../lib/tailor/tailorLevel";
 import { levelSliderModel } from "../../lib/tailor/tailorLevelRequest";
 
 function formatBytes(bytes) {
@@ -59,8 +59,12 @@ export default function ApplyingControls({
   askAiAboutMaterial,
   currentUserPresent,
 }) {
-  // The sixth (Ideal) stop appears only while the dark-launch gate is on.
+  // The sixth (Ideal) stop appears only while the Ideal-level gate is on.
   const level = levelSliderModel(tailorMode, aggressiveness);
+  // The caption under the slider says what the selected level builds. It exists
+  // only while the Ideal stop is on offer, so a gated-off slider never teases it.
+  const levelCaption =
+    level.max !== IDEAL_STOP ? "" : level.value === IDEAL_STOP ? LEVEL_CAPTIONS.ideal : LEVEL_CAPTIONS.standard;
   return (
     <>
       <TabHeader
@@ -192,7 +196,9 @@ export default function ApplyingControls({
               </Box>
               <Box sx={{ px: 1, pt: 0.25, pb: 1.5 }}>
                 <Slider
-                  slotProps={{ input: { id: "tailoring-level" } }}
+                  slotProps={{
+                    input: { id: "tailoring-level", "aria-describedby": levelCaption ? "tailoring-level-caption" : undefined },
+                  }}
                   aria-labelledby="tailoring-level-label"
                   getAriaValueText={levelAriaValueText}
                   min={level.min}
@@ -257,6 +263,11 @@ export default function ApplyingControls({
                   }}
                 />
               </Box>
+              {levelCaption ? (
+                <Box id="tailoring-level-caption" sx={{ fontSize: "0.8rem", color: "var(--text-secondary)" }}>
+                  {levelCaption}
+                </Box>
+              ) : null}
             </div>
 
             <div className={styles.fieldGroup}>
