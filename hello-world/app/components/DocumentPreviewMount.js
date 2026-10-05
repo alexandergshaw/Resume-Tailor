@@ -536,16 +536,25 @@ export default function DocumentPreviewMount({
   // during the in-flight undo can never fire a double-revert -- the same
   // "gone the instant it's used" contract Apply's own pendingSmooth clear
   // already follows.
+  //
+  // N122: like Apply (N94), the persist wrapper hands the hook's own
+  // { ok, reason } back to undoSmoothTransition -- that is how the ledger learns a
+  // refused save and records "failed" rather than "acted". The returned `ok` is
+  // then the one answer to "did it land", also for a persist that threw, so the
+  // user-visible error follows it rather than the hook's resolve alone.
   async function handleUndoSmooth(factId) {
     const candidate = appliedSmooth[factId];
     if (!candidate) return;
     clearAppliedSmooth(factId);
-    await undoSmoothTransition(candidate, {
+    let failureReason = "";
+    const undone = await undoSmoothTransition(candidate, {
       persist: async (restored) => {
         const result = await research.applySmoothedFact(insertedFactsJobId, restored);
-        setRemoveError(result && result.ok === false ? result.reason || "Couldn't undo the smoothing. Try again." : "");
+        if (result && result.ok === false) failureReason = result.reason || "";
+        return result;
       },
     });
+    setRemoveError(undone.ok ? "" : failureReason || "Couldn't undo the smoothing. Try again.");
   }
   // N92 Wave 1 (Control A): whether each inserted fact CAN move forward/
   // backward, computed with the exact same `planMoveFact` the click handler

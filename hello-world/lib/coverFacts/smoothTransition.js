@@ -259,6 +259,21 @@ export async function requestSmoothTransition({ engine, lines, records, id, fetc
   };
 }
 
+// persistLanded(persist, payload) -- did the caller's store write land? Shared
+// by confirm and undo so the two can never disagree on what "landed" means. A
+// missing `persist` is a landed write (nothing to refuse it); a resolved
+// `{ ok:false }` is a refused one; a throw is an unexpected I/O failure. Never
+// rethrows -- both callers turn a false into a recorded "failed" outcome.
+async function persistLanded(persist, payload) {
+  if (typeof persist !== "function") return true;
+  try {
+    const result = await persist(payload);
+    return !(result && result.ok === false);
+  } catch {
+    return false;
+  }
+}
+
 // confirmSmoothTransition(candidate, { persist }) -- THE ONLY write path
 // (AC-B10/B12): applies EXACTLY `candidate.after` (the same object shown to
 // the user, never regenerated) via the caller's `persist`, then records
@@ -277,15 +292,7 @@ export async function requestSmoothTransition({ engine, lines, records, id, fetc
 // carry, and the caller learns of the failure from the return value.
 export async function confirmSmoothTransition(candidate, { persist } = {}) {
   if (!candidate || candidate.status !== "proposed") return { ok: false };
-  let landed = true;
-  if (typeof persist === "function") {
-    try {
-      const result = await persist(candidate.after);
-      landed = !(result && result.ok === false);
-    } catch {
-      landed = false;
-    }
-  }
+  const landed = await persistLanded(persist, candidate.after);
   if (!landed) {
     recordDecision("fact-smooth", "failed", { reason: "save-failed", code: "save-failed" });
     return { ok: false };
@@ -317,6 +324,12 @@ export async function declineSmoothTransition(candidate) {
 // guard to accept it, and its `after` the original (candidate.after.edits[].before).
 // A null / non-"proposed" candidate (nothing was ever applied, or it was only
 // rejected/failed/declined) is a no-op: no persist call, `{ ok:false }`.
+//
+// N122: like confirm (N94), "acted"/"undo" is recorded ONLY when the restore
+// actually landed. A `persist` that resolves `{ ok:false, reason }` or throws is
+// recorded as the existing "failed" outcome with the "save-failed" code,
+// returned as `{ ok:false }`, and never rethrown -- the letter is still smoothed,
+// so the activity log must not claim it was undone.
 export async function undoSmoothTransition(applied, { persist } = {}) {
   if (!applied || applied.status !== "proposed") return { ok: false };
   const edits = (Array.isArray(applied.after?.edits) ? applied.after.edits : []).map((edit) => ({
@@ -325,7 +338,11 @@ export async function undoSmoothTransition(applied, { persist } = {}) {
     after: edit.before,
   }));
   const restore = { lines: applied.before.lines, records: applied.before.records, edits };
-  if (typeof persist === "function") await persist(restore);
+  const landed = await persistLanded(persist, restore);
+  if (!landed) {
+    recordDecision("fact-smooth", "failed", { reason: "save-failed", code: "save-failed" });
+    return { ok: false };
+  }
   recordDecision("fact-smooth", "acted", { reason: "undo", code: "undo" });
   return { ok: true };
 }

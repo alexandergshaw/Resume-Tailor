@@ -277,8 +277,8 @@ export const DECISION_LEDGER = [
     // structure is for. `reason`/`code` are canned discriminators off the
     // module's own closed outcome set ("smoothed"/"declined"/"scope"/
     // "added-token"/"stale-locator"/"provider_error"/"embedded"/"undo", plus
-    // "save-failed" -- the fact-position entry's own code -- for a confirmed
-    // smoothing whose save did not land, N94). Never the
+    // "save-failed" -- the fact-position entry's own code -- for a smoothing
+    // confirm (N94) OR undo (N122) whose save did not land). Never the
     // letter text, the fact text, or the before/after wording (N77).
     fields: ["reason", "code"],
     outcomes: ["acted", "skipped", "refused", "failed"],
