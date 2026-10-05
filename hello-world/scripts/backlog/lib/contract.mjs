@@ -1,4 +1,7 @@
 import { createHash } from "node:crypto";
+import { existsSync } from "node:fs";
+import { join } from "node:path";
+import { HELLO_WORLD_ROOT, REPO_ROOT } from "./loadBacklog.mjs";
 
 const VALID_STATES = new Set(["actionable", "owner", "verification"]);
 const ID_SHAPE = /^[A-Za-z]+\d+$/;
@@ -11,8 +14,41 @@ const ID_SHAPE = /^[A-Za-z]+\d+$/;
 // hash-pin in verify_proof.command_sha256 is blind to what a filter selects, only to the string.
 const DEAD_FILTER_SHAPE = /(^|\s)(-t|--testNamePattern)(\s|=|$)/;
 
+// A WHOLE whitespace-delimited token that is unmistakably a repo-relative file: at least one `/`,
+// only path-safe characters (so URLs, globs, `$VAR`, `--flag=value`, absolute paths and code inside
+// a quoted string never match), and a known file extension at the end. Deliberately narrow — a token
+// that is merely file-ish (a bare `x.test.js`, which vitest reads as a filter that matches anywhere,
+// or a bare directory) is NOT a cited path, so prose in a verify string cannot false-positive.
+const CITED_PATH_SHAPE =
+  /^(?:[\w.[\]()-]+\/)+[\w.[\]()-]+\.(?:js|mjs|cjs|jsx|ts|mts|cts|tsx|json|md|yml|yaml|sql|sh|css|html)$/i;
+// Shell quoting and statement punctuation that can wrap a path token without being part of it.
+const WRAPPER_START = /^["'`(]+/;
+const WRAPPER_END = /["'`),;]+$/;
+
+// Verify commands run from hello-world/ (`npx vitest run lib/...`) or from the repo root
+// (`node hello-world/scripts/...`, `docs/...`); a cited path is real if it resolves under either.
+const PATH_ROOTS = [HELLO_WORLD_ROOT, REPO_ROOT];
+
 export function sha256(text) {
   return createHash("sha256").update(text, "utf8").digest("hex");
+}
+
+/**
+ * Every distinct file path the `verify` command cites that exists under neither root. Vitest treats
+ * each positional as a substring FILTER, so `vitest run <real> <missing>` exits 0 with "1 passed" and
+ * the missing path is silently absorbed — a typo'd or invented path reads as a satisfied verify
+ * (measured on vitest 4.1.8, N21). Nothing downstream executes a verify string, so this is the only
+ * place a wrong path can be caught.
+ */
+function missingCitedPaths(verify) {
+  const missing = [];
+  for (const raw of verify.split(/\s+/)) {
+    if (raw.startsWith("-")) continue; // a flag, never a positional path
+    const token = raw.replace(WRAPPER_START, "").replace(WRAPPER_END, "");
+    if (!CITED_PATH_SHAPE.test(token) || missing.includes(token)) continue;
+    if (!PATH_ROOTS.some((root) => existsSync(join(root, token)))) missing.push(token);
+  }
+  return missing;
 }
 
 /**
@@ -68,6 +104,7 @@ function verifyProofViolations(item) {
  *   - every id is namespaced (B3 shape) and globally unique (B3 fix)
  *   - state is one of the three known values, with its state-specific required text present
  *   - a non-null `verify` never uses a dead `-t`/`--testNamePattern` filter (B4)
+ *   - a non-null `verify` only cites file paths that exist under hello-world/ or the repo root (N21)
  *   - a non-null `verify` carries a complete, internally-consistent, hash-pinned verify_proof (B4)
  * Returns { ok, violations } — never throws, so a caller can report every violation at once.
  */
@@ -107,6 +144,9 @@ export function validateContract(items) {
     if (item.verify != null) {
       if (DEAD_FILTER_SHAPE.test(item.verify)) {
         violations.push(`${item.id}: verify uses a "-t"/"--testNamePattern" filter, which can go dead silently — name the filter's title, not the command`);
+      }
+      for (const path of missingCitedPaths(item.verify)) {
+        violations.push(`${item.id}: verify cites a path that does not exist: "${path}" (checked under hello-world/ and the repo root) — vitest absorbs a missing positional beside a real one and still exits 0, so a typo'd path would read as a satisfied verify`);
       }
       violations.push(...verifyProofViolations(item));
     }

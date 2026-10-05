@@ -2,7 +2,8 @@
 // backlog:check (part 2) — structural validation of docs/backlog.yml: namespaced/unique ids,
 // state-specific required fields, and the verify-gate kill control (rejects a dead `-t`/
 // `--testNamePattern` filter and requires a complete, hash-pinned, internally-consistent
-// verify_proof before a non-null `verify` is trusted).
+// verify_proof before a non-null `verify` is trusted, and rejects a verify that cites a file path
+// which does not exist — vitest would absorb it silently).
 import { loadBacklogItems } from "./lib/loadBacklog.mjs";
 import { validateContract } from "./lib/contract.mjs";
 
