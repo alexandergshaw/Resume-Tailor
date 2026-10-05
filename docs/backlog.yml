@@ -1318,6 +1318,18 @@
   verify: null
   verify_proof: null
   blocked_by: []
+
+- id: "N114"
+  state: "actionable"
+  title: "**TOKEN-ROI TOOLING FIX: the backlog render (hello-world/scripts/backlog/render.mjs via lib/yamlLite.mjs) intermittently throws 'yamlLite: unrecognized line N' (yamlLite.mjs:116) on a backlog.yml that is byte-apparently-valid, and CLEARS after rewriting the file (tr -d '\r' | cp) with NO content change.** It has shipped a STALE BACKLOG.md (committed from a failed render) at least twice this session because a `node render || fallback` one-liner did not reliably re-render. Cost: every backlog edit risks a wasted render + a stale rendered board + orchestrator time. **Fix options (investigate yamlLite.mjs:116):** likely an encoding/line-separator artifact (CRLF, BOM, or a stray separator) that the parser rejects but a rewrite normalizes — make render.mjs NORMALIZE its input (strip BOM/CR, tolerate the separator) before parsing, OR make yamlLite's line tokenizer robust to it, so render NEVER flakes. Interim standing workaround (record in a loop-trap memory): before committing BACKLOG.md, ALWAYS `tr -d '\r' < docs/backlog.yml > tmp && cp tmp docs/backlog.yml` then render as SEPARATE steps and confirm the 'backlog:render — wrote' line. High token-ROI: removes a recurring tax on the loop's own control surface."
+  owed_by: "A small tooling round: reproduce, root-cause yamlLite.mjs:116, make render normalize input; add a regression test"
+  evidence: ["2 stale-BACKLOG.md commits this session (c21547e render-sync; this commit) caused by the flake", "empirically: node render flakes, tr -d CR + cp + render succeeds on byte-identical-looking content"]
+  blocked_reason: null
+  instrument: null
+  owns: null
+  verify: null
+  verify_proof: null
+  blocked_by: []
 - id: "D2"
   state: "owner"
   title: "**The transport claim is doc-verified, not wire-verified.**"
