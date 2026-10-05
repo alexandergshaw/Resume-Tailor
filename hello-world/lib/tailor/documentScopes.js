@@ -153,19 +153,34 @@ export function buildDownloadArgs({ scope, entry, text, lines, serveFinished, ti
   return args;
 }
 
+// N108: the ONE rule for which file-name value the preview acts on -- the LIVE
+// field (trimmed), falling back to the committed override only when the field
+// is blank or whitespace-only. Both egresses read it: the title copy
+// (resolveActiveDocumentTitle below) and the download (the dialog's
+// handleDownload, which conveys this as the payload's fileName). Before it
+// existed the copy did `draft.trim() || committed` while the download conveyed
+// the bare trimmed draft, so a blanked field over a committed custom name was
+// copied as the committed name but downloaded under the DERIVED default -- two
+// different file names for one click. The result is still RAW (unsanitised):
+// resolveDocumentFileName re-resolves it on the way out of both egresses.
+export function resolveLiveFileName(fileNameDraft, committedFileName) {
+  return fileNameDraft.trim() || committedFileName || "";
+}
+
 // N83: the copyable title for the active docx document -- the SAME base the
 // download and Drive save resolve. Reads the LIVE fileNameDraft (what the
 // user is looking at), falling back to the committed override only when the
-// draft is blank -- a pointer click on the title-copy control never blurs
-// the field (CopyDocumentControl.js's onMouseDown preventDefault), so
-// anchoring to the committed value copied a stale name. Re-resolved through
-// resolveDocumentFileName (never copied raw) so a rename with characters the
-// download sanitises away still matches what the employer receives.
+// draft is blank (resolveLiveFileName) -- a pointer click on the title-copy
+// control never blurs the field (CopyDocumentControl.js's onMouseDown
+// preventDefault), so anchoring to the committed value copied a stale name.
+// Re-resolved through resolveDocumentFileName (never copied raw) so a rename
+// with characters the download sanitises away still matches what the employer
+// receives.
 // Extracted out of DocumentPreviewDialog.js so that file's own line ceiling
 // has room, same reasoning as buildDownloadArgs above.
 // N105 (AC-3): isHypothetical (default false -- every other caller is
 // unchanged) forces the HYPOTHETICAL prefix, so the copied title matches the
 // marked download name even when the user's rename dropped it.
 export function resolveActiveDocumentTitle(fileNameDraft, committedFileName, jobTitle, company, kind, isHypothetical = false) {
-  return resolveDocumentFileName(fileNameDraft.trim() || committedFileName, jobTitle, company, kind, isHypothetical).replace(/\.docx$/i, "");
+  return resolveDocumentFileName(resolveLiveFileName(fileNameDraft, committedFileName), jobTitle, company, kind, isHypothetical).replace(/\.docx$/i, "");
 }
