@@ -742,7 +742,7 @@
 
 - id: "N7"
   state: "actionable"
-  title: "**`prepLog.js` was built with no specifying document and no test.** 86 lines, created because the wave table needs the file to exist for a later mechanical gate and the UI wave. Its export shape is invented, and nothing exercises it Ã¢â‚¬â€ the same class wave 1 correctly refused for three other functions"
+  title: "**DONE 2026-10-05 (prepLog.test.js, 32 tests green: shape/order/clock, FIFO-200 cap, snapshot copy, reset, structural no-PII controls + positive controls; no bug found; module still unwired). Noted-not-fixed: list() shares entry objects (array copied), outcome uncapped, cap literal not exported.** `prepLog.js` was built with no specifying document and no test.** 86 lines, created because the wave table needs the file to exist for a later mechanical gate and the UI wave. Its export shape is invented, and nothing exercises it Ã¢â‚¬â€ the same class wave 1 correctly refused for three other functions"
   owed_by: "A 4b round before it carries behaviour"
   evidence: ["`lib/interviewPrep/prepLog.js` header discloses it; step-5 wave 2 report"]
   blocked_reason: null
