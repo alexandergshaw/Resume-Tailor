@@ -73,7 +73,8 @@ const DETAIL_SX = { fontSize: "0.8rem", color: "var(--text-secondary)", ...BREAK
 const TITLE_SX = { m: 0, fontSize: "0.8rem", fontWeight: 700, color: "var(--text-primary)" };
 const HINT_SX = { m: 0, fontSize: "0.78rem", color: "var(--text-secondary)" };
 
-function Group({ title, hint, children }) {
+// Exported so the Regenerate report titles its own groups the same way.
+export function Group({ title, hint, children }) {
   const titleId = useId();
   return (
     <Box component="section" aria-labelledby={titleId} sx={{ mt: 1 }}>

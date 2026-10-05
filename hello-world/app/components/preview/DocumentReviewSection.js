@@ -26,6 +26,12 @@ import DocumentReviewResult from "./DocumentReviewResult";
 //   loadRealMaterialLines  async () => string[]: the candidate's real resume, read
 //             on activation (the modal holds the uploaded file). A failure leaves
 //             the review to run without it, and the result says so.
+//   onReviewed  ({ text, outcome }) after a review that really ran on `text`, so
+//             the host can tell which text its latest review describes (N104)
+//   regenerateReport / regenerateRow  nodes the host built (N104): the report of the
+//             last regenerate, shown at the top of the result region, and the
+//             Regenerate row, shown after it. This component decides nothing about
+//             them; it only gives them their place.
 //
 // One action, no setup: a click runs the deterministic review (no key, no network,
 // the same on every engine). The control never becomes `disabled` and never
@@ -64,6 +70,9 @@ export default function DocumentReviewSection({
   busy = false,
   covered = false,
   loadRealMaterialLines,
+  onReviewed,
+  regenerateReport = null,
+  regenerateRow = null,
 }) {
   const helperId = useId();
   const [entry, setEntry] = useState(null);
@@ -121,6 +130,7 @@ export default function DocumentReviewSection({
     if (currentKeyRef.current !== key) return;
 
     setEntry({ docKey, textKey, ...result });
+    if (result.outcome && !result.covered) onReviewed?.({ text: textKey, outcome: result.outcome });
     const spoken = reviewPresentationState(result);
     if (spoken.announce) {
       announce?.(spoken.state === REVIEW_STATE.FAILED ? { alert: spoken.announce, persist: true } : { polite: spoken.announce });
@@ -172,11 +182,13 @@ export default function DocumentReviewSection({
         </Box>
       </Box>
 
-      {presentation ? (
+      {presentation || regenerateReport ? (
         <Box sx={RESULT_SX[surface] ?? RESULT_SX.modal}>
-          <DocumentReviewResult outcome={shown.outcome} presentation={presentation} />
+          {regenerateReport}
+          {presentation ? <DocumentReviewResult outcome={shown.outcome} presentation={presentation} /> : null}
         </Box>
       ) : null}
+      {regenerateRow}
     </Box>
   );
 }

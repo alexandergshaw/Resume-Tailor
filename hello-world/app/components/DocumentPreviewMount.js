@@ -27,6 +27,8 @@ import { emailPreviewText, visibleScopesFor } from "../../lib/tailor/documentSco
 import { idealSurfaceFor } from "../../lib/tailor/idealSurface";
 import { reviewDocumentFor } from "../../lib/review/selectReviewDocument";
 import { useDriveDocuments } from "../hooks/useDriveDocuments";
+import useRegenerateWeaknesses from "../hooks/useRegenerateWeaknesses";
+import { ENGINE_OPTIONS } from "../settings/engine";
 import { recordDecision } from "@/lib/activityLog/appActivityLog.js";
 import { visuallyHidden } from "@/lib/copilot/answerStatus";
 
@@ -136,6 +138,13 @@ export default function DocumentPreviewMount({
   currentUser,
   resumeFile,
   coverLetterFile,
+  // N104: what a regenerate needs beyond the preview itself -- the entry writer a
+  // first Ideal run also uses, the preview's reload bump, and the two other inputs
+  // a run takes (page.js passes all four).
+  updateTailoringJob,
+  onPreviewReload,
+  additionalContext = "",
+  contextFiles = [],
 }) {
   // The previewer's "wrong focus" flag: opens a picker of the library's focus
   // areas; applying one re-tailors the previewed job with that focus pinned.
@@ -410,6 +419,25 @@ export default function DocumentPreviewMount({
     if (request) reviewRequests[scope] = request;
   }
   const reviewStripMounted = Object.keys(reviewRequests).length > 0;
+  // N104: the Regenerate row and report the resume strip carries. The in-flight guard,
+  // the Undo snapshot and the failure flag live in this hook, above the strips, which
+  // remount with the tab.
+  const regenerate = useRegenerateWeaknesses({
+    jobId: insertedFactsJobId,
+    tailoringMap,
+    engine: tailorEngine,
+    engineLabel: ENGINE_OPTIONS.find((option) => option.value === tailorEngine)?.label,
+    idealSurface,
+    reviewRequests,
+    posting: (preview.resumePreview.posting || tailoringMap[insertedFactsJobId]?.jobDescription || "").trim(),
+    url: (preview.resumePreview.url || "").trim(),
+    resumeFile,
+    additionalContext,
+    contextFiles,
+    updateTailoringJob,
+    onPreviewReload,
+    announce,
+  });
   async function handleMove(factId, direction) {
     setFactOpPending({ factId, kind: "move" });
     announce({ polite: "Moving the fact." });
@@ -602,6 +630,7 @@ export default function DocumentPreviewMount({
         announce={announce}
         covered={scope === "resume" && !!idealSurface?.reviewCovered}
         loadRealMaterialLines={loadRealMaterialLines}
+        {...regenerate.forScope(scope)}
       />
     ) : null;
   const resultBands =

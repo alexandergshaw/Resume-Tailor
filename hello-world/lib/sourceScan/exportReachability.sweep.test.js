@@ -749,7 +749,9 @@ describe("every export of a shipping module is asked for, or is on a ledger with
     // N104: 386 -> 385. flagPresentation.js#presentFlag gained a shipping
     // consumer (lib/review/classifyWeaknesses.js derives its 3 buckets from
     // presentFlag(...).tier), so it is no longer test-only.
-    expect(TEST_REFERENCED.length).toBe(385);
+    // N104 D/E: 385 -> 386 (+2, -1): regenerateSubmit.js#appendRegenerateFields and
+    // #submitRegenerate, pinned by name by regenerateSubmit.test.js; only same-module callers.
+    expect(TEST_REFERENCED.length).toBe(386);
     // A classifier that swept everything into this bucket would make the
     // orphan ledger vacuous, so pin the split rather than only the total.
     expect(UNUSED_IN_SHIPPING_MODULES.length).toBe(TEST_REFERENCED.length + ORPHANS.length);
@@ -885,7 +887,8 @@ describe("every export of a shipping module is asked for, or is on a ledger with
     // useLatestRef, buildGreenhouseSearchUrl) each have a shipping importer.
     // N104: 452 -> 451 (presentFlag gained a shipping consumer; the new N104
     // module exports are all wired, so net -1). TEST_REFERENCED 385 + ORPHANS 66.
-    expect(UNUSED_IN_SHIPPING_MODULES.length).toBe(451);
+    // N104 D/E: 451 -> 452 (TEST_REFERENCED's +1; ORPHAN_EXPORTS unmoved at 66).
+    expect(UNUSED_IN_SHIPPING_MODULES.length).toBe(452);
   });
 
   it("still reports the two symbol-level cases this sweep was built for", () => {

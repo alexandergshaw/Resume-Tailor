@@ -294,4 +294,27 @@ export const DECISION_LEDGER = [
     fields: ["reason", "engine", "level"],
     outcomes: ["acted", "skipped", "refused", "failed"],
   },
+  {
+    module: "app/hooks/useRegenerateWeaknesses.js",
+    id: "weakness-regenerate",
+    label: "Regenerate-to-address-weaknesses decisions",
+    // N104: a regenerate that replaced the text or left it the same ("acted"), a
+    // run that could not finish ("failed"), an activation the row refused because
+    // the state was not ready ("refused"), and an Undo ("acted"). `reason` is a
+    // canned code (regenerated / unchanged / undone / failed, or the unavailable
+    // state's own name), `engine` the engine's code name, and the rest are plain
+    // counts or a boolean. Never the resume, a requirement or keyword, a label, a
+    // company or a title (N77).
+    fields: [
+      "reason",
+      "engine",
+      "suggestionsBefore",
+      "suggestionsAfter",
+      "newlyFlagged",
+      "unqualifiedCount",
+      "confirmCount",
+      "coverageComplete",
+    ],
+    outcomes: ["acted", "skipped", "refused", "failed"],
+  },
 ];

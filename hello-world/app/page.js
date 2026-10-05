@@ -2962,6 +2962,10 @@ export default function Home() {
         currentUser={currentUser}
         resumeFile={resumeFile}
         coverLetterFile={coverLetterFile}
+        updateTailoringJob={updateTailoringJob}
+        onPreviewReload={() => setPreviewReloadKey((k) => k + 1)}
+        additionalContext={additionalContext}
+        contextFiles={contextFiles}
       />
 
       <CompanyResearchDialog
