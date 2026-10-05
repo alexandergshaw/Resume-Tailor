@@ -70,11 +70,55 @@ export function shouldAutoOpenIdealPreview({ isOpen, opts } = {}) {
 // its review exists only in the preview, so the preview opens (unless one is
 // already open or the caller owns delivery) and nothing downloads.
 export function resolveIdealChipDelivery({ payload, previewOpen, opts } = {}) {
-  const ideal = payload ? payload.ideal : null;
-  if (ideal === null || typeof ideal !== "object" || Array.isArray(ideal)) {
+  if (!isIdealPayload(payload)) {
     return { openPreview: false, autoDownload: !(opts && opts.skipDownload) };
   }
   return { openPreview: shouldAutoOpenIdealPreview({ isOpen: previewOpen, opts }), autoDownload: false };
+}
+
+// An Ideal run is the one whose /api/tailor response carries an `ideal` block
+// (an object). A null, string or array `ideal` is not one.
+function isIdealPayload(payload) {
+  const ideal = payload ? payload.ideal : null;
+  return ideal !== null && typeof ideal === "object" && !Array.isArray(ideal);
+}
+
+// The cover-letter fields a regenerate writes onto the tailoring entry.
+//   payload                 the /api/tailor response
+//   applyCover              the run's scope includes the cover letter
+//   coverLetterResultLines  the cover lines the handler read off the payload
+//   coverLetterDocxB64      the cover docx the handler read off the payload
+//
+//   applyCover   run        returns
+//   no           any        {}                                          resume-only: never touch the cover
+//   yes          standard   { coverLetterResultLines, coverLetterDocxB64 }  write the fresh cover
+//   yes          Ideal      {}                                          keep the cover the entry already has
+//
+// An Ideal run returns no cover letter, so the handler's locals are an empty
+// list and an empty string; spreading that pair over the entry would blank a
+// cover the user already has. Returning no fields leaves it untouched.
+export function resolveIdealCoverEntryFields({ payload, applyCover, coverLetterResultLines, coverLetterDocxB64 } = {}) {
+  if (!writesFreshCover({ payload, applyCover })) return {};
+  return { coverLetterResultLines, coverLetterDocxB64 };
+}
+
+// The scopes of a tailoring entry that a regenerate freshly produced, i.e. the
+// ones whose hand-edit flag (entry.edited) the handler clears. It follows the
+// same decision as the cover fields above: an Ideal run leaves the cover the
+// entry already has, so that cover's edit state must stay with it. Clearing it
+// would make a hand-edited cover read as unedited, and its next download would
+// serve the stale pre-edit engine document instead of the user's edited lines.
+export function regeneratedEditedScopes({ payload, applyResume, applyCover } = {}) {
+  return [
+    ...(applyResume ? ["resume"] : []),
+    ...(writesFreshCover({ payload, applyCover }) ? ["cover"] : []),
+  ];
+}
+
+// A run writes a fresh cover only when its scope includes one and it is not an
+// Ideal run (which returns no cover letter).
+function writesFreshCover({ payload, applyCover }) {
+  return !!applyCover && !isIdealPayload(payload);
 }
 
 // The context finishByOpeningPreview takes to open the dialog on an Ideal chip

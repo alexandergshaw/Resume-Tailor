@@ -42,7 +42,7 @@ import { editFingerprint } from "../lib/tailor/editMining";
 import { recordMatchGaps, annotateAndRank, promotedEditRules } from "../lib/tailor/localSignals";
 import { runWithConcurrency } from "../lib/tailor/runWithConcurrency";
 import { appendTailorLevel } from "../lib/tailor/tailorLevelRequest";
-import { resolveIdealChipDelivery, idealChipPreviewContext } from "../lib/tailor/idealDelivery";
+import { resolveIdealChipDelivery, idealChipPreviewContext, resolveIdealCoverEntryFields, regeneratedEditedScopes } from "../lib/tailor/idealDelivery";
 import { useProfileEntries } from "./hooks/useProfileEntries";
 import { useScreenshots } from "./hooks/useScreenshots";
 import { useCompanyResearch } from "./hooks/useCompanyResearch";
@@ -1975,16 +1975,13 @@ export default function Home() {
         generatedJobTitle,
         engine: engineUsed,
         // AC-3: clear only the scope(s) this run actually regenerated.
-        edited: withClearedEditedScopes(entry, [
-          ...(applyResume ? ["resume"] : []),
-          ...(applyCover ? ["cover"] : []),
-        ]),
+        edited: withClearedEditedScopes(entry, regeneratedEditedScopes({ payload, applyResume, applyCover })),
         error: tailorWarning,
         emailSubject,
         emailResultLines,
         // An Ideal run's review block rides the entry so the preview can render it.
         ...(applyResume ? { result, resultLines, docxB64, ideal: payload.ideal ?? null } : {}),
-        ...(applyCover ? { coverLetterResultLines, coverLetterDocxB64 } : {}),
+        ...resolveIdealCoverEntryFields({ payload, applyCover, coverLetterResultLines, coverLetterDocxB64 }), // Ideal: keep the existing cover
       }));
 
       // Persist the generated resume + cover letter and link them to the application.
@@ -2268,14 +2265,11 @@ export default function Home() {
         generatedJobTitle: nextJobTitle,
         engine: nextEngine,
         // AC-3: clear only the scope(s) this run actually regenerated.
-        edited: withClearedEditedScopes(entry, [
-          ...(applyResume ? ["resume"] : []),
-          ...(applyCover ? ["cover"] : []),
-        ]),
+        edited: withClearedEditedScopes(entry, regeneratedEditedScopes({ payload, applyResume, applyCover })),
         emailSubject: nextEmailSubject,
         emailResultLines: nextEmailResultLines,
-        ...(applyResume ? { result: nextResult, resultLines: nextResultLines, docxB64: nextDocxB64 } : {}),
-        ...(applyCover ? { coverLetterResultLines: nextCoverLetterResultLines, coverLetterDocxB64: nextCoverLetterDocxB64 } : {}),
+        ...(applyResume ? { result: nextResult, resultLines: nextResultLines, docxB64: nextDocxB64, ideal: payload.ideal ?? null } : {}),
+        ...resolveIdealCoverEntryFields({ payload, applyCover, coverLetterResultLines: nextCoverLetterResultLines, coverLetterDocxB64: nextCoverLetterDocxB64 }),
       }));
 
       // Persist the generated resume + cover letter and link them to an application.
@@ -2523,23 +2517,23 @@ export default function Home() {
             : j,
         ),
       );
-      updateTailoringJob(syntheticJobId, {
+      updateTailoringJob(syntheticJobId, (entry) => ({
+        ...entry,
         status: "done",
         result: nextResult,
         resultLines: nextResultLines,
         generatedJobTitle: nextJobTitle,
-        coverLetterResultLines: nextCoverLetterResultLines,
         engine: nextEngine,
         docxB64: nextDocxB64,
-        coverLetterDocxB64: nextCoverLetterDocxB64,
+        ideal: payload.ideal ?? null,
+        ...resolveIdealCoverEntryFields({ payload, applyCover: true, coverLetterResultLines: nextCoverLetterResultLines, coverLetterDocxB64: nextCoverLetterDocxB64 }),
         emailSubject: nextEmailSubject,
         emailResultLines: nextEmailResultLines,
-        // This call unconditionally overwrites both result/resultLines and
-        // coverLetterResultLines above (no applyResume/applyCover scoping
-        // here, see the comment below) — both scopes' content is genuinely
-        // fresh, so both edited flags are cleared.
-        edited: { resume: false, cover: false },
-      });
+        // No applyResume/applyCover scoping here (see the comment below): a
+        // standard run overwrites both documents, so both edited flags clear. An
+        // Ideal run returns no cover and leaves the existing one, so its flag stays.
+        edited: withClearedEditedScopes(entry, regeneratedEditedScopes({ payload, applyResume: true, applyCover: true })),
+      }));
 
       // Persist the generated resume + cover letter and link them to an
       // application. Unlike the other three generate sites, this one has no
@@ -2574,6 +2568,9 @@ export default function Home() {
         setApplicationsRefreshKey((k) => k + 1);
       }
 
+      const feedDelivery = resolveIdealChipDelivery({ payload, previewOpen: previewOpenRef.current });
+      if (feedDelivery.openPreview) preview.finishByOpeningPreview(idealChipPreviewContext(syntheticJob, nextJobTitle));
+      if (!feedDelivery.autoDownload) return [truncationNotice, ...nextEngineWarnings].filter(Boolean).join(" ") || null; // Ideal: preview only, never saved
       // N97 (AC-4 last hop): same resolve-and-pass as handleTailorJob above.
       const [feedResumeTemplate, feedCoverTemplate] = await Promise.all([
         resolveDefaultTemplateFile(currentUser?.id, "resume"),

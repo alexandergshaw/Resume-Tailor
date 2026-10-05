@@ -30,7 +30,8 @@
 // with a cover is the missing instrument.
 
 import { describe, it, expect } from "vitest";
-import { resolveIdealCoverEntryFields } from "./idealDelivery.js";
+import { resolveIdealCoverEntryFields, regeneratedEditedScopes } from "./idealDelivery.js";
+import { withEditedScope, editedForScope } from "../document/previewBlob.js";
 
 // An object `ideal` block is what marks a run Ideal, mirroring the existing
 // resolveIdealChipDelivery check. A real review block rides along.
@@ -137,5 +138,150 @@ describe("resolveIdealCoverEntryFields -- the cover fields a regenerate writes t
 
   it("is safe to call with no argument (a resume-only no-op: writes nothing)", () => {
     expect(resolveIdealCoverEntryFields()).toEqual({});
+  });
+});
+
+// ---------------------------------------------------------------------------
+// N111 follow-up -- the FEED path is the third cover-blank site, and the edit
+// flag is the other half of "preserve the cover".
+//
+// handleTailorFeedPosting has no applyResume/applyCover scoping: it always
+// writes both documents (applyCover is always true there), and a feed posting
+// can be tailored twice (the entry key is `feed-<posting id>`), so an Ideal
+// re-tailor after a standard one finds a real cover on the entry. Its merge is
+// `(entry) => ({ ...entry, ...resume fields, ...<cover decision>, edited })`.
+//
+// DISCLOSED LIMIT (same as the top of this file): this proves the DECISIONS a
+// feed handler composes, not that app/page.js composes them; the join over the
+// real handler is page.idealGaps.wiring.test.js, and the runtime proof is a
+// verifier tailoring an Ideal feed posting twice in the live app.
+
+// A feed entry after a STANDARD tailor whose cover the user then hand-edited.
+const feedEntryWithEditedCover = () => ({
+  status: "done",
+  result: "old resume",
+  resultLines: ["old resume"],
+  coverLetterResultLines: ["Dear Hiring Manager,", "My own hand-edited line.", "Sincerely, Alex"],
+  coverLetterDocxB64: "ENGINE_COVER_B64_PRE_EDIT",
+  edited: { resume: false, cover: true },
+});
+
+// What the feed handler's merge does with the two decisions, over an entry.
+// (previewBlob's withEditedScope is the same helper page.js's
+// withClearedEditedScopes is built from.)
+function mergeFeedRun(entry, payload, fresh) {
+  const edited = regeneratedEditedScopes({ payload, applyResume: true, applyCover: true }).reduce(
+    (flags, scope) => withEditedScope({ edited: flags }, scope, false),
+    entry.edited,
+  );
+  return {
+    ...entry,
+    status: "done",
+    result: fresh.result,
+    resultLines: fresh.resultLines,
+    ...resolveIdealCoverEntryFields({
+      payload,
+      applyCover: true,
+      coverLetterResultLines: fresh.coverLetterResultLines,
+      coverLetterDocxB64: fresh.coverLetterDocxB64,
+    }),
+    edited,
+  };
+}
+
+describe("the FEED path -- an Ideal re-tailor of the same posting keeps the session cover (third cover-blank site)", () => {
+  it("DATA-LOSS WITNESS -- an Ideal feed run over an entry with a cover leaves the cover and its edit flag intact", () => {
+    const merged = mergeFeedRun(feedEntryWithEditedCover(), IDEAL, {
+      result: "ideal resume",
+      resultLines: ["ideal resume"],
+      // the Ideal payload carries no cover, so the handler's locals are [] and ""
+      coverLetterResultLines: [],
+      coverLetterDocxB64: "",
+    });
+    expect(merged.coverLetterResultLines).toEqual(["Dear Hiring Manager,", "My own hand-edited line.", "Sincerely, Alex"]);
+    expect(merged.coverLetterDocxB64).toBe("ENGINE_COVER_B64_PRE_EDIT");
+    // the hand-edit flag travels with the preserved cover: if it were cleared,
+    // the cover's next download would serve the stale pre-edit engine document
+    expect(editedForScope(merged, "cover")).toBe(true);
+    // and the resume half still landed, its flag cleared
+    expect(merged.resultLines).toEqual(["ideal resume"]);
+    expect(editedForScope(merged, "resume")).toBe(false);
+  });
+
+  it("CONTROL (over-fire) -- a STANDARD feed re-tailor replaces the cover and clears BOTH edit flags, as today", () => {
+    // A build that preserved the cover or its flag on EVERY run reds here.
+    const merged = mergeFeedRun(feedEntryWithEditedCover(), STANDARD, {
+      result: "fresh resume",
+      resultLines: ["fresh resume"],
+      coverLetterResultLines: ["Fresh cover line"],
+      coverLetterDocxB64: "FRESH_COVER_B64",
+    });
+    expect(merged.coverLetterResultLines).toEqual(["Fresh cover line"]);
+    expect(merged.coverLetterDocxB64).toBe("FRESH_COVER_B64");
+    expect(editedForScope(merged, "cover")).toBe(false);
+    expect(editedForScope(merged, "resume")).toBe(false);
+  });
+
+  it("the FIRST feed tailor of a posting under Ideal (no earlier cover) writes no cover and invents no edited flag", () => {
+    const first = { status: "tailoring" };
+    const merged = mergeFeedRun(first, IDEAL, { result: "r", resultLines: ["r"], coverLetterResultLines: [], coverLetterDocxB64: "" });
+    expect(merged).not.toHaveProperty("coverLetterResultLines");
+    expect(merged).not.toHaveProperty("coverLetterDocxB64");
+    expect(editedForScope(merged, "cover")).toBe(false);
+    expect(editedForScope(merged, "resume")).toBe(false);
+  });
+});
+
+describe("regeneratedEditedScopes -- which edit flags a regenerate clears", () => {
+  it("exports a function (RED on HEAD -- the edit-flag decision is unbuilt)", () => {
+    expect(typeof regeneratedEditedScopes).toBe("function");
+  });
+
+  it("a STANDARD both-scope run clears both flags (CONTROL -- today's behavior)", () => {
+    expect(regeneratedEditedScopes({ payload: STANDARD, applyResume: true, applyCover: true })).toEqual(["resume", "cover"]);
+  });
+
+  it("an IDEAL both-scope run clears the resume flag only -- the cover it preserved keeps its edit state (THE FIX)", () => {
+    expect(regeneratedEditedScopes({ payload: IDEAL, applyResume: true, applyCover: true })).toEqual(["resume"]);
+  });
+
+  it("CONTROL (scope) -- resume-only and cover-only standard runs clear only what they regenerated", () => {
+    expect(regeneratedEditedScopes({ payload: STANDARD, applyResume: true, applyCover: false })).toEqual(["resume"]);
+    expect(regeneratedEditedScopes({ payload: STANDARD, applyResume: false, applyCover: true })).toEqual(["cover"]);
+  });
+
+  it("CONTROL (under-fire) -- a non-object `ideal` is a standard run and clears the cover flag", () => {
+    for (const ideal of [null, "yes", []]) {
+      expect(
+        regeneratedEditedScopes({ payload: { result: "r", ideal }, applyResume: true, applyCover: true }),
+        `ideal=${JSON.stringify(ideal)} must clear both`,
+      ).toEqual(["resume", "cover"]);
+    }
+  });
+
+  it("CLASS GUARD -- EVERY object-`ideal` payload leaves the cover flag alone, including a shape no special-case named", () => {
+    const NEW_MEMBER = { result: "r", ideal: { applicationReady: {}, hypothetical: {}, review: { bands: [{ id: "b1" }] } } };
+    for (const payload of [IDEAL, IDEAL_EMPTY, NEW_MEMBER]) {
+      expect(regeneratedEditedScopes({ payload, applyResume: true, applyCover: true })).toEqual(["resume"]);
+    }
+  });
+
+  it("AGREES WITH THE COVER DECISION -- over the whole grid, 'cover' is cleared exactly when a fresh cover is written", () => {
+    // The two decisions are read by different lines of one handler; if they ever
+    // disagree the entry holds either a blanked-but-"edited" cover or a
+    // preserved-but-"unedited" one. Pin them to the same truth table.
+    const payloads = [undefined, STANDARD, { result: "r", ideal: null }, { result: "r", ideal: "yes" }, { result: "r", ideal: [] }, IDEAL, IDEAL_EMPTY];
+    for (const payload of payloads) {
+      for (const applyCover of [true, false]) {
+        const writesCover =
+          Object.keys(resolveIdealCoverEntryFields({ payload, applyCover, coverLetterResultLines: ["c"], coverLetterDocxB64: "b" })).length > 0;
+        const clearsCoverFlag = regeneratedEditedScopes({ payload, applyResume: true, applyCover }).includes("cover");
+        expect(clearsCoverFlag, `payload=${JSON.stringify(payload)} applyCover=${applyCover}`).toBe(writesCover);
+      }
+    }
+  });
+
+  it("is safe to call with no argument (clears nothing)", () => {
+    expect(regeneratedEditedScopes()).toEqual([]);
   });
 });

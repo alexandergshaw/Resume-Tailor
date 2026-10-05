@@ -141,3 +141,108 @@ describe("#3 handleUrlSubmit stores the ideal block so the URL preview renders t
     expect(fn()).toMatch(/\bideal:/);
   });
 });
+
+// ---------------------------------------------------------------------------
+// N111 follow-up -- the cover-blank data loss has THREE sites, not two, and the
+// cover's edit flag must follow the cover. The assertions above only prove each
+// handler NAMES the helper; a handler could name it and still carry the old bare
+// write beside it. These joins read the handler's own "done" write (the
+// updateTailoringJob call that sets status "done") and prove the cover is
+// written ONLY through the helper, and that the helper is handed the payload
+// (without it the helper cannot tell an Ideal run from a standard one and would
+// blank the cover just as before).
+//
+// DISCLOSED LIMIT: as above, a source read proves the wiring, not the runtime
+// branch. The pure decisions carry their teeth in
+// lib/tailor/idealCoverPreserve.test.js.
+
+// The text from the "(" at `open` through its matching ")", or "" if unbalanced.
+function matchParens(src, open) {
+  let depth = 0;
+  for (let i = open; i < src.length; i += 1) {
+    if (src[i] === "(") depth += 1;
+    else if (src[i] === ")") {
+      depth -= 1;
+      if (depth === 0) return src.slice(open, i + 1);
+    }
+  }
+  return "";
+}
+
+// The argument text of the first `name(...)` call in `src` whose arguments match
+// `mustMatch`; "" when there is none.
+function callArgs(src, name, mustMatch) {
+  const needle = `${name}(`;
+  for (let at = src.indexOf(needle); at !== -1; at = src.indexOf(needle, at + needle.length)) {
+    const args = matchParens(src, at + name.length);
+    if (mustMatch.test(args)) return args;
+  }
+  return "";
+}
+
+// `src` with the first `name(...)` call removed.
+function withoutCall(src, name) {
+  const at = src.indexOf(`${name}(`);
+  if (at === -1) return src;
+  const args = matchParens(src, at + name.length);
+  return src.slice(0, at) + src.slice(at + name.length + args.length);
+}
+
+const doneWrite = (handler) => callArgs(sliceOf(handler), "updateTailoringJob", /status:\s*"done"/);
+const COVER_KEY = /\bcoverLetter(ResultLines|DocxB64)\b/;
+const HANDLERS = ["handleTailorJob", "handleUrlSubmit", "handleTailorFeedPosting"];
+
+describe("INSTRUMENT CANARY -- the cover-write extractor tells a bare write from a routed one", () => {
+  const bare = `x(); updateTailoringJob(id, { status: "done", coverLetterResultLines: lines, coverLetterDocxB64: b64 })`;
+  const shorthand = `updateTailoringJob(id, (e) => ({ ...e, status: "done", ...(applyCover ? { coverLetterResultLines, coverLetterDocxB64 } : {}) }))`;
+  const routed = `updateTailoringJob(id, { status: "done", ...resolveIdealCoverEntryFields({ payload, applyCover: true, coverLetterResultLines: lines, coverLetterDocxB64: b64 }) })`;
+  const bareOutside = (src) => COVER_KEY.test(withoutCall(callArgs(src, "updateTailoringJob", /status:\s*"done"/), "resolveIdealCoverEntryFields"));
+
+  it("flags a bare key:value write and a bare shorthand write, and passes a routed one", () => {
+    expect(bareOutside(bare)).toBe(true);
+    expect(bareOutside(shorthand)).toBe(true);
+    expect(bareOutside(routed)).toBe(false);
+  });
+
+  it("finds the done write (not some other updateTailoringJob call) in each real handler", () => {
+    for (const name of HANDLERS) {
+      expect(doneWrite(name), `${name} has no updateTailoringJob({ status: "done" ... }) write`).not.toBe("");
+    }
+  });
+});
+
+describe("the cover entry-write is ROUTED through the helper at all three sites", () => {
+  it.each(HANDLERS)("%s: its done write goes through resolveIdealCoverEntryFields and carries no cover key of its own", (name) => {
+    const write = doneWrite(name);
+    expect(write).toMatch(/resolveIdealCoverEntryFields\(/);
+    expect(withoutCall(write, "resolveIdealCoverEntryFields")).not.toMatch(COVER_KEY);
+  });
+
+  it.each(HANDLERS)("%s: hands the helper the payload and the scope, so it can tell an Ideal run from a standard one", (name) => {
+    const args = callArgs(doneWrite(name), "resolveIdealCoverEntryFields", /./);
+    expect(args).toMatch(/\bpayload\b/);
+    expect(args).toMatch(/\bapplyCover\b/);
+  });
+
+  it("the FEED handler's cover write is the third site: it feeds the helper its own cover locals (RED on HEAD -- bare unconditional write)", () => {
+    const args = callArgs(doneWrite("handleTailorFeedPosting"), "resolveIdealCoverEntryFields", /./);
+    expect(args).toMatch(/coverLetterResultLines:\s*nextCoverLetterResultLines/);
+    expect(args).toMatch(/coverLetterDocxB64:\s*nextCoverLetterDocxB64/);
+  });
+});
+
+describe("the cover's edit flag follows the cover decision at all three sites", () => {
+  it.each(HANDLERS)("%s: derives its cleared edit scopes from regeneratedEditedScopes, reading the entry's existing flags", (name) => {
+    const write = doneWrite(name);
+    expect(write).toMatch(/withClearedEditedScopes\(\s*entry\s*,/);
+    const args = callArgs(write, "regeneratedEditedScopes", /./);
+    expect(args).toMatch(/\bpayload\b/);
+    expect(args).toMatch(/\bapplyCover\b/);
+  });
+
+  it.each(HANDLERS)("%s: has no inline scope list or fixed { resume: false, cover: false } left to clear the cover flag on an Ideal run", (name) => {
+    const write = doneWrite(name);
+    expect(write).not.toMatch(/\["cover"\]/);
+    expect(write).not.toMatch(/edited:\s*\{\s*resume:\s*false\s*,\s*cover:\s*false\s*\}/);
+  });
+});
