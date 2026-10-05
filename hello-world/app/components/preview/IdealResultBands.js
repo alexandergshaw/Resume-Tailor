@@ -15,7 +15,7 @@ import {
   TIER,
   bandSummary,
   checkLabel,
-  groupFlagsBySpan,
+  flagRows,
   textRows,
 } from "@/lib/review/flagPresentation";
 import ReviewFlagsPanel from "./ReviewFlagsPanel";
@@ -57,6 +57,11 @@ const BODY_SX = {
 const NOTE_SX = { m: 0, mt: 0.75, fontSize: "0.82rem", color: "var(--text-primary)" };
 const FOOT_SX = { m: 0, mt: 1, fontSize: "0.75rem", color: "var(--text-secondary)" };
 
+// A missing keyword has no source line: the panel lists each one as its own row, not
+// quoted against line 1. The summary counts rows with the same flag the panel gets, so
+// "N suggestions" is the number of rows listed beneath it.
+const DOCUMENT_LEVEL_KEYWORD = true;
+
 // What ran and what did not, from `coverage`. When coverage is unusable, or says
 // everything ran while the review is still partial (a contradiction), the honest
 // line is "unknown": listing "everything" as checked would read as a clean bill.
@@ -81,7 +86,7 @@ export default function IdealResultBands({ ideal, currentText, handEdited, onOut
   const flags = (Array.isArray(review?.flags) ? review.flags : []).filter(
     (flag) => flag?.draftKind !== DRAFT_KIND.HYPOTHETICAL,
   );
-  const rows = groupFlagsBySpan(flags, DRAFT_KIND.APPLICATION_READY);
+  const rows = flagRows(flags, DRAFT_KIND.APPLICATION_READY, DOCUMENT_LEVEL_KEYWORD);
   const confirmCount = rows.filter((row) => row.tier === TIER.CONFIRM).length;
   const removedCount = textRows(review?.removed).length;
   const requirementCount = textRows(review?.unresolvedQualifications).length;
@@ -144,6 +149,7 @@ export default function IdealResultBands({ ideal, currentText, handEdited, onOut
               flags={flags}
               unresolvedQualifications={review?.unresolvedQualifications}
               draftKind={DRAFT_KIND.APPLICATION_READY}
+              documentLevelMissingKeyword={DOCUMENT_LEVEL_KEYWORD}
             />
           </>
         ) : null}

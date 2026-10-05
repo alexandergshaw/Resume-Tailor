@@ -67,10 +67,12 @@ export default function DocumentReviewResult({ outcome, presentation }) {
       ) : null}
 
       {reviewed ? (
+        // A missing keyword has no source line: it is shown as its own row, not quoted against line 1.
         <ReviewFlagsPanel
           flags={outcome.flags}
           unresolvedQualifications={hideUnresolved ? [] : outcome.unresolvedQualifications}
           draftKind={outcome.draftKind === DRAFT_KIND.HYPOTHETICAL ? DRAFT_KIND.HYPOTHETICAL : DRAFT_KIND.APPLICATION_READY}
+          documentLevelMissingKeyword
         />
       ) : null}
 

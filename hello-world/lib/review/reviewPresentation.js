@@ -4,13 +4,18 @@
 // nothing must never read as "no problems", because three of the seven checks never
 // ran and the user would send the document believing they passed.
 //
-//   reviewPresentationState({ outcome, freshness, covered })
+//   reviewPresentationState({ outcome, freshness, covered, documentLevelMissingKeyword })
 //     -> { state, tone, headline, summary, notice, footer, announce, hideUnresolved }
 //
 //   outcome    a ReviewOutcome (runDocumentReview) or { status: "failed" }
 //   freshness  "fresh" | "stale": does the text on screen still equal the text
 //              that was reviewed
 //   covered    another surface already shows a live review of exactly this text
+//   documentLevelMissingKeyword
+//              the flag the surface passes ReviewFlagsPanel, passed here too: the
+//              summary and the announcement count the rows the panel lists
+//              (flagPresentation.js#flagRows), so a count is never a different
+//              number from the rows under it. Off by default.
 //
 //   notice = { checked, notChecked, sentences }   all plain strings, no markup
 //
@@ -37,7 +42,7 @@
 
 import { CATEGORY } from "./contract.js";
 import { REVIEW_KIND } from "./reviewVerdict.js";
-import { DRAFT_KIND, TIER, bandSummary, checkLabel, groupFlagsBySpan, textRows } from "./flagPresentation.js";
+import { DRAFT_KIND, TIER, bandSummary, checkLabel, flagRows, textRows } from "./flagPresentation.js";
 
 export const REVIEW_STATE = Object.freeze({
   EMPTY: "empty",
@@ -118,7 +123,12 @@ function noticeFor(outcome, withheld, closing) {
   return { checked: checked.map(checkLabel), notChecked: notChecked.map(checkLabel), sentences };
 }
 
-export function reviewPresentationState({ outcome, freshness = REVIEW_FRESHNESS.FRESH, covered = false } = {}) {
+export function reviewPresentationState({
+  outcome,
+  freshness = REVIEW_FRESHNESS.FRESH,
+  covered = false,
+  documentLevelMissingKeyword = false,
+} = {}) {
   if (covered === true) return silent(REVIEW_STATE.COVERED, REVIEW_COPY.covered, REVIEW_COPY.announceCovered);
   if (outcome?.status === "empty") return silent(REVIEW_STATE.EMPTY, REVIEW_COPY.empty, REVIEW_COPY.announceEmpty);
   if (outcome?.status !== "reviewed") {
@@ -129,7 +139,7 @@ export function reviewPresentationState({ outcome, freshness = REVIEW_FRESHNESS.
   const withheld = withheldInputs(outcome);
   const hideUnresolved = withheld.some((item) => item.category === CATEGORY.UNSUPPORTED_AUTHORITY);
 
-  const rows = groupFlagsBySpan(list(outcome.flags), draftKind);
+  const rows = flagRows(list(outcome.flags), draftKind, documentLevelMissingKeyword);
   const confirm = rows.filter((row) => row.tier === TIER.CONFIRM).length;
   const requirements = hideUnresolved ? 0 : textRows(outcome.unresolvedQualifications).length;
   const toCheck = rows.length + requirements;

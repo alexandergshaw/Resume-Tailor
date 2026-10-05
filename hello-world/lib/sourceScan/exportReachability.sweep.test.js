@@ -756,7 +756,12 @@ describe("every export of a shipping module is asked for, or is on a ledger with
     // name by answerAsMe.test.js and used only inside their own module in production. The
     // other two exports stay OUT of this bucket: readAnswerAsMe has a shipping consumer
     // (lib/chat/chatbot.js) and useAnswerAsMe has one (app/components/ChatPanel.js).
-    expect(TEST_REFERENCED.length).toBe(391);
+    // N115 r2: 391 -> 392 (+1, -0): flagPresentation.js#groupFlagsBySpan LEFT the
+    // reachable set. Its three shipping importers (ReviewFlagsPanel, IdealResultBands,
+    // reviewPresentation) now call the new flagRows, which wraps it inside its own
+    // module, so only flagPresentation.test.js still imports it. flagRows has shipping
+    // importers and is in neither bucket; nothing joined the orphan half.
+    expect(TEST_REFERENCED.length).toBe(392);
     // A classifier that swept everything into this bucket would make the
     // orphan ledger vacuous, so pin the split rather than only the total.
     expect(UNUSED_IN_SHIPPING_MODULES.length).toBe(TEST_REFERENCED.length + ORPHANS.length);
@@ -895,7 +900,9 @@ describe("every export of a shipping module is asked for, or is on a ledger with
     // N104 D/E: 451 -> 452 (TEST_REFERENCED's +1; ORPHAN_EXPORTS unmoved at 66).
     // N102: 452 -> 457 (TEST_REFERENCED's +5 from answerAsMe.js; ORPHAN_EXPORTS
     // unmoved at 66 -- all five are test-referenced, none are new orphans).
-    expect(UNUSED_IN_SHIPPING_MODULES.length).toBe(457);
+    // N115 r2: 457 -> 458 (TEST_REFERENCED's +1, groupFlagsBySpan, described above;
+    // ORPHAN_EXPORTS unmoved at 66). TEST_REFERENCED 392 + ORPHANS 66.
+    expect(UNUSED_IN_SHIPPING_MODULES.length).toBe(458);
   });
 
   it("still reports the two symbol-level cases this sweep was built for", () => {

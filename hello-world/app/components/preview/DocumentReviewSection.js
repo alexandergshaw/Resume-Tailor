@@ -45,6 +45,10 @@ const NOUN = { resume: "resume", cover: "cover letter", hypothetical: "hypotheti
 
 const NONE_CAPTION = "Nothing to review yet - open a tailored resume or cover letter and choose Ask AI, then review it here.";
 
+// DocumentReviewResult lists each missing keyword as its own row, so the summary and
+// the announcement are counted that way too: the same flag, from here, to every count.
+const DOCUMENT_LEVEL_KEYWORD = true;
+
 const ROOT_SX = {
   modal: { px: { xs: 1.25, sm: 2 }, py: 1, borderBottom: "1px solid var(--border)" },
   chat: { px: 0.5, pb: 0.5 },
@@ -131,7 +135,7 @@ export default function DocumentReviewSection({
 
     setEntry({ docKey, textKey, ...result });
     if (result.outcome && !result.covered) onReviewed?.({ text: textKey, outcome: result.outcome });
-    const spoken = reviewPresentationState(result);
+    const spoken = reviewPresentationState({ ...result, documentLevelMissingKeyword: DOCUMENT_LEVEL_KEYWORD });
     if (spoken.announce) {
       announce?.(spoken.state === REVIEW_STATE.FAILED ? { alert: spoken.announce, persist: true } : { polite: spoken.announce });
     }
@@ -155,6 +159,7 @@ export default function DocumentReviewSection({
         outcome: shown.outcome,
         freshness: shown.textKey === textKey ? REVIEW_FRESHNESS.FRESH : REVIEW_FRESHNESS.STALE,
         covered: shown.covered,
+        documentLevelMissingKeyword: DOCUMENT_LEVEL_KEYWORD,
       })
     : null;
   const unavailable = running || busy;

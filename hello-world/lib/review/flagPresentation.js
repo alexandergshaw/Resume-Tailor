@@ -246,6 +246,26 @@ export function groupFlagsBySpan(flags, draftKind) {
     .map(({ key, spanId, excerpt, tier, items }) => ({ key, spanId, excerpt, tier, items }));
 }
 
+// The rows a flag list is DRAWN as, and so the only thing its counts may be taken
+// from: the panel lists these rows, and every summary and announcement over the same
+// flags counts them, passing the same `documentLevel` the panel gets.
+//
+// Off (the default), this is groupFlagsBySpan: one row per span. On, a missing-keyword
+// flag is a statement about the whole document that the reviewer anchors on its first
+// line, so each one is given no span (it cannot merge with another row) and no line to
+// quote, and its rows are listed ahead of the line-level ones; the reviewer's own
+// output is untouched.
+export function flagRows(flags, draftKind, documentLevel = false) {
+  if (!documentLevel) return groupFlagsBySpan(flags, draftKind);
+  const list = Array.isArray(flags) ? flags : [];
+  const isKeyword = (flag) => flag !== null && typeof flag === "object" && flag.category === CATEGORY.MISSING_KEYWORD;
+  const keywordRows = groupFlagsBySpan(
+    list.filter(isKeyword).map((flag) => ({ ...flag, spanId: null, excerpt: "" })),
+    draftKind,
+  ).map((row) => ({ ...row, key: `keyword-${row.key}` }));
+  return [...keywordRows, ...groupFlagsBySpan(list.filter((flag) => !isKeyword(flag)), draftKind)];
+}
+
 // The entries of a removed / left-out / unresolved list that have text to show.
 // Text-less entries are dropped HERE, once, so a group's count, its summary and
 // its rows can never disagree.

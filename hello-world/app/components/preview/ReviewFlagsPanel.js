@@ -3,12 +3,11 @@
 import { useId } from "react";
 import Box from "@mui/material/Box";
 import { BREAK_LONG_WORDS_SX } from "@/app/theme/mobileSx";
-import { CATEGORY } from "@/lib/review/contract";
 import {
   DRAFT_KIND,
   PANEL_COPY,
   TIER,
-  groupFlagsBySpan,
+  flagRows,
   textRows,
   tierTitle,
 } from "@/lib/review/flagPresentation";
@@ -134,20 +133,6 @@ function FlagGroup({ tier, rows, hint }) {
   );
 }
 
-// The rows of every flag. With `documentLevel`, each missing-keyword flag is given
-// no span (so it cannot merge with another row) and no line to quote, then its rows
-// are listed ahead of the line-level ones; the reviewer's own output is untouched.
-function rowsOf(flags, draftKind, documentLevel) {
-  if (!documentLevel) return groupFlagsBySpan(flags, draftKind);
-  const list = Array.isArray(flags) ? flags : [];
-  const isKeyword = (flag) => flag !== null && typeof flag === "object" && flag.category === CATEGORY.MISSING_KEYWORD;
-  const keywordRows = groupFlagsBySpan(
-    list.filter(isKeyword).map((flag) => ({ ...flag, spanId: null, excerpt: "" })),
-    draftKind,
-  ).map((row) => ({ ...row, key: `keyword-${row.key}` }));
-  return [...keywordRows, ...groupFlagsBySpan(list.filter((flag) => !isKeyword(flag)), draftKind)];
-}
-
 export default function ReviewFlagsPanel({
   flags = [],
   unresolvedQualifications = [],
@@ -155,7 +140,9 @@ export default function ReviewFlagsPanel({
   documentLevelMissingKeyword = false,
   classHints = false,
 }) {
-  const rows = rowsOf(flags, draftKind, documentLevelMissingKeyword);
+  // flagRows is the one derivation of these rows: a surface's summary counts them
+  // with the same flag it passes here, so the count is the rows listed below it.
+  const rows = flagRows(flags, draftKind, documentLevelMissingKeyword);
   const byTier = (tier) => rows.filter((row) => row.tier === tier);
   const unresolved = textRows(unresolvedQualifications);
   if (rows.length === 0 && unresolved.length === 0) return null;
