@@ -1404,6 +1404,18 @@
   verify_proof: null
   blocked_by: []
 
+- id: "N123"
+  state: "actionable"
+  title: "**OWNER REQUEST 2026-10-06: aesthetic overhaul of the Ask-AI chat modal (app/components/ChatPanel.js), goal = MINIMIZE clicks, click DISTANCE, and SCROLL DISTANCE between all controls.** The footer stacks four things vertically with gaps (DocumentReviewSection review control; attachment chips; the 'Answer as me' switch + its note on its own rows; the composer row +File/input/Send), plus a header (AI Help + offline chip | Clear + Close) and a pinned-context bar (label + Estimate salary + remove) — so related controls are spread out and the footer is tall. Design a tighter layout: group related controls, cut vertical stacking/gaps, shorten the pointer path between the input and its adjacent actions, without hiding any action behind an extra click (minimize-clicks forbids burying actions in menus). HARD INVARIANTS to preserve (do NOT regress): the three live regions (progress polite, review-alert assertive N113, chatError polite) and their non-nesting under the aria-busy display:contents wrapper; the N102 'Answer as me' switch accessible name via its own label (no Tooltip) + embedded disabled/suppressed + the aria-describedby note; the never-disable composer + Send (aria-disabled, focus-safe); Escape-dismiss + focus restore; Clear; Resend/Copy per-turn; Estimate salary one-click; drag-drop attach; the resize handle (desktop) / bottom-sheet (mobile). Aesthetic: reuse existing tokens/components only (no new token/shadow/radius), hold dark mode + the app's spacing step, keep the a11y gate (contrast, focus ring, hit-target). Verification: jsdom for the measurable parts (click path, DOM grouping, a11y names, live-region structure, line ceiling) + full suite; the final aesthetic judgment needs a visible-browser pass or owner sign-off (jsdom can't render aesthetics)."
+  owed_by: "Design (1c experience + 1e aesthetics) -> check -> plan -> TDD -> implement -> verify; aesthetic sign-off needs a visible browser/owner"
+  evidence: ["Owner request 2026-10-06", "ChatPanel.js footer stacks review+chips+switch+composer vertically; header + pinned-context bar add height"]
+  blocked_reason: null
+  instrument: null
+  owns: null
+  verify: null
+  verify_proof: null
+  blocked_by: []
+
 - id: "N122"
   state: "actionable"
   title: "**DONE 2026-10-05 (undoSmoothTransition logs acted/undo only on a landed persist, else failed/save-failed + returns {ok:false}; shared persistLanded helper so confirm+undo agree; handleUndoSmooth checks the result; real-409 test; existing ledger codes; stale save-failed comment corrected; full suite 18137 green). Pre-existing N93 UX (Undo affordance stays withdrawn after a failed undo; a retry button would be an owner UX call) noted, not changed.** SMOOTHING UNDO logs success unconditionally (same honesty-of-status class as N94 part 2, which fixed the APPLY path).** undoSmoothTransition (lib/coverFacts/smoothTransition.js, near end of file) and handleUndoSmooth (app/components/DocumentPreviewMount.js) log the undo decision as acted/undo REGARDLESS of whether the persist succeeded — a failed undo persist still logs success. FIX symmetrically to N94 part 2: log acted/undo only on a successful persist; on {ok:false}/throw log failed/save-failed and return {ok:false}. Add a failure-injection test (real 409 on the undo PUT) mirroring coverFactSmoothLedger.rc.test.js. Existing ledger vocabulary only. LOW (activity-log truthfulness, not safety), but it is the direct sibling of a fix just shipped so it should not linger."
