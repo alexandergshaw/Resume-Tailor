@@ -1404,6 +1404,18 @@
   verify_proof: null
   blocked_by: []
 
+- id: "N128"
+  state: "actionable"
+  title: "**N125 comp-guard (idealProjectPrompt.js compensationShapedNumbers) refinement — two minor advisories from the fix delta re-verify, both WITHIN the accepted no-leak residual (never leak given the deterministic path can't read posting numbers + the model is instructed not to echo), so NOT blockers; a quality refinement to cut over-rejection and close a cross-line label shape.** (1) A no-currency comp LABEL on its own line, >16 chars from its figure ('Compensation range:\\n120000') escapes both the sentence-scope and the 16-char window — a realistic ATS layout, the exact R-135 harm shape (but in the accepted residual class). (2) Sentence-scope flags small integers that co-occur with a pay word in a posting sentence, so an example reusing a common count (e.g. 'team of 8' in a sentence that also says 'pay') silently falls back to deterministic — partially reintroduces the fallback-rate problem N125 reduced. FIX DIRECTION (from the verifier): a MAGNITUDE FLOOR on pay-word-only catches (so a small count co-occurring with a pay word isn't treated as comp unless it's large enough to be pay) + NUMBER-ONLY-LINE LABEL INHERITANCE (a bare-number line inherits the preceding label line's pay-word status, closing the 'Compensation range:\\n120000' shape). Also fix the idealProjectPrompt.js:150-151 window-catch comment which overstates cross-line coverage. Keep R-135 (never loosen below same-sentence + currency/rate adjacency)."
+  owed_by: "A small comp-guard refinement round: magnitude floor + number-only-line label inheritance + comment fix; preserve R-135"
+  evidence: ["N125 fix delta re-verify 2026-10-06 (2 minor advisories, within the accepted residual)", "idealProjectPrompt.js compensationShapedNumbers sentence-scope + 16-char window"]
+  blocked_reason: null
+  instrument: null
+  owns: null
+  verify: null
+  verify_proof: null
+  blocked_by: []
+
 - id: "N127"
   state: "actionable"
   title: "**lib/sourceScan/exportReachability.sweep.test.js is over the 1000-line cap (1130 lines; 1114 at HEAD, N125 added ~16 reconciliation-ledger lines).** Pre-existing breach the file-size rule says a touching work item must shrink; N125 touched it but extraction is a risky refactor of a critical guard, so deferred here rather than blocking the top-priority feature. Fix: extract the per-chunk reconciliation LEDGER COMMENTS (the long history of count-delta justifications) into a sibling docs/notes file the test links to, OR split the sweep into focused files, so the executable guard drops under 1000 without losing the audit trail or the exact-count teeth. Low risk if the counts/assertions are untouched. Also fix the stale comment at idealProjectPrompt.js:41 ('Mirrors app/api/copilot/answer/route.js's own MAX_POSTING_CHARS' — route defines no such constant; the 20000 cap lives in answerContext.js) if not already fixed in the N125 fix round."
