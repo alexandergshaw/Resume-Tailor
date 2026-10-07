@@ -1644,6 +1644,18 @@
   verify_proof: null
   blocked_by: []
 
+- id: "N140"
+  state: "actionable"
+  title: "**OWNER PRIORITY 2026-10-07 (the core re-reported complaint; N134 was necessary but insufficient — this is the D-1/Option B case): the MAIN answer to a question still comes back as a STAR narrative instead of answering the question. ROOT CAUSE (traced): buildAnswerPrompt shapes via answerShapeInstruction(descriptor) where descriptor is the INTERVIEW FORMAT, not the question; answerShapeInstruction (answerPrompts.js:405-417) checks groups.includes('behavioral') FIRST; the default 'general' format has questionGroups [behavioral,technical,role] (interviewTypes.js:27-38), so STAR ALWAYS wins for general/mixed interviews regardless of the actual question — a 'how do you approach...' Technical-tagged question gets Situation/Task/Action/Result. FIX: make answer shaping QUESTION-AWARE so a NON-behavioral question in a general/mixed interview LEADS WITH THE DIRECT ANSWER (approach/position/why), experience as support; a genuine 'tell me about a time' question KEEPS STAR; single-purpose behavioral/leadership formats may keep STAR as default; technical/system-design branches already correct. KNOWN COST (ruled/intended): the general/default answer's FROZEN fixtures + answerShapeInstruction's GENERAL->STAR unit test + the interviewTypes 'general is byte-identical' comment all change. PRESERVE every fabrication guard + the N134 direct-answer system directive. Confirm the fix ships on the LIVE copilot answer path (route.js streaming branch). Check buildPointsPrompt for the same format-driven STAR issue and include if present. HARD CONSTRAINT: DON'T TOUCH THE IDEAL PROJECTS. Content quality (does it now answer directly?) is owner/Gemini-env re-test.**"
+  owed_by: "design (N140.design.r1.md) -> fresh check -> TDD red -> implement (question-aware answerShapeInstruction + frozen-fixture updates + tests) -> full-suite gate; content quality owner/real-env"
+  evidence: ["Owner 2026-10-07 + screenshot: STAR narrative on a 'how do you approach...' Technical-tagged live-copilot question", "answerShapeInstruction:405-417 checks behavioral first; general questionGroups=[behavioral,technical,role] (interviewTypes.js:27-38) so STAR always wins for general", "N134 system directive is overridden by this user-prompt shape instruction (the pre-identified D-1 case)"]
+  blocked_reason: null
+  instrument: null
+  owns: null
+  verify: null
+  verify_proof: null
+  blocked_by: []
+
 # VERIFICATION (1)
 - id: "V1"
   state: "verification"
