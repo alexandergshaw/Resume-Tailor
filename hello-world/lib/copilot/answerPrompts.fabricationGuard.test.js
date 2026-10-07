@@ -343,7 +343,7 @@ const FROZEN_ANSWER_PROMPT_NO_PAGES = [
   "",
   "Write the actual spoken answer the candidate should give, as 3-6 points — each one a complete, speakable sentence, not a fragment — together totalling roughly 80-220 words.",
   "Each point is first person, spoken register — no bullet markers beyond the STAR label where it applies, no headings, no stage directions, nothing but words meant to be said out loud.",
-  "Shape it as a STAR narrative: briefly set the situation and task, describe the actions the candidate personally took, and close with the result.",
+  "Shape it to the question that was actually asked: if this specific question asks the candidate to recount a past experience — a \"tell me about a time...\", \"describe a situation...\", or similar — shape it as a STAR narrative, briefly setting the situation and task, describing the actions the candidate personally took, and closing with the result; for any other question, lead with the direct answer the question calls for — the approach, the position, or the reason — and then draw on the candidate's real experience to support it, rather than narrating a past project in place of answering.",
   "Every claim must come from the CANDIDATE PREP NOTES, SUBMITTED RESUME, or SUBMITTED COVER LETTER above — select, order, and phrase freely, but never invent an employer, project, metric, or credential that isn't there. If the material is thin, give a shorter, honest answer rather than inventing detail.",
   'Return ONLY JSON of this exact shape: { "points": string[], "cues": string[], "type": "behavioral" | "technical" | "general" }',
   "cues: exactly one per point, same order — a 2-6 word prompt for that point, with the same STAR label where the point has one.",

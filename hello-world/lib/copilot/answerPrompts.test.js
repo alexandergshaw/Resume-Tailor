@@ -48,6 +48,7 @@ const TECHNICAL = interviewType("technical");
 const SYSTEM_DESIGN = interviewType("system-design");
 const PHONE_SCREEN = interviewType("phone-screen");
 const CASE_STUDY = interviewType("case-study");
+const LEADERSHIP = interviewType("leadership");
 
 const PAGES_BLOCK = "## Payments migration (page id: p1)\n\n- Cut settlement time from three days to one";
 
@@ -104,7 +105,7 @@ const FROZEN_ANSWER_PROMPT_NO_PAGES = [
   "",
   "Write the actual spoken answer the candidate should give, as 3-6 points — each one a complete, speakable sentence, not a fragment — together totalling roughly 80-220 words.",
   "Each point is first person, spoken register — no bullet markers beyond the STAR label where it applies, no headings, no stage directions, nothing but words meant to be said out loud.",
-  "Shape it as a STAR narrative: briefly set the situation and task, describe the actions the candidate personally took, and close with the result.",
+  "Shape it to the question that was actually asked: if this specific question asks the candidate to recount a past experience — a \"tell me about a time...\", \"describe a situation...\", or similar — shape it as a STAR narrative, briefly setting the situation and task, describing the actions the candidate personally took, and closing with the result; for any other question, lead with the direct answer the question calls for — the approach, the position, or the reason — and then draw on the candidate's real experience to support it, rather than narrating a past project in place of answering.",
   "Every claim must come from the CANDIDATE PREP NOTES, SUBMITTED RESUME, or SUBMITTED COVER LETTER above — select, order, and phrase freely, but never invent an employer, project, metric, or credential that isn't there. If the material is thin, give a shorter, honest answer rather than inventing detail.",
   'Return ONLY JSON of this exact shape: { "points": string[], "cues": string[], "type": "behavioral" | "technical" | "general" }',
   "cues: exactly one per point, same order — a 2-6 word prompt for that point, with the same STAR label where the point has one.",
@@ -403,10 +404,114 @@ describe("answerShapeInstruction", () => {
     // ["case-study", "role"], which none of the branches above name, and its
     // value is not "phone-screen". NOT "general" — that reads like the
     // obvious default and is not one: its groups include "behavioral", so it
-    // takes the STAR branch. Written against a real descriptor precisely so
-    // this stays true of the values the route actually passes.
+    // takes the behavioral branch, which for a mixed format like general
+    // returns the question-conditional shape (N140), not this neutral line.
+    // Written against a real descriptor precisely so this stays true of the
+    // values the route actually passes.
     expect(answerShapeInstruction(CASE_STUDY)).toContain("lead with the point");
-    expect(answerShapeInstruction(GENERAL)).toContain("STAR narrative");
+  });
+});
+
+// --- N140: a MIXED (general) format must answer the question, not always STAR.
+//
+// Owner evidence (2026-10-07): a non-behavioral "how do you approach..."
+// question asked in a GENERAL interview came back as a full Situation / Task /
+// Action / Result story. Root cause (design N140 §1): answerShapeInstruction
+// returns the UNCONDITIONAL STAR line for any descriptor whose questionGroups
+// include "behavioral", and general's groups are ["behavioral","technical",
+// "role"]. The fix (design §3a) keeps the crisp unconditional STAR for a
+// SINGLE-PURPOSE behavioral/leadership format (every group in
+// {behavioral,leadership}) and gives a MIXED format a model-conditional shape
+// instead: STAR only when THIS question asks for a past experience, otherwise
+// lead with the direct answer.
+//
+// ZERO-POWER WARNING (design §6): the pre-N140 assertion
+// `toContain("STAR narrative")` on GENERAL (removed from the previous describe
+// as a ruled false green) would have stayed green after the fix — the new
+// conditional string still literally contains "STAR narrative", so it
+// witnessed nothing. The cases below therefore assert the
+// DISCRIMINATING difference: the exact unconditional STAR sentence is ABSENT
+// for general while the conditional "lead with the direct answer" wording is
+// PRESENT, and behavioral !== general. An unbuilt fix (general still returning
+// the unconditional STAR — which is the state of HEAD) turns these RED.
+const STAR_UNCONDITIONAL =
+  "Shape it as a STAR narrative: briefly set the situation and task, describe the actions the candidate personally took, and close with the result.";
+const APPROACH =
+  "Shape it as approach-then-trade-offs: state the approach first, then the trade-offs considered and how the candidate would validate the result.";
+const BREVITY = "Keep it a crisp, concise summary — a recruiter screen calls for brevity, not a long story.";
+const NEUTRAL = "Shape it naturally for the question: lead with the point, then the concrete evidence behind it.";
+
+describe("answerShapeInstruction — N140: a mixed format answers the question, not always STAR", () => {
+  it("gives GENERAL a model-conditional shape that leads with the direct answer, not the unconditional STAR line (AC-N140-1)", () => {
+    const general = answerShapeInstruction(GENERAL);
+    // The discriminator, NOT toContain("STAR narrative"): the exact
+    // unconditional STAR sentence must be GONE for general...
+    expect(general).not.toContain(STAR_UNCONDITIONAL);
+    // ...and the conditional direct-answer wording must be present.
+    expect(general).toContain("lead with the direct answer");
+    // general is no longer byte-identical to the behavioral shape — the single
+    // fact that is false on HEAD (both return the unconditional STAR) and the
+    // mutation the chunk brief names ("reverts general to the unconditional
+    // STAR line").
+    expect(general).not.toBe(answerShapeInstruction(BEHAVIORAL));
+  });
+
+  it("makes the GENERAL shape CONDITIONAL on the question, naming the past-experience trigger (AC-N140-2)", () => {
+    const general = answerShapeInstruction(GENERAL);
+    expect(general).toContain("if this specific question asks the candidate to recount a past experience");
+    expect(general).toContain("tell me about a time");
+  });
+
+  it("keeps the crisp unconditional STAR for a SINGLE-PURPOSE behavioral or leadership format (AC-N140-3)", () => {
+    // Control / mutation guard: FAILS if the single-format STAR string is
+    // weakened or made conditional (the chunk brief's SECOND named mutation).
+    // GREEN on HEAD and must stay GREEN through the fix — the over-fire control
+    // that distinguishes "general only" from "conditional for every format".
+    expect(answerShapeInstruction(BEHAVIORAL)).toBe(STAR_UNCONDITIONAL);
+    expect(answerShapeInstruction(LEADERSHIP)).toBe(STAR_UNCONDITIONAL);
+  });
+
+  it("leaves the non-behavioral format shapes byte-identical to pre-N140 (AC-N140-4)", () => {
+    // Collateral-change guard: the fix touches only the behavioral branch, so
+    // every other branch must stay byte-for-byte unchanged. GREEN on HEAD.
+    expect(answerShapeInstruction(TECHNICAL)).toBe(APPROACH);
+    expect(answerShapeInstruction(SYSTEM_DESIGN)).toBe(APPROACH);
+    expect(answerShapeInstruction(PHONE_SCREEN)).toBe(BREVITY);
+    expect(answerShapeInstruction(CASE_STUDY)).toBe(NEUTRAL);
+  });
+});
+
+describe("buildAnswerPrompt carries the N140 general shape on the live path (AC-N140-5)", () => {
+  const liveBase = {
+    question: "Tell me about yourself.",
+    context: "",
+    profile: "",
+    resume: "",
+    coverLetter: "",
+    pagesBlock: "",
+  };
+
+  it("embeds the model-conditional shape for GENERAL, not the unconditional STAR line", () => {
+    // The LIVE path, driven the way route.js drives it: buildAnswerPrompt is
+    // what app/api/copilot/answer/route.js sends on both its streaming and
+    // non-streaming branches (design §1.4), and it embeds
+    // answerShapeInstruction(descriptor) inside itself (answerPrompts.js:486).
+    // RED on HEAD because the general prompt still carries the unconditional
+    // STAR sentence. This is a prompt-OUTPUT assertion, not a source-text one.
+    const prompt = buildAnswerPrompt({ ...liveBase, descriptor: GENERAL });
+    expect(prompt).not.toContain(STAR_UNCONDITIONAL);
+    expect(prompt).toContain("lead with the direct answer");
+  });
+
+  it("still embeds the unconditional STAR for a behavioral format — the positive control", () => {
+    // Distinguishes a correct fix from one that OVER-FIRES (drops STAR for
+    // every format): the behavioral prompt MUST keep the unconditional STAR and
+    // MUST NOT carry the general conditional wording. GREEN on HEAD and after
+    // the fix — so it also proves STAR_UNCONDITIONAL is a reachable string, not
+    // one that never appears.
+    const prompt = buildAnswerPrompt({ ...liveBase, descriptor: BEHAVIORAL });
+    expect(prompt).toContain(STAR_UNCONDITIONAL);
+    expect(prompt).not.toContain("lead with the direct answer");
   });
 });
 

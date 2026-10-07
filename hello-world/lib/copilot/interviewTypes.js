@@ -23,6 +23,12 @@
 // hasn't already seen. A caller that never passes an interview type, or
 // explicitly passes "general", must get byte-identical output to today —
 // keep it that way if this file changes.
+//
+// N140: that byte-identity claim covers general's DESCRIPTOR DATA only
+// (questionGroups, lengthTarget, expectations). The downstream sample-answer
+// SHAPE instruction for general was deliberately made question-conditional
+// (answerPrompts.js answerShapeInstruction), so the ANSWER shape line for
+// general is no longer byte-identical to the pre-N140 unconditional STAR line.
 
 export const DEFAULT_INTERVIEW_TYPE = "general";
 

@@ -399,13 +399,31 @@ export function buildPointsPrompt(
 }
 
 // How the spoken answer should be shaped for this format (AC-G2-D-4): a
-// behavioral or leadership format wants a STAR narrative, a technical or
-// system-design format wants approach-then-trade-offs, and a phone screen
-// wants brevity over a story.
+// single-purpose behavioral or leadership format wants a STAR narrative, a
+// technical or system-design format wants approach-then-trade-offs, and a phone
+// screen wants brevity over a story.
+//
+// N140 — a MIXED format (general) must not impose STAR on a non-behavioral
+// question. general's questionGroups are ["behavioral","technical","role"]
+// (interviewTypes.js), so the plain `includes("behavioral")` test used to return
+// the unconditional STAR narrative for every general answer — an opinion/approach
+// question ("how do you approach...") came back as a full Situation/Task/Action/
+// Result story instead of stating the approach. A single-purpose behavioral or
+// leadership format (every questionGroup is behavioral/leadership — behavioral and
+// leadership, per the registry) KEEPS the unconditional STAR shape, because by that
+// format's own definition every question asks for a past experience. A mixed format
+// emits a model-conditional shape instead: STAR only when THIS question asks for a
+// past experience, otherwise lead with the direct answer. This is the user-prompt
+// counterpart of ANSWER_SYSTEM's N134 directive, which the old unconditional line
+// contradicted and overrode. Phrased to carry no POSITION_RULE/LICENCE/MANDATE shape
+// the fabrication guards forbid (answerPrompts.fabricationGuard.test.js).
 export function answerShapeInstruction(descriptor) {
   const groups = descriptor.questionGroups;
   if (groups.includes("behavioral") || groups.includes("leadership")) {
-    return "Shape it as a STAR narrative: briefly set the situation and task, describe the actions the candidate personally took, and close with the result.";
+    if (groups.every((group) => group === "behavioral" || group === "leadership")) {
+      return "Shape it as a STAR narrative: briefly set the situation and task, describe the actions the candidate personally took, and close with the result.";
+    }
+    return "Shape it to the question that was actually asked: if this specific question asks the candidate to recount a past experience — a \"tell me about a time...\", \"describe a situation...\", or similar — shape it as a STAR narrative, briefly setting the situation and task, describing the actions the candidate personally took, and closing with the result; for any other question, lead with the direct answer the question calls for — the approach, the position, or the reason — and then draw on the candidate's real experience to support it, rather than narrating a past project in place of answering.";
   }
   if (groups.includes("technical") || groups.includes("system-design")) {
     return "Shape it as approach-then-trade-offs: state the approach first, then the trade-offs considered and how the candidate would validate the result.";
