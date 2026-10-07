@@ -24,14 +24,19 @@
 //     contains": a posting digit run is rejected only when it is adjacent to a
 //     pay marker ($/€/£ immediately before, a /hr-style rate unit after, or a
 //     salary/stipend/bonus/pay word in the number's own sentence or within a
-//     short window of it). A figure echoing a
-//     comp-shaped posting number (the salary band, an hourly rate, a stipend,
-//     a signing bonus) is rejected AT ANY MAGNITUDE; an incidental non-comp
-//     integer the posting merely happens to state (a headcount "team of 8", an
-//     experience floor "5+ years", a "99.95%" uptime figure) is now ALLOWED to
-//     recur in the example. That change is why the two headcount/floor cases in
-//     the comp-shaped describe below assert `not.toBeNull` — a deliberate owner
-//     inversion of the old blunt small-integer rejection, not a regression.
+//     short window of it). N128 then split that rule by marker strength. A
+//     figure echoing a currency-marked or rate-marked posting number (the
+//     salary band "$78,496", an hourly "$42/hr", a "$5k" signing bonus) is
+//     rejected AT ANY MAGNITUDE. A number whose ONLY pay evidence is a pay word
+//     (no currency sign, no rate unit) must additionally be at or above
+//     PAY_WORD_FLOOR (1000), or carry a k/m suffix, to be rejected; a bare
+//     sub-1000 figure on a pay word alone is no longer read as pay. An
+//     incidental non-comp integer the posting merely happens to state (a
+//     headcount "team of 8", an experience floor "5+ years", a "99.95%" uptime
+//     figure) is now ALLOWED to recur in the example. That change is why the
+//     two headcount/floor cases in the comp-shaped describe below assert
+//     `not.toBeNull` — a deliberate owner inversion of the old blunt
+//     small-integer rejection, not a regression.
 //   - The bounds the last round established (four labelled bullets, 12-28 words
 //     each, 120 total) are imported from the archetype module rather than
 //     restated, so a generated example and a templated one cannot drift into

@@ -69,19 +69,22 @@
 // symbols that no shipping code asks for. An allow-list of 365 undifferentiated
 // entries would BURY the findings it exists to surface, which is the exact
 // failure mode this sweep must avoid. So the census is split by a MEASURED
-// property, not by taste:
+// property, not by taste. (Those first-run figures are history. The counts
+// below are the CURRENT pinned values, which the assertions further down
+// enforce; the table at the top of ./exportReachability.ledger.md is the
+// single place to read them if this prose has fallen behind.)
 //
-//   RULE TR-1 (298 symbols)  the export is unused by shipping code, but at
+//   RULE TR-1 (396 symbols)  the export is unused by shipping code, but at
 //       least one `.test.js` imports it BY NAME. This repo's dominant
 //       convention is to widen a module's export surface so a unit test can
 //       pin an internal helper or a threshold constant directly instead of
 //       through the public function. Such a symbol has a real consumer, so it
 //       is a deliberately widened surface rather than a lost feature. Covered
-//       by rule and COUNTED EXACTLY -- not enumerated, because 298 lines of
-//       boilerplate is how the 56 below would get lost. Raising that count is
-//       a review event: see the assertion's own comment.
+//       by rule and COUNTED EXACTLY -- not enumerated, because hundreds of lines
+//       of boilerplate is how the orphans below would get lost. Raising that
+//       count is a review event: see the assertion's own comment.
 //
-//   ORPHAN_EXPORTS (56 symbols)  unused by shipping code AND imported by no
+//   ORPHAN_EXPORTS (66 symbols)  unused by shipping code AND imported by no
 //       test anywhere. Nothing in this repository reads these. Each carries
 //       its own line and its own stated reason. This is where `summaryViewFor`
 //       lands. NOTE the boundary this bucket does NOT police: "unused" here
@@ -91,12 +94,14 @@
 //       before cutting. docx.js#buildDocxFromUploadedTemplate is the worked
 //       example of exactly that near-miss.
 //
-//   ALLOWED_UNREACHABLE_MODULES (12) / UNWIRED_MODULES (0)  whole files no
-//       entry point can reach. The twelve are sweep and test infrastructure
-//       (including this sweep's own ledger module -- see its self-entry
-//       there) and are justified one by one. The findings bucket is empty
-//       because all three of its entries were reviewed and deleted -- see
-//       the block comment above UNWIRED_MODULES in ./exportReachability.ledger.js.
+//   ALLOWED_UNREACHABLE_MODULES (14) / UNWIRED_MODULES (5)  whole files no
+//       entry point can reach. The fourteen are sweep and test infrastructure
+//       (including this sweep's own ledger and scan modules -- see their
+//       self-entries there) and are justified one by one. The findings bucket
+//       holds five modules whose production call sites are later, named steps
+//       of the chunk that landed them; its earlier entries were reviewed and
+//       deleted or wired up -- see the block comment above UNWIRED_MODULES in
+//       ./exportReachability.ledger.js.
 //
 // Every entry in every bucket must carry a reason; the sweep asserts that, so
 // "add it to the list" is never the cheap way out. The two module buckets and
