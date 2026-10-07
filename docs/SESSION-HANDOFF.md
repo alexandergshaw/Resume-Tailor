@@ -7,13 +7,17 @@ _Last updated: 2026-10-07 by the orchestrator._
 ---
 
 ## 1. In-flight uncommitted work (the dirty tree)
-- None. All of tonight's work is committed and pushed to main.
+- None. All work is committed and pushed to main.
 
 ## 2. Mid-flight waves / active dispatches
-- None.
+- N133 dispatched (truthy-empty-entry cover-only preview edge; AC + red test seat).
 
 ## 3. Killed / stalled residue
-- None.
+- None. (N134's first implementer was user-killed mid-work; the partial production edits were valid and were finished by a fresh implementer — N134 shipped.)
+
+## 3a. N134 — SHIPPED 2026-10-07 (full suite 18453 green)
+- Direct-answer directive added to POINTS_SYSTEM + ANSWER_SYSTEM in lib/copilot/answerPrompts.js (first point/sentence = direct answer, rest = support; behavioral/STAR carved out). FROZEN_POINTS_SYSTEM/FROZEN_ANSWER_SYSTEM oracles updated; *_PROMPT_NO_PAGES user-prompt oracles byte-identical (no builder touched). New answerPrompts.directAnswer.test.js (54 tests, mutation controls M1-M5). ideal-project feature untouched per owner hard constraint.
+- **OWNER RE-TEST (decisive):** whether answers now genuinely answer directly is Gemini-env only. If a non-behavioral question's DEFAULT (general) format still opens with a story, the pre-written follow-up is Option B/D-1 (neutralize the STAR-for-everything line in answerShapeInstruction) — OUT OF SCOPE this chunk, file as new work only after owner confirms.
 - **Standing hazards (keep):** (a) full suite is ORCHESTRATOR-OWNED at integration — never have an implementer background it. (b) module-adding chunks must reconcile the two pinned counts in lib/sourceScan/exportReachability.sweep.test.js (now 536 lines; the ledger history lives in exportReachability.ledger.md — update its current-values table). (c) PowerShell cwd goes stale — use an ABSOLUTE `Set-Location "...\hello-world"` (or run render from repo root) to avoid `hello-world/hello-world` path errors. (d) comment-only / byte-identical-code changes can ship on the targeted suite + isolation pass without the 27-min full suite.
 
 ## 4. Shipped this session (2026-10-06/07), all full-suite-green on main
