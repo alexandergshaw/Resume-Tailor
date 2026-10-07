@@ -18,6 +18,7 @@ import TableSortLabel from "@mui/material/TableSortLabel";
 import Typography from "@mui/material/Typography";
 import { resolveDocumentBlob } from "../../lib/document/docx";
 import { digestSummaryLine } from "../../lib/tracking/applicationDigest";
+import { hasPreviewableDocs } from "../../lib/tracking/applicationPreviewEntry";
 import DescriptionIcon from "@mui/icons-material/Description";
 import TabHeader from "./TabHeader";
 import EmptyState from "./EmptyState";
@@ -79,6 +80,8 @@ export default function TrackingTab({
   openCommsInAppDialog,
   openAddCommunicationDialog,
   openEditApplicationDialog,
+  // N132: opens the rich preview/edit modal on an application's stored docs.
+  openApplicationPreview,
   handleDeleteApplication,
   setAppDialog,
   setStageError,
@@ -441,6 +444,7 @@ export default function TrackingTab({
                     askAiAbout={askAiAbout}
                     buildApplicationContextString={buildApplicationContextString}
                     openEditApplicationDialog={openEditApplicationDialog}
+                    openApplicationPreview={openApplicationPreview}
                     handleDeleteApplication={handleDeleteApplication}
                     downloadDocxFiles={downloadDocxFiles}
                   />
@@ -571,6 +575,8 @@ export default function TrackingTab({
                   // above: gate before it can become an href.
                   const postingHref = safeExternalHref(app.application_url || pos?.url);
                   const resume = app.generated_resumes;
+                  // N132: View/Edit needs the opener AND stored documents.
+                  const canPreview = !!openApplicationPreview && hasPreviewableDocs(app);
                   const stages = applicationStages[app.id] || [];
                   const emailClassification = emailClassificationsByAppId[app.id] ?? null;
                   const EMAIL_CHIP_STYLES = {
@@ -741,16 +747,29 @@ export default function TrackingTab({
                         ) : "—"}
                       </TableCell>
                       <TableCell sx={{ maxWidth: 200 }}>
-                        {resume?.content ? (
+                        {/* N132: a cover-only row has no resume text but still
+                            has documents to open, so the cell renders on
+                            either (not just `resume?.content`) and the
+                            View/Edit control is gated on stored documents. */}
+                        {resume?.content || canPreview ? (
                           <Box sx={{ display: "flex", alignItems: "flex-start", gap: 0.5, flexDirection: "column" }}>
-                            <span style={{ fontSize: 12, color: "var(--text-secondary)", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" }}>
-                              {resume.content}
-                            </span>
+                            {resume?.content && (
+                              <span style={{ fontSize: 12, color: "var(--text-secondary)", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" }}>
+                                {resume.content}
+                              </span>
+                            )}
                             <Box sx={{ display: "flex", gap: 1, flexWrap: "wrap" }}>
-                              <Button size="small" sx={{ p: 0, minWidth: 0, fontSize: 11 }} onClick={() => setAppDialog({ open: true, rowIndex: idx, kind: "resume" })}>
-                                View full
-                              </Button>
-                              {renderDownloadControl(pos, resume)}
+                              {resume?.content && (
+                                <Button size="small" sx={{ p: 0, minWidth: 0, fontSize: 11 }} onClick={() => setAppDialog({ open: true, rowIndex: idx, kind: "resume" })}>
+                                  View full
+                                </Button>
+                              )}
+                              {resume?.content && renderDownloadControl(pos, resume)}
+                              {canPreview && (
+                                <Button size="small" sx={{ p: 0, minWidth: 0, fontSize: 11 }} onClick={() => openApplicationPreview(app)}>
+                                  View/Edit
+                                </Button>
+                              )}
                             </Box>
                           </Box>
                         ) : "—"}

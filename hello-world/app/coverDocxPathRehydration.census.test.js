@@ -34,6 +34,10 @@ import { stripComments } from "@/lib/sourceScan/tokenizeSource.js";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const PAGE = path.join(ROOT, "app", "page.js");
+// N132 step 1 extracted the rehydrated-entry builder out of app/page.js into this
+// helper. The coverLetterDocxPath literal now lives ONLY here; page.js reaches it
+// through rehydratedEntryFromApp (asserted separately below).
+const ENTRY_HELPER = path.join(ROOT, "lib", "tracking", "applicationPreviewEntry.js");
 
 // --- classifiers ----------------------------------------------------------
 
@@ -55,7 +59,8 @@ function coverSelectNamesDocxPath(code) {
 // Whether a merged/rehydrated entry threads coverLetterDocxPath from the cover
 // row's docx_path. Captures the value expression up to the terminating comma or
 // newline and checks it reads `cover?.docx_path` / `cover.docx_path` (the cover
-// row object bound at page.js:1300), not the resume's `gen`.
+// row object bound in lib/tracking/applicationPreviewEntry.js's storedCoverLines),
+// not the resume's `gen`.
 function coverPathThreadingValue(code) {
   const m = /(^|[^A-Za-z0-9_$])coverLetterDocxPath\s*:\s*([^\n]+)/.exec(code);
   return m ? m[2] : null;
@@ -65,6 +70,14 @@ function threadsCoverPath(code) {
   const value = coverPathThreadingValue(code);
   if (value === null) return false;
   return /\bcover\s*\??\.\s*docx_path\b/.test(value);
+}
+
+// Whether the source CALLS rehydratedEntryFromApp (an actual invocation, not the
+// import binding and not a mention in a comment). Once the literal moved into the
+// helper, this call is the only thing keeping page.js's rehydration effect
+// connected to the cover-path threading.
+function callsRehydratedEntryHelper(code) {
+  return /(^|[^A-Za-z0-9_$])rehydratedEntryFromApp\s*\(/.test(code);
 }
 
 // --- canary FIRST ---------------------------------------------------------
@@ -127,6 +140,19 @@ describe("the read-path census discriminates (canary)", () => {
     const commented = stripComments(`// coverLetterDocxPath: cover?.docx_path\nconst y = 1;`);
     expect(threadsCoverPath(commented)).toBe(false);
   });
+
+  it("classifies a real call of rehydratedEntryFromApp as a call, an import or comment as not", () => {
+    const called = stripComments(
+      `const entry = rehydratedEntryFromApp(app, { existing, fallbackTitle: job.title });`
+    );
+    const importOnly = stripComments(
+      `import { rehydratedEntryFromApp } from "../lib/tracking/applicationPreviewEntry";`
+    );
+    const commented = stripComments(`// rehydratedEntryFromApp(app)\nconst y = 1;`);
+    expect(callsRehydratedEntryHelper(called)).toBe(true);
+    expect(callsRehydratedEntryHelper(importOnly)).toBe(false);
+    expect(callsRehydratedEntryHelper(commented)).toBe(false);
+  });
 });
 
 // --- the census against the real file -------------------------------------
@@ -147,8 +173,32 @@ describe("app/page.js wires the cover letter's docx_path from load to entry (AC-
     expect(coverSelectNamesDocxPath(source())).toBe(true);
   });
 
+  // N132 step 1 retarget: the merged-entry construction (and with it the
+  // `coverLetterDocxPath: ...cover?.docx_path` literal) moved out of page.js into
+  // lib/tracking/applicationPreviewEntry.js's rehydratedEntryFromApp. The N59
+  // intent is unchanged -- the entry carries the COVER letter's own stored docx
+  // path, never the resume's -- so the literal grep follows it to the helper, and
+  // page.js is asserted to still go through that helper.
+  const helperSource = () => stripComments(readFileSync(ENTRY_HELPER, "utf8"));
+
+  it("precondition: the entry helper is present and builds the rehydrated entry", () => {
+    // A rename or move of the helper must not silently empty the threading
+    // assertion below (false-absence trap): the file must exist and still be the
+    // place that threads the resume's docxPath, the sibling field.
+    const code = helperSource();
+    expect(/\bdocxPath\s*:/.test(code)).toBe(true);
+    expect(/export\s+function\s+rehydratedEntryFromApp\b/.test(code)).toBe(true);
+  });
+
   it("the rehydration threads coverLetterDocxPath from the cover row", () => {
-    // RED on HEAD: no coverLetterDocxPath is written onto the merged entry.
-    expect(threadsCoverPath(source())).toBe(true);
+    // RED on HEAD (pre-N132-step-1: page.js; now: the helper): no
+    // coverLetterDocxPath is written onto the merged entry.
+    expect(threadsCoverPath(helperSource())).toBe(true);
+  });
+
+  it("app/page.js builds the rehydrated entry through the helper", () => {
+    // Without this call the helper's cover-path threading never reaches the
+    // tailoringMap, and the assertion above would pass against dead code.
+    expect(callsRehydratedEntryHelper(source())).toBe(true);
   });
 });

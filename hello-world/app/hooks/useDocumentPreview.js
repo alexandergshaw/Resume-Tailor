@@ -289,7 +289,7 @@ export function useDocumentPreview({
 
   function openResumePreview(job, opts = {}) {
     if (!job) return;
-    const t = tailoringMap[job.id] || {};
+    const t = tailoringMap[job.id] || opts.entry || {};
     const wantsCover = opts.tab === "cover" && previewScopeAvailable(t, "cover");
     setResumePreview({
       open: true,

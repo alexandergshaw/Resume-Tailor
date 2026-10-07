@@ -92,6 +92,7 @@ import { startInterviewPrepResearch } from "../lib/interviewPrep/prepTrigger";
 import { selectAppliedToggleAction } from "../lib/applications/applicationDecisions";
 import { persistGeneratedDocuments } from "../lib/supabase/persistGeneration";
 import { normalizeInterviewValue } from "../lib/tracking/stages";
+import { rehydratedEntryFromApp } from "../lib/tracking/applicationPreviewEntry";
 import {
   fetchFullPostingDescription,
   tailorPostingFields,
@@ -1298,39 +1299,9 @@ export default function Home() {
         if (existing?.result || existing?.status === "tailoring") continue;
         const app = externalIdToApp.get(String(job.id));
         if (!app) continue;
-        const gen = app.generated_resumes;
-        const cover = app.generated_cover_letters;
-        const resumeText = typeof gen?.content === "string" ? gen.content : "";
-        const resumeLines =
-          Array.isArray(gen?.content_lines) && gen.content_lines.length > 0
-            ? gen.content_lines
-            : resumeText
-              ? resumeText.split("\n")
-              : [];
-        const coverLines =
-          Array.isArray(cover?.content_lines) && cover.content_lines.length > 0
-            ? cover.content_lines
-            : typeof cover?.content === "string" && cover.content
-              ? cover.content.split("\n")
-              : [];
-        if (!resumeText && coverLines.length === 0) continue;
-        next[job.id] = {
-          ...(existing || {}),
-          status: "done",
-          downloaded: true,
-          generatedJobTitle:
-            existing?.generatedJobTitle || app.positions?.title || job.title || "",
-          result: resumeText,
-          resultLines: resumeLines,
-          coverLetterResultLines: coverLines,
-          // Preserve the faithful docx for the chip download's storage fallback.
-          docxPath: typeof gen?.docx_path === "string" ? gen.docx_path : "",
-          // N59: the cover letter's OWN stored docx path (never the resume's) --
-          // lets a rehydrated preview/accept resolve the faithful engine
-          // document instead of only its text.
-          coverLetterDocxPath: typeof cover?.docx_path === "string" ? cover.docx_path : "",
-          error: "",
-        };
+        const entry = rehydratedEntryFromApp(app, { existing, fallbackTitle: job.title });
+        if (!entry) continue;
+        next[job.id] = entry;
         changed = true;
       }
       return changed ? next : current;
@@ -1450,6 +1421,33 @@ export default function Home() {
   });
   // Whether a preview is open NOW, for handlers that act after a long await.
   const previewOpenRef = useLatestRef(preview.resumePreview.open);
+
+  // Tracking row "View/Edit": open the rich preview modal on an application's
+  // STORED resume + cover, loaded into tailoringMap on demand (a table row is
+  // not necessarily a tracked job). In-session content wins, as in the
+  // rehydration effect. `entry` rides along because the map write below has
+  // not committed when openResumePreview reads it for the tab (same tick).
+  function openApplicationPreview(app) {
+    const positions = app?.positions || null;
+    const jobId = positions?.external_id ? String(positions.external_id) : `app:${app?.id}`;
+    const existing = tailoringMap[jobId];
+    const entry = rehydratedEntryFromApp(app, { existing, fallbackTitle: positions?.title || "" });
+    if (!entry) return;
+    const keepExisting = !!(existing?.result || existing?.status === "tailoring");
+    if (!keepExisting) setTailoringMap((cur) => ({ ...cur, [jobId]: entry }));
+    const openEntry = keepExisting ? existing : entry;
+    const tab = preview.previewScopeAvailable(openEntry, "resume") ? "resume" : "cover";
+    preview.openResumePreview(
+      {
+        id: jobId,
+        title: openEntry.generatedJobTitle || positions?.title || "",
+        company: positions?.company || "",
+        description: positions?.description || "",
+        url: app.application_url || positions?.url || "",
+      },
+      { tab, entry: openEntry },
+    );
+  }
 
   // Screenshots → tailored-documents pipeline (Manual Applying › Screenshots).
   const screenshots = useScreenshots({
@@ -2773,6 +2771,7 @@ export default function Home() {
             openCommsInAppDialog={appDialogs.openCommsInAppDialog}
             openAddCommunicationDialog={appDialogs.openAddCommunicationDialog}
             openEditApplicationDialog={appDialogs.openEditApplicationDialog}
+            openApplicationPreview={openApplicationPreview}
             handleDeleteApplication={appDialogs.handleDeleteApplication}
             setAppDialog={appDialogs.setAppDialog}
             setStageError={appDialogs.setStageError}

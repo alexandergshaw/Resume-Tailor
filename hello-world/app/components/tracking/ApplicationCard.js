@@ -10,6 +10,7 @@ import {
   createStageDialogState,
   formatDateTimeLocalInputValue,
 } from "@/lib/tracking/stages";
+import { hasPreviewableDocs } from "@/lib/tracking/applicationPreviewEntry";
 import { TOUCH_TARGET_SX, BREAK_LONG_WORDS_SX } from "@/app/theme/mobileSx";
 
 // Extracted from TrackingTab.js (AC-T: tracking cards' touch targets and text
@@ -53,6 +54,7 @@ export default function ApplicationCard({
   askAiAbout,
   buildApplicationContextString,
   openEditApplicationDialog,
+  openApplicationPreview,
   handleDeleteApplication,
   downloadDocxFiles,
 }) {
@@ -179,6 +181,14 @@ export default function ApplicationCard({
         )}
         {resume?.content && (
           <Button size="small" variant="outlined" sx={TOUCH_TARGET_SX} onClick={() => setAppDialog({ open: true, rowIndex: idx, kind: "resume" })}>Resume</Button>
+        )}
+        {/* N132: "Resume" above is the read-only TEXT view; this opens the rich
+            preview/edit modal. Gated on stored documents (resume OR cover),
+            not on canDownloadResume -- the preview needs no uploaded template.
+            Also gated on the opener being supplied, so a caller that does not
+            wire it gets no control rather than one that throws on click. */}
+        {openApplicationPreview && hasPreviewableDocs(app) && (
+          <Button size="small" variant="outlined" sx={TOUCH_TARGET_SX} onClick={() => openApplicationPreview(app)}>View/Edit</Button>
         )}
         {canDownloadResume && (
           <Button
