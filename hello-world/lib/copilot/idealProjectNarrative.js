@@ -255,24 +255,37 @@ const ARCHETYPES = {
     ],
   },
 
+  // N131: the FIELD-NEUTRAL archetype. It is what a teaching, nursing, finance,
+  // operations, sales or admin posting is shown (and what any posting that only
+  // brushes one incidental tech word is shown — see rankBuckets), so none of
+  // its copy may belong to a tech company: no spreadsheets-and-automation
+  // story, no backlog, no release or shipping vocabulary. The problem, the
+  // build and the result are told in terms any role recognizes — a routine that
+  // cost time and quality, one standard way of working, a staged rollout, a
+  // measured result — and the three outcome categories (time saved, error rate,
+  // volume handled) exist in every field. idealProjectNonTech.test.js holds the
+  // vocabulary denylist that keeps it that way.
   generic: {
-    d1Default: "the core of the business",
-    d2Default: "a small amount of automation",
+    d1Default: "the day-to-day work",
+    d2Default: "a simple template",
     title: (d1) => `Owning one problem end to end in ${d1}, from written problem statement to proven number.`,
     problem:
-      "A process living on three spreadsheets and one person's memory, costing six hours a week per team and failing silently.",
+      "A routine task done three different ways, costing about six hours a week per team and producing errors nobody caught until much later.",
     built: (d2) =>
-      `One owned system with a single source of truth, the remaining manual steps made visible, and ${d2} taking the repetitive middle.`,
+      `One agreed standard method with a short checklist, the error-prone steps made visible, and ${d2} handling the repetitive steps in between.`,
     ranWith: (m) =>
-      `Two-week ${m} increments with something usable each time, a backlog ordered by cost rather than volume, and trade-offs written down.`,
+      `Piloted with one team first, then widened in two-week ${m} increments, fixing the costliest problem each round and writing every trade-off down.`,
     ranWithout:
-      "Two-week increments with something usable each time, a backlog ordered by cost rather than volume, and trade-offs written down.",
+      "Piloted with one team first, then widened in two-week increments, fixing the costliest problem each round and writing every trade-off down.",
     landed:
       "Baselined before and measured the same way after — including the team that went back to the old process, and why.",
+    // These three categories are the first three of GENERIC_METRICS in
+    // idealProject.js, in the same order: the checklist next to the example
+    // and the example's own outcomes name the same kinds of number.
     outcomes: [
-      { metric: "cost saved", figure: "$41k a year in recovered time and retired tooling" },
-      { metric: "adoption rate", figure: "9 of the 11 teams on it within two quarters" },
-      { metric: "time-to-ship", figure: "request-to-delivered 11 weeks → 4" },
+      { metric: "time saved", figure: "about 6 hours a week recovered per team" },
+      { metric: "error / defect rate", figure: "late-caught errors 14% → 3% of cases" },
+      { metric: "volume handled", figure: "320 cases a month, up from 210, with the same team" },
     ],
   },
 };

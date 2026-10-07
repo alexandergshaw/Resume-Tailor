@@ -297,7 +297,10 @@ describe("idealProject", () => {
   it("still falls back to GENERIC_METRICS, unchanged, when no bucket matches at all", () => {
     const result = idealProject(NO_BUCKET_POSTING);
     expect(result).not.toBeNull();
-    expect(result.metrics).toEqual(["cost saved", "adoption rate", "time-to-ship"]);
+    // RULED CONTENT CHANGE (N131): GENERIC_METRICS became field-neutral (it used
+    // to read cost saved / adoption rate / time-to-ship). The fall-through
+    // itself — no bucket matches, so the generic set is used — is what this pins.
+    expect(result.metrics).toEqual(["time saved", "error / defect rate", "volume handled"]);
   });
 
   it("is deterministic for the product posting the fit-ranking fix targets", () => {
@@ -313,7 +316,8 @@ describe("idealProject", () => {
   it("routes a non-infra posting whose only infra-ish words were dropped tokens to generic, not infrastructure", () => {
     const result = idealProject(DROPPED_TOKEN_POSTING);
     expect(result).not.toBeNull();
-    expect(result.metrics).toEqual(["cost saved", "adoption rate", "time-to-ship"]);
+    // RULED CONTENT CHANGE (N131): the field-neutral GENERIC_METRICS, as above.
+    expect(result.metrics).toEqual(["time saved", "error / defect rate", "volume handled"]);
     expect(result.metrics).not.toContain("latency reduction %");
     // And the worked example is the generic archetype, not the infra one.
     expect(result.project.title).not.toMatch(/war room/i);

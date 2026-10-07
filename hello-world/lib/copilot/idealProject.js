@@ -96,7 +96,8 @@ function collect(grouped, categories) {
 // below) and a posting can still trigger more than one if the best-fitting
 // bucket doesn't fill MAX_METRICS on its own; GENERIC_METRICS is always
 // appended last so a posting whose vocabulary matches nothing named below
-// still gets a usable, sensible set instead of an empty one.
+// (or only brushes one incidental word of it — see MIN_SPECIALIZED_HITS) still
+// gets a usable, sensible set instead of an empty one.
 //
 // Each `test` carries the `g` flag purely so categoryMetrics can COUNT its
 // matches instead of only asking yes/no — the set of words each bucket
@@ -144,7 +145,22 @@ const METRIC_BUCKETS = [
     metrics: ["incidents prevented", "audit / compliance pass rate"],
   },
 ];
-const GENERIC_METRICS = ["cost saved", "adoption rate", "time-to-ship", "team size managed"];
+// N131: field-neutral — the kinds of number that exist in a teaching, nursing,
+// finance, operations or sales role as much as in a tech one. The first three
+// are, in order, the three outcome categories of the `generic` archetype in
+// idealProjectNarrative.js: this is the fallback for exactly the postings that
+// archetype is chosen for, so the checklist and the worked example agree.
+const GENERIC_METRICS = ["time saved", "error / defect rate", "volume handled", "satisfaction score"];
+
+// N131: a specialized (tech) bucket — and the archetype it keys — is chosen only
+// on a STRONG match: its pattern must hit the posting at least this many times.
+// One incidental word ("cloud" in a school's gradebook tool, "compliance" in a
+// nursing posting, "data" in an accountant's reconciliation) says nothing about
+// the role, yet used to hand a teacher an SRE story and a nurse an audit-fire-
+// drill story. Counts MATCHES (the same unit rankBuckets already scores by), so
+// a bare-SRE posting whose only infra signal is the repeated acronym still
+// clears it.
+const MIN_SPECIALIZED_HITS = 2;
 
 // Rank buckets by how well each one actually FITS the posting — the number
 // of times its own pattern matches the posting text — rather than trying
@@ -170,14 +186,24 @@ const GENERIC_METRICS = ["cost saved", "adoption rate", "time-to-ship", "team si
 // fallback posting an `infra` archetype (bucket 0, score 0) instead of
 // "generic" — and `categoryMetrics` would start emitting infra metrics for
 // it too, breaking the documented GENERIC_METRICS fallback.
+//
+// The strong-match rule (N131, MIN_SPECIALIZED_HITS) lives HERE for the same
+// reason, and is all-or-nothing: if even the BEST bucket scores under the bar
+// the whole ranking is empty. Both callers then fall to the neutral `generic`
+// archetype and GENERIC_METRICS TOGETHER. Gating only the archetype pick would
+// leave a teaching posting with the neutral story next to latency/uptime
+// metrics drawn from a score-1 bucket — R-137's mismatch, back again. Once the
+// winner IS strong, categoryMetrics still tops its phrases up from the lower
+// buckets exactly as before.
 function rankBuckets(text) {
-  return METRIC_BUCKETS.map((bucket, idx) => ({
+  const ranked = METRIC_BUCKETS.map((bucket, idx) => ({
     bucket,
     idx,
     score: (text.match(bucket.test) || []).length,
   }))
     .filter((entry) => entry.score > 0)
     .sort((a, b) => b.score - a.score || a.idx - b.idx);
+  return ranked.length > 0 && ranked[0].score >= MIN_SPECIALIZED_HITS ? ranked : [];
 }
 
 function categoryMetrics(text, limit) {
@@ -227,7 +253,7 @@ function joinShapeTerms(terms) {
 // A selected posting ALWAYS yields an example (owner, N125). When no KIND of
 // project can be named — no shape term survives, or the taxonomy itself
 // failed — this is the role-agnostic last resort: the `generic` archetype with
-// its own safe default for {D1} ("the core of the business"), an empty `shape`
+// its own safe default for {D1} ("the day-to-day work"), an empty `shape`
 // (the renderer falls back to `summary`, which is always non-empty), and the
 // same category metrics every other path gets. Needs nothing from the
 // taxonomy, which is exactly why the failure path can use it too:
@@ -309,8 +335,9 @@ export function idealProject(description, { question = "", points = [] } = {}) {
   // The archetype is chosen by the SAME fit ranking that already picks
   // `metrics` (R-137), so a product posting can never be handed product
   // metrics next to an infrastructure story. `rankBuckets` already applies
-  // the `score > 0` filter, so "matches nothing" lands on "generic" here
-  // exactly the way it lands on GENERIC_METRICS in categoryMetrics.
+  // the `score > 0` filter and the N131 strong-match bar, so "matches nothing"
+  // AND "brushes one incidental tech word" both land on "generic" here exactly
+  // the way they land on GENERIC_METRICS in categoryMetrics.
   const archetypeKey = rankBuckets(text)[0]?.bucket.key || "generic";
 
   return {
