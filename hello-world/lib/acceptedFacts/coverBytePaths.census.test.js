@@ -28,6 +28,12 @@ import { stripComments } from "@/lib/sourceScan/tokenizeSource.js";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 
+// Every test that calls `realFiles()` reads and comment-strips the whole
+// app/ and lib/ tree. That takes several seconds alone and longer when the full
+// suite is contending for the same disk, so these tests carry their own
+// generous per-test timeout instead of vitest's default.
+const WHOLE_TREE_TIMEOUT_MS = 30000;
+
 // Every function that can turn an entry into a .docx blob. `buildPreviewBlob`
 // and `previewBlobArgs` are included because the Drive save reaches the bytes
 // through them and not through `resolveDocumentBlob` directly.
@@ -186,7 +192,7 @@ describe("the census instrument discriminates (canary)", () => {
     expect(files.some((f) => f.rel === "lib/document/docx.js")).toBe(true);
     expect(files.some((f) => f.rel === "app/components/StatusBar.js")).toBe(true);
     expect(files.some((f) => f.rel === "app/components/TrackingTab.js")).toBe(true);
-  });
+  }, WHOLE_TREE_TIMEOUT_MS);
 });
 
 // ---------------------------------------------------------------------------
@@ -214,7 +220,7 @@ describe("every cover-capable byte path is one this chunk's tests actually drive
     const rows = censusOver(realFiles());
     const coverFiles = [...new Set(rows.filter((r) => r.cover).map((r) => r.rel))].sort();
     expect(coverFiles).toEqual([...EXPECTED_COVER_CAPABLE].sort());
-  });
+  }, WHOLE_TREE_TIMEOUT_MS);
 
   it("the two drag paths and the application card pass no cover field at all", () => {
     const rows = censusOver(realFiles());
@@ -226,14 +232,14 @@ describe("every cover-capable byte path is one this chunk's tests actually drive
       expect(mine.length, `${rel} has no byte-builder call site any more`).toBeGreaterThan(0);
       expect(mine.every((r) => r.cover === false), `${rel} gained a cover-capable call`).toBe(true);
     }
-  });
+  }, WHOLE_TREE_TIMEOUT_MS);
 
   it("the census is not vacuous: the real tree yields more than a handful of sites", () => {
     const rows = censusOver(realFiles());
     expect(rows.length).toBeGreaterThan(5);
     expect(rows.some((r) => r.cover)).toBe(true);
     expect(rows.some((r) => !r.cover)).toBe(true);
-  });
+  }, WHOLE_TREE_TIMEOUT_MS);
 });
 
 // WHAT THIS CANNOT CATCH. It is a source sweep: it sees which fields a call
