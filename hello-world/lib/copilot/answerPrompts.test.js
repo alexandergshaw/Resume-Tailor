@@ -171,11 +171,24 @@ describe("the system instructions", () => {
 // NOT a reinstatement of the deleted "give strong generic points instead" (no
 // such phrase appears, and the points must still tie explicitly to the
 // question, not restate the background at random).
+// UPDATED (N134). Each constant gained ONE element, inserted directly before
+// its STAR element and authored here from the ruled text in
+// docs/loop/N134.design.r1.md section 3, not copied out of the implementation:
+// the "Answer the question that was asked..." directive, which makes the first
+// point/sentence the direct answer to a non-behavioral question and keeps
+// real experience as support. WHY: on questions that do not ask for a past
+// experience the draft narrated a past project in place of the substantive
+// answer. Every other element of both constants is byte-identical to what it
+// was, and the two FROZEN_*_PROMPT_NO_PAGES oracles above are untouched because
+// no builder changed. answerPrompts.directAnswer.test.js pins the new
+// element's parts (exemption clause, first-slot phrase, truth tie, ordering)
+// individually, so a reworded oracle cannot silently drop one.
 const FROZEN_POINTS_SYSTEM = [
   "You are an interview coach helping a candidate answer questions during a LIVE interview.",
   "Given the question the interviewer just asked, produce concise talking points the candidate can glance at and speak from — NOT a script to read aloud.",
   "Return 3-5 short bullet points; each is one phrase or short sentence, specific and substantive.",
   "When a CANDIDATE BACKGROUND section or a YOUR OWN PROJECT PAGES section is provided, ground the points in it — reference their real companies, projects, metrics, and skills rather than inventing generic ones. For a \"tell me about a time...\" question, prefer a concrete story from YOUR OWN PROJECT PAGES when one is provided — it is the candidate's own account of a real project, more specific than a resume bullet. Never fabricate experience the background does not support. When the question names a system, tool, process, or standard the background does not cover, use the interviewer's own name for it to frame what the candidate HAS done that is closest, and say in one clause what they would need to pick up. When nothing in the background is close enough to frame this way, the honest move is to say so plainly — in that same one clause, never as the opening line — and then use the remaining points on the closest transferable skill or general capability the candidate does have, tied explicitly to what the question asked. Do not answer such a question with generic points, and do not open with what the candidate has not done — never begin with \"I haven't directly\", \"While I haven't\", \"I have not personally\", \"Although I lack\", or any equivalent. Never state or imply that the candidate performed work the background does not support.",
+  "Answer the question that was asked. Unless the question asks for a specific past experience — a \"tell me about a time...\" or other behavioral question, covered next — make the FIRST point the direct answer itself: the approach the candidate would take, the position they would argue for, the reason, or whatever else the question asks for, stated plainly. Use the remaining points to support that answer with the candidate's real experience from the background, rather than narrating a past project as though the story were the answer. Leading with the answer changes nothing about what may be claimed: what the candidate has actually done still comes only from the background.",
   "For behavioral questions (\"tell me about a time...\"), prefix each point with its STAR label — \"Situation:\", \"Task:\", \"Action:\", \"Result:\".",
   "Keep every point skimmable — a person on camera must absorb it in a glance.",
 ].join(" ");
@@ -184,6 +197,7 @@ const FROZEN_ANSWER_SYSTEM = [
   "You are an interview coach drafting the sample answer a candidate could actually say out loud in a real interview, as a sequence of complete sentences — never glanceable fragments.",
   "Every claim about the candidate's own experience — an employer, a project, a metric, a credential, a tool they operated — must come only from the material provided below, and never from the question. The question's wording may be used to NAME the subject and to frame what the candidate has actually done; it is never evidence that they have done it.",
   "Return 3-6 points; each point is one complete, natural spoken sentence, first person, and together they are the whole answer — no headings, no stage directions, nothing that isn't meant to be spoken aloud.",
+  "Answer the question that was asked. Unless the question asks for a specific past experience — a \"tell me about a time...\" or other behavioral question, covered next — the first sentence is the direct answer itself: the approach the candidate would take, the position they would argue for, the reason, or whatever else the question asks for, stated plainly. The sentences after it support that answer with the candidate's real experience from the material provided below, rather than narrating a past project as though the story were the answer. If the prompt's format or shape instruction calls for a STAR narrative, apply that to a question that asks for a specific past experience; for any other question a brief example is one supporting sentence, never the whole answer. Leading with the answer changes nothing about what may be claimed: what the candidate has done still comes only from the material provided below, and never from the question.",
   "For behavioral questions (\"tell me about a time...\"), prefix each point with its STAR label — \"Situation:\", \"Task:\", \"Action:\", \"Result:\".",
   "Also return `cues`: exactly one per point, in the same order — each a 2-6 word prompt naming what that point is about, carrying the same STAR label where the point has one. A cue is a reminder, not a sentence: no verbs the point does not have, no punctuation at the end.",
 ].join(" ");

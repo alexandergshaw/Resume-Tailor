@@ -90,11 +90,46 @@ import { AUTO, codeLanguageLabel } from "@/lib/copilot/codeLanguages";
 // an explicit, sanctioned escape for the case that clause does not cover: no
 // close experience exists at all — phrased the same way, mid-clause, never as
 // the first thing said.
+//
+// N134 — ANSWER THE QUESTION THAT WAS ASKED. Observed drift: on a question that
+// does not ask for a past experience ("how would you...", "what is your view
+// on...", "why this role"), the draft narrated a past project as though that
+// story were the answer, with the substantive position (the approach, the
+// stance, the reason) missing or buried. The grounding paragraph above, the
+// "concrete examples" emphasis every general-format user prompt carries, and
+// the project-page instruction all push toward real experience, and nothing
+// told the model that such a question is answered by stating the answer first
+// and using experience to support it. The directive element inserted between
+// the grounding paragraph and the STAR rule does that, and nothing else in this
+// array was edited. It exempts the behavioral case in the same breath ("tell
+// me about a time...", covered by the STAR rule right after it), so the pair
+// reads as one decision rather than two competing ones.
+//
+// THE DIRECTIVE IS POSITIVE-PHRASED ON PURPOSE, and its wording is constrained
+// by three detectors in answerPrompts.fabricationGuard.test.js. POSITION_RULE
+// matches any negative rule about where an answer opens ("never/do not/avoid
+// ... open/begin/start/lead"), so a rule written as "do not start with an
+// example" adds a match that ANSWER_SYSTEM must not have. TRUTH_CONDITION is
+// structurally unique: POINTS_SYSTEM must hold exactly one match (the "Never
+// state or imply ..." sentence at the end of the grounding paragraph — the
+// guard strips the first match and expects a second to be absent), and
+// ANSWER_SYSTEM must hold none (the guard appends a rejected position rule to
+// it and expects the detector to fire). The directive's own truth tie is
+// therefore worded without that shape ("still comes only from the background",
+// "...and never from the question"). The substantive answer is also worded
+// modally ("the approach the candidate WOULD take"), so filling the first slot
+// never requires a past-tense claim.
+//
+// This is the POSITIVE counterpart of the rejected position-only rule described
+// above (guard 2): it mandates where the answer starts, so it carries its truth
+// condition inside the same element. The guard detectors cannot see that last
+// sentence — answerPrompts.directAnswer.test.js pins it directly.
 export const POINTS_SYSTEM = [
   "You are an interview coach helping a candidate answer questions during a LIVE interview.",
   "Given the question the interviewer just asked, produce concise talking points the candidate can glance at and speak from — NOT a script to read aloud.",
   "Return 3-5 short bullet points; each is one phrase or short sentence, specific and substantive.",
   "When a CANDIDATE BACKGROUND section or a YOUR OWN PROJECT PAGES section is provided, ground the points in it — reference their real companies, projects, metrics, and skills rather than inventing generic ones. For a \"tell me about a time...\" question, prefer a concrete story from YOUR OWN PROJECT PAGES when one is provided — it is the candidate's own account of a real project, more specific than a resume bullet. Never fabricate experience the background does not support. When the question names a system, tool, process, or standard the background does not cover, use the interviewer's own name for it to frame what the candidate HAS done that is closest, and say in one clause what they would need to pick up. When nothing in the background is close enough to frame this way, the honest move is to say so plainly — in that same one clause, never as the opening line — and then use the remaining points on the closest transferable skill or general capability the candidate does have, tied explicitly to what the question asked. Do not answer such a question with generic points, and do not open with what the candidate has not done — never begin with \"I haven't directly\", \"While I haven't\", \"I have not personally\", \"Although I lack\", or any equivalent. Never state or imply that the candidate performed work the background does not support.",
+  "Answer the question that was asked. Unless the question asks for a specific past experience — a \"tell me about a time...\" or other behavioral question, covered next — make the FIRST point the direct answer itself: the approach the candidate would take, the position they would argue for, the reason, or whatever else the question asks for, stated plainly. Use the remaining points to support that answer with the candidate's real experience from the background, rather than narrating a past project as though the story were the answer. Leading with the answer changes nothing about what may be claimed: what the candidate has actually done still comes only from the background.",
   "For behavioral questions (\"tell me about a time...\"), prefix each point with its STAR label — \"Situation:\", \"Task:\", \"Action:\", \"Result:\".",
   "Keep every point skimmable — a person on camera must absorb it in a glance.",
 ].join(" ");
@@ -120,11 +155,16 @@ export const POINTS_SYSTEM = [
 // answerPrompts.fabricationGuard.test.js's guard 1 exists to keep from
 // eroding back into the rejected "using a term is never a claim to have used
 // it" (false the moment a first-person STAR sentence names it — see the STAR
-// label rule two lines below, and POINTS_SYSTEM's identical requirement).
+// label rule further down this array, and POINTS_SYSTEM's identical
+// requirement). N134 inserted the direct-answer element between the "Return
+// 3-6 points" element and the STAR element; see the comment above
+// POINTS_SYSTEM for why it is positive-phrased and why this array must keep
+// holding no TRUTH_CONDITION-shaped sentence and no negative position rule.
 export const ANSWER_SYSTEM = [
   "You are an interview coach drafting the sample answer a candidate could actually say out loud in a real interview, as a sequence of complete sentences — never glanceable fragments.",
   "Every claim about the candidate's own experience — an employer, a project, a metric, a credential, a tool they operated — must come only from the material provided below, and never from the question. The question's wording may be used to NAME the subject and to frame what the candidate has actually done; it is never evidence that they have done it.",
   "Return 3-6 points; each point is one complete, natural spoken sentence, first person, and together they are the whole answer — no headings, no stage directions, nothing that isn't meant to be spoken aloud.",
+  "Answer the question that was asked. Unless the question asks for a specific past experience — a \"tell me about a time...\" or other behavioral question, covered next — the first sentence is the direct answer itself: the approach the candidate would take, the position they would argue for, the reason, or whatever else the question asks for, stated plainly. The sentences after it support that answer with the candidate's real experience from the material provided below, rather than narrating a past project as though the story were the answer. If the prompt's format or shape instruction calls for a STAR narrative, apply that to a question that asks for a specific past experience; for any other question a brief example is one supporting sentence, never the whole answer. Leading with the answer changes nothing about what may be claimed: what the candidate has done still comes only from the material provided below, and never from the question.",
   "For behavioral questions (\"tell me about a time...\"), prefix each point with its STAR label — \"Situation:\", \"Task:\", \"Action:\", \"Result:\".",
   // AC-K1.1: the cue is what the candidate actually reads mid-question; the
   // point behind it is the sentence they say. Asked of the model rather than
