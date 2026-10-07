@@ -72,6 +72,12 @@ const BOUNDED = [
     why: "one drafted question per practice turn, with a human answering between turns",
   },
   {
+    route: "app/api/copilot/ideal-project/route.js",
+    limit: 40,
+    windowMs: 600_000,
+    why: "N126 -- the worked-example endpoint fires a READY cache peek and then a TAILORED per-question Gemini call for every question shown (app/copilot/useIdealProject.js), plus re-fired and aborted requests when the question, posting or engine changes, so 40 in ten minutes is twenty questions' worth of READY+TAILORED pairs while a scripted loop of distinct questions stops at 40 instead of none. It hard-authenticates (auth.getUser, 401 without a user id), so the bound keys on the user id and is exact",
+  },
+  {
     route: "app/api/copilot/role-response/route.js",
     limit: 30,
     windowMs: 600_000,
@@ -210,10 +216,6 @@ const DEFERRED = [
   {
     route: "app/api/copilot/answer/route.js",
     why: "OUT OF SCOPE for this change by instruction -- its diff must stay empty. It hard-authenticates, so it is the cheapest of these to bound and should be first in the next pass.",
-  },
-  {
-    route: "app/api/copilot/ideal-project/route.js",
-    why: "the worked-example endpoint N125 split out of the answer route: its TAILORED tier is a live per-question model call (resolveTailoredIdealProject, capped at TAILORED_DEADLINE_MS) and its READY tier starts the posting-only pool generation (idealPoolFor's prime()); the embedded engine reaches neither. It hard-authenticates via supabase.auth.getUser() and answers 401 without a user id, so it is cheap to bound -- same scope-reason deferral as app/api/copilot/answer/route.js above, which it sits beside. Applying a limit is an owner spend decision tracked as backlog N126, not part of N125.",
   },
   {
     route: "app/api/chat/route.js",

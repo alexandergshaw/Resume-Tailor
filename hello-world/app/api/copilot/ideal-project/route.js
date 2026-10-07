@@ -10,6 +10,7 @@ import {
   resolveTailoredIdealProject,
 } from "@/lib/copilot/idealProjectResolver";
 import { MAX_QUESTION_CHARS } from "@/lib/copilot/questionVocabulary";
+import { createRateLimiter, identify, rateLimitHeaders } from "@/lib/rateLimit/index";
 
 // N125: the worked example's single server home, in its two tiers. The answer
 // route no longer generates a per-question example at all (a model call on the
@@ -69,6 +70,43 @@ export const maxDuration = 30;
 // The answer route's own cap on `applicationId` (a private constant there).
 const MAX_APPLICATION_ID_CHARS = 100;
 
+// ---------------------------------------------------------------------------
+// THE SPEND CEILING for copilot-ideal-project (N126).
+//
+// BUILT AT MODULE SCOPE, AND THAT IS LOAD-BEARING. A limiter constructed inside
+// the handler gets a brand-new store on every request, so every caller is
+// forever on its first request: it permits everything, counts nothing, and
+// passes a smoke test while doing it (lib/rateLimit/index.js's header). Both
+// halves are pinned -- a behavioural case that fires 41 requests and expects
+// the last to be denied (route.rateLimit.test.js), and the static case in
+// lib/rateLimit/adoption.test.js that this declaration precedes the handler.
+//
+// 40 per 10 minutes, per authenticated user. The client (useIdealProject) asks
+// TWICE per question it shows -- READY, a cache peek, then TAILORED, the one
+// tier that is a model call -- and a question, posting or engine change aborts
+// the in-flight pair and fires a fresh one; an aborted request has still
+// arrived, so it still counts. 40 is twenty questions' worth of pairs in ten
+// minutes, far past a person answering them and far below a scripted loop.
+// Repeats of ONE question already cost no extra model call (the tailored cache
+// and its shared in-flight call), so the bound's real target is a loop over
+// DISTINCT questions. A DENIED REQUEST STILL INCREMENTS (see the module's
+// header): the bound is 40 ATTEMPTS, not 40 successes.
+//
+// A denial reaches the client as a non-2xx, which fetchIdealProject resolves
+// to `null` -- "no example", never an error mid-question.
+//
+// HONEST ABOUT WHAT THIS BUYS: createMemoryStore is per-instance, so on
+// serverless this bounds a caller to 40 x instanceCount, not 40. It is worth
+// having anyway -- it turns an unbounded loop against a model-calling endpoint
+// into a bounded one -- but it is not a fleet-wide guarantee and must not be
+// described as one. The number is the owner's to tune: change it here AND in
+// the BOUNDED table in lib/rateLimit/adoption.test.js, which pins the pair.
+// ---------------------------------------------------------------------------
+const idealProjectLimiter = createRateLimiter({ limit: 40, windowMs: 600_000, prefix: "copilot-ideal-project" });
+
+const idealProjectRateLimitedMessage =
+  "You have asked for a lot of worked examples in a short window. Wait a moment and try again.";
+
 export async function POST(request) {
   try {
     const supabase = await createSupabaseServerClient();
@@ -77,6 +115,18 @@ export async function POST(request) {
     } = await supabase.auth.getUser();
     if (!user?.id) {
       return Response.json({ error: "Sign in to use the interview copilot." }, { status: 401 });
+    }
+
+    // THE BOUND, keyed on the id the auth gate above resolved -- never on the
+    // caller's access token, and never before the auth resolves. Checked ahead
+    // of the body read and the posting load on purpose: a denied request spends
+    // nothing, and an invalid one is still a request that counts.
+    const rateLimit = await idealProjectLimiter.check(identify(request, { userId: user.id }));
+    if (!rateLimit.allowed) {
+      return Response.json(
+        { error: idealProjectRateLimitedMessage },
+        { status: 429, headers: rateLimitHeaders(rateLimit) },
+      );
     }
 
     const body = await request.json();
