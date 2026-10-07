@@ -35,6 +35,7 @@ import { persistGeneratedDocuments } from "../../lib/supabase/persistGeneration"
 import { pointApplicationAtVersion } from "../../lib/supabase/documentVersions";
 import { resolvePositionId, fetchVersionScopes } from "../../lib/document/documentVersionLoad";
 import { fireDuplicateCheckSafely } from "../../lib/tailor/duplicateCheckFire";
+import { previewScopeAvailable, resolvePreviewEntry } from "../../lib/tracking/applicationPreviewEntry";
 
 // Resume/cover-letter preview + edit modal (opened from the status-bar chips and
 // at the end of a Generate flow). Renders the faithful .docx (or a plain-text
@@ -127,20 +128,6 @@ export function useDocumentPreview({
   // scope's flags — the first to finish never re-enables or clears the
   // other's controls (AC-4).
   function setScopeFlags(scopes, patch) { setResumePreview((prev) => applyScopeFlags(prev, scopes, patch)); }
-
-  // Does the tailoring entry have content for a given scope?
-  function previewScopeAvailable(entry, scope) {
-    if (!entry) return false;
-    if (scope === "cover") {
-      return Array.isArray(entry.coverLetterResultLines) && entry.coverLetterResultLines.length > 0;
-    }
-    // AC-2: absent for the external engine (and any failed run) — both
-    // fields are simply empty in that case, per the generation pipeline.
-    if (scope === "email") {
-      return Array.isArray(entry.emailResultLines) && entry.emailResultLines.length > 0;
-    }
-    return typeof entry.result === "string" && entry.result.trim().length > 0;
-  }
 
   // (Re)load the version history for one or more scopes of `jobId` and
   // merge it into state, guarded by `requestId` so a response for a job the
@@ -289,7 +276,8 @@ export function useDocumentPreview({
 
   function openResumePreview(job, opts = {}) {
     if (!job) return;
-    const t = tailoringMap[job.id] || opts.entry || {};
+    // N133: live slot vs opts.entry precedence lives in resolvePreviewEntry.
+    const t = resolvePreviewEntry(tailoringMap[job.id], opts.entry);
     const wantsCover = opts.tab === "cover" && previewScopeAvailable(t, "cover");
     setResumePreview({
       open: true,

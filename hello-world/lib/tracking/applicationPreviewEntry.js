@@ -74,3 +74,34 @@ export function rehydratedEntryFromApp(app, { existing = null, fallbackTitle = "
 export function hasPreviewableDocs(app) {
   return storedResume(app).resumeText.length > 0 || storedCoverLines(app).coverLines.length > 0;
 }
+
+// Does the tailoring entry have content for a given scope? Moved here verbatim
+// from useDocumentPreview (still re-exposed by that hook), so the open path's
+// precedence rule below and the hook's other callers share one definition.
+export function previewScopeAvailable(entry, scope) {
+  if (!entry) return false;
+  if (scope === "cover") {
+    return Array.isArray(entry.coverLetterResultLines) && entry.coverLetterResultLines.length > 0;
+  }
+  // AC-2: absent for the external engine (and any failed run) — both
+  // fields are simply empty in that case, per the generation pipeline.
+  if (scope === "email") {
+    return Array.isArray(entry.emailResultLines) && entry.emailResultLines.length > 0;
+  }
+  return typeof entry.result === "string" && entry.result.trim().length > 0;
+}
+
+/**
+ * N133: the tailoringMap entry openResumePreview reads, given the live map
+ * `slot` for the job and the entry the caller just built (`optsEntry`).
+ *
+ * A slot with a resume OR cover document wins (the live map beats a stale
+ * `optsEntry`). A truthy slot with neither -- a prior failed run's
+ * `{ status: "error", error }` -- counts as ABSENT, because `||` alone only
+ * falls through on a falsy slot; `optsEntry` then wins, else the slot itself,
+ * else `{}`. One object then drives the tab, the research warm-up and the header.
+ */
+export function resolvePreviewEntry(slot, optsEntry) {
+  const slotHasContent = previewScopeAvailable(slot, "resume") || previewScopeAvailable(slot, "cover");
+  return (slotHasContent ? slot : optsEntry || slot) || {};
+}

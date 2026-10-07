@@ -23,6 +23,8 @@ import { describe, it, expect } from "vitest";
 import {
   rehydratedEntryFromApp,
   hasPreviewableDocs,
+  previewScopeAvailable,
+  resolvePreviewEntry,
 } from "./applicationPreviewEntry.js";
 
 // ---------------------------------------------------------------------------
@@ -252,5 +254,68 @@ describe("AC-9 / hasPreviewableDocs the presence predicate", () => {
     app.generated_cover_letters = null;
     expect(hasPreviewableDocs(app)).toBe(false);
     expect(rehydratedEntryFromApp(app, {})).toBeNull();
+  });
+});
+
+// ===========================================================================
+// N133: previewScopeAvailable (hoisted from useDocumentPreview) and the
+// slot-vs-opts.entry precedence helper openResumePreview calls.
+// ===========================================================================
+
+describe("N133 / previewScopeAvailable per-scope content check", () => {
+  it("resume scope needs a non-blank result string", () => {
+    expect(previewScopeAvailable({ result: "Jane Doe" }, "resume")).toBe(true);
+    expect(previewScopeAvailable({ result: "   " }, "resume")).toBe(false);
+    expect(previewScopeAvailable({ result: 42 }, "resume")).toBe(false);
+    expect(previewScopeAvailable({}, "resume")).toBe(false);
+  });
+
+  it("cover scope needs non-empty coverLetterResultLines; email scope needs emailResultLines", () => {
+    expect(previewScopeAvailable({ coverLetterResultLines: ["Dear"] }, "cover")).toBe(true);
+    expect(previewScopeAvailable({ coverLetterResultLines: [] }, "cover")).toBe(false);
+    expect(previewScopeAvailable({ result: "x" }, "cover")).toBe(false);
+    expect(previewScopeAvailable({ emailResultLines: ["Hi"] }, "email")).toBe(true);
+    expect(previewScopeAvailable({ emailResultLines: [] }, "email")).toBe(false);
+  });
+
+  it("a missing entry has no content in any scope", () => {
+    for (const scope of ["resume", "cover", "email"]) {
+      expect(previewScopeAvailable(undefined, scope)).toBe(false);
+      expect(previewScopeAvailable(null, scope)).toBe(false);
+    }
+  });
+});
+
+describe("N133 / resolvePreviewEntry slot-vs-opts.entry precedence", () => {
+  const cover = { coverLetterResultLines: ["Dear Hiring Manager"], generatedJobTitle: "slot-cover" };
+  const resume = { result: "Jane Doe\nEngineer", generatedJobTitle: "slot-resume" };
+  const built = { status: "done", result: "Built", coverLetterResultLines: ["Built cover"] };
+  const errorSlot = { status: "error", error: "boom" };
+
+  it("a slot with cover content wins over opts.entry", () => {
+    expect(resolvePreviewEntry(cover, built)).toBe(cover);
+  });
+
+  it("a slot with resume content wins over opts.entry", () => {
+    expect(resolvePreviewEntry(resume, built)).toBe(resume);
+  });
+
+  it("a contentless slot yields to opts.entry", () => {
+    expect(resolvePreviewEntry(errorSlot, built)).toBe(built);
+    // A result of only whitespace and an empty cover array are still contentless.
+    const blank = { status: "done", result: "  ", coverLetterResultLines: [] };
+    expect(resolvePreviewEntry(blank, built)).toBe(built);
+  });
+
+  it("a contentless slot with no opts.entry stays the slot (unchanged for every other caller)", () => {
+    expect(resolvePreviewEntry(errorSlot, undefined)).toBe(errorSlot);
+    expect(resolvePreviewEntry(errorSlot, null)).toBe(errorSlot);
+  });
+
+  it("an absent slot yields to opts.entry, and nothing at all yields {}", () => {
+    expect(resolvePreviewEntry(undefined, built)).toBe(built);
+    expect(resolvePreviewEntry(null, built)).toBe(built);
+    expect(resolvePreviewEntry(undefined, undefined)).toEqual({});
+    expect(resolvePreviewEntry(null, null)).toEqual({});
   });
 });
