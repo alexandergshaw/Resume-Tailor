@@ -16,7 +16,8 @@ _Last updated: 2026-10-07 by the orchestrator._
 - None. (N134's first implementer was user-killed mid-work; the partial production edits were valid and were finished by a fresh implementer — N134 shipped.)
 - **BACKLOG-STATE TRAP:** N-prefixed backlog ids MUST keep `state: "actionable"` (D→owner, V→verification); record "SHIPPED …" in the TITLE, never by changing `state`. As of N136 this is now ENFORCED PRE-PUSH by the renderGate hook (validateContract.idNamespaceViolation), so a repeat red-main from this cause is blocked at commit.
 - There is NO unknown-key ban in the backlog schema (the older "unknown keys break schema" memory is stale — the parser ignores extra keys; `owner_ruling` lives on 4 items harmlessly). N139 tracks the doc-hygiene + a validateContract non-string-verify throw.
-- **SHIPPED this session (all full-suite-green on main):** N134 (18453), N133 (18492), N130 pt3 (comment), N136 (18530). Retro RETRO-695e23d filed + reviewed: N135/N137/N138 APPLIED as loop-memory edits; N136 shipped; R5 rejected.
+- **SHIPPED this session (all full-suite-green on main):** N134 (18453), N133 (18492), N130 pt3 (comment), N136 (18530), N139 (18546). Retro RETRO-695e23d filed + reviewed: N135/N137/N138 APPLIED as loop-memory edits; N136 shipped; R5 rejected.
+- **Non-owner-gated actionable queue is now DRAINED.** What remains is owner/env-gated or explicitly deferred/held — see §5. The loop is at a legitimate stop pending owner direction.
 
 ## 3a. N134 — SHIPPED 2026-10-07 (full suite 18453 green)
 - Direct-answer directive added to POINTS_SYSTEM + ANSWER_SYSTEM in lib/copilot/answerPrompts.js (first point/sentence = direct answer, rest = support; behavioral/STAR carved out). FROZEN_POINTS_SYSTEM/FROZEN_ANSWER_SYSTEM oracles updated; *_PROMPT_NO_PAGES user-prompt oracles byte-identical (no builder touched). New answerPrompts.directAnswer.test.js (54 tests, mutation controls M1-M5). ideal-project feature untouched per owner hard constraint.
