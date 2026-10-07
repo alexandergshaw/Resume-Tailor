@@ -138,29 +138,66 @@ function digitRuns(text) {
 // N125: which of the POSTING's digit runs are compensation-shaped, as the
 // normalized runs digitRuns would report them. The posting's own numbers are
 // no longer all off-limits (see normalizeIdealProject's header) — only the ones
-// that read as pay. Four signals, any one of which marks a run:
+// that read as pay. Two kinds of signal, any one of which marks a run:
+//
+//   UNCONDITIONAL — at ANY magnitude (an "$8/hr" wage is pay):
 //   - a currency sign ($/€/£) immediately before it ("$78,496", "$ 42");
 //   - a rate unit immediately after it ("/hr", "/yr", "per hour", "per year",
-//     "/week", "/month" — and their short forms);
-//   - a pay word ANYWHERE in the run's own SENTENCE (see sentenceSpans), however
-//     many words separate them — "The annual salary for this position, after a
-//     probation period, is 95000 flat." carries no currency sign and no rate
-//     unit, and its pay word is further from the number than any fixed window;
-//   - a pay word within COMP_WINDOW characters on either side, kept as an
-//     independent catch for a pay word just across a sentence or line break
-//     ("Salary:\n95000"), which the sentence scope alone would split apart.
+//     "/week", "/month", "an hour", "hourly" — and their short forms).
+//
+//   PAY-WORD — only when the run is also LARGE ENOUGH to plausibly be pay (see
+//   plausiblyPay): a run at or above PAY_WORD_FLOOR, or one carrying a k/m
+//   suffix, or the lower bound of a "95-120k" range. The pay word may be:
+//   - ANYWHERE in the run's own SENTENCE (see sentenceSpans), however many words
+//     separate them — "The annual salary for this position, after a probation
+//     period, is 95000 flat." carries no currency sign and no rate unit, and its
+//     pay word is further from the number than any fixed window;
+//   - within COMP_WINDOW characters on either side of it. That is a SHORT reach:
+//     it catches a pay word just across a line break ("Salary:\n95000") and
+//     nothing further, so a longer label does NOT reach its figure this way;
+//   - on the nearest preceding label line, when the run sits on a line that is
+//     nothing but a number (N128 — see labelLines): "Compensation range:\n120000"
+//     has its pay word 19 characters from its figure, past the window, and a
+//     realistic posting layout puts exactly that on two lines. A label followed
+//     by a line that is NOT number-only ("Compensation range:\nBase 120000") is
+//     not covered by this rule, and stays outside the 16-character window too —
+//     an accepted residual, not a claimed catch.
+//
 // The sentence scope replaced a window-only pay-word test that leaked exactly
 // that shape (R-135's harm: the posting's real pay reaching the screen as a
-// project metric). Over-rejecting a benign number that merely shares a sentence
-// with a pay word is the accepted cost — it forces the deterministic fallback,
-// never a leak. A bare trailing "k" is deliberately NOT a signal: "5k users" is
-// a count, and "$5k" is already caught by the currency sign. Same number
+// project metric). Over-rejecting a benign number that shares a sentence with a
+// pay word is safe — it forces the deterministic fallback, never a leak — but
+// N128 trims the commonest case of it: a small count ("a team of 8", "5+
+// years", "99.95%") is below PAY_WORD_FLOOR and is no longer read as pay on a
+// pay word alone, while a currency sign or rate unit still rejects it. A bare
+// trailing "k" is NOT a signal by itself: "5k users" is a count, and "$5k" is
+// already caught by the currency sign — but with a pay word in play, "95k"
+// reads as a salary, so the suffix lifts a run over the floor. Same number
 // grammar as digitRuns above (this one only adds POSITIONS, so adjacency can be
 // tested); the run is then normalized the same way, separators stripped.
 const NUMBER_RUN_RE = /\d{1,3}(?:[,.\s]\d{3}(?!\d))+|\d+/g;
 const COMP_WINDOW = 16;
+// N128. Pay that carries a currency sign or a rate unit is rejected at any
+// magnitude (those paths are not floored), so the floor governs only a figure
+// with NEITHER marker. In practice that figure is an annual sum — "95000",
+// "120,000", or a "95k" lifted over the floor by its suffix — while a count in a
+// pay-word sentence (a team, a tenure, a percentage point, the cents of
+// "$78,496.00") is almost always under a thousand. A thousand-plus count still
+// rejects: over-rejection is the safe direction. THE ACCEPTED COST: a bare
+// sub-1000 pay figure with no currency sign, no rate unit and no k/m suffix
+// ("wage of 42", "stipend of 950") is no longer rejected on a pay word alone.
+const PAY_WORD_FLOOR = 1000;
 const CURRENCY_BEFORE = /[$€£]\s?$/;
-const RATE_UNIT_AFTER = /^\s?(?:\/|per\s)\s?(?:hr|hour|yr|year|annum|wk|week|mo|month)\b/i;
+const RATE_UNIT_AFTER =
+  /^\s?(?:(?:\/|per\s)\s?(?:hr|hour|yr|year|annum|wk|week|mo|month)\b|an?\s(?:hr|hour)\b|hourly\b)/i;
+// "95k", "1.5k", "2 million": the run is scaled to thousands or more.
+const SCALED_AFTER_RE = /^(?:\.\d+)?(?:[km]\b|\s(?:thousand|million)\b)/i;
+// "95-120k" / "95 to 120k": the lower bound has no suffix of its own but its
+// partner does, so both are thousands.
+const SCALED_RANGE_AFTER_RE = /^\s?(?:[-–—]|to\b)\s?[$€£]?\s?\d[\d,.]*(?:[km]\b|\s(?:thousand|million)\b)/i;
+// What a number-only line may carry besides its digit runs: a currency code, a
+// k/m suffix, a range word. Currency signs, dashes and spaces are punctuation.
+const NUMBER_ONLY_FILLER_RE = /\b(?:k|m|to|and|usd|eur|gbp|cad|aud)\b/gi;
 const COMP_WORD =
   /\b(?:salary|salaries|salaried|compensation|compensated|compensate|comps?|stipends?|bonus|bonuses|wages?|hourly|annually|annum|remuneration|pay|pays|paid|paying|payscale|paycheck|earn|earns|earning|earnings|income|ote)\b/i;
 
@@ -201,26 +238,67 @@ function sentenceSpans(text) {
   return spans;
 }
 
+// A line that is nothing but a number: digit runs, a currency sign or code, a
+// k/m suffix, a range dash or word ("120000", "$120,000", "95,000 - 120,000
+// USD", "95k"). Any other letter ("5km", "12 campuses") makes it prose.
+function isNumberOnlyLine(line) {
+  if (!/\d/.test(line)) return false;
+  const rest = line.replace(NUMBER_RUN_RE, " ").replace(NUMBER_ONLY_FILLER_RE, " ");
+  return !/[A-Za-z]/.test(rest);
+}
+
+// N128: every line of `text` as { start, inheritsPay }, in order. A NUMBER-ONLY
+// line inherits the pay-word status of the nearest preceding LABEL line — the
+// nearest line that is neither blank nor itself number-only, so a label above
+// a stack of figures ("Compensation range:\n95000\n120000") reaches all of them.
+// Every other line inherits nothing (it has its own sentence and window).
+function labelLines(text) {
+  const lines = [];
+  let start = 0;
+  let labelHasPayWord = false;
+  for (const raw of text.split("\n")) {
+    const line = raw.trim();
+    let inheritsPay = false;
+    if (line !== "" && isNumberOnlyLine(line)) inheritsPay = labelHasPayWord;
+    else if (line !== "") labelHasPayWord = COMP_WORD.test(line);
+    lines.push({ start, inheritsPay });
+    start += raw.length + 1;
+  }
+  return lines;
+}
+
+// Is `run` (normalized, separators stripped) big enough to be pay when its only
+// evidence is a pay word? At or above PAY_WORD_FLOOR; or scaled by a k/m suffix
+// ("95k"); or the unsuffixed lower bound of a scaled range ("95-120k"). `after`
+// is the text right behind the run.
+function plausiblyPay(run, after) {
+  return Number(run) >= PAY_WORD_FLOOR || SCALED_AFTER_RE.test(after) || SCALED_RANGE_AFTER_RE.test(after);
+}
+
 function compensationShapedNumbers(description) {
   const text = String(description || "");
   const spans = sentenceSpans(text);
   const spanHasPayWord = spans.map(([from, to]) => COMP_WORD.test(text.slice(from, to)));
+  const lines = labelLines(text);
   const out = [];
   let span = 0;
+  let line = 0;
   for (const match of text.matchAll(NUMBER_RUN_RE)) {
     const start = match.index;
     const end = start + match[0].length;
-    // Matches arrive in text order, so the sentence pointer only moves forward.
+    // Matches arrive in text order, so the sentence and line pointers only move
+    // forward.
     while (span < spans.length - 1 && start >= spans[span + 1][0]) span += 1;
+    while (line < lines.length - 1 && start >= lines[line + 1].start) line += 1;
     const before = text.slice(Math.max(0, start - COMP_WINDOW), start);
     const after = text.slice(end, end + COMP_WINDOW);
-    const compShaped =
-      CURRENCY_BEFORE.test(before) ||
-      RATE_UNIT_AFTER.test(after) ||
-      spanHasPayWord[span] ||
-      COMP_WORD.test(before) ||
-      COMP_WORD.test(after);
-    if (compShaped) out.push(match[0].replace(/[,.\s]/g, ""));
+    const run = match[0].replace(/[,.\s]/g, "");
+    // A currency sign or a rate unit is pay at ANY magnitude; a pay word alone
+    // is pay only when the run is large enough to plausibly be (N128).
+    const payMarked = CURRENCY_BEFORE.test(before) || RATE_UNIT_AFTER.test(after);
+    const payWord =
+      spanHasPayWord[span] || lines[line].inheritsPay || COMP_WORD.test(before) || COMP_WORD.test(after);
+    if (payMarked || (payWord && plausiblyPay(run, after))) out.push(run);
   }
   return out;
 }
@@ -241,9 +319,10 @@ function compensationShapedNumbers(description) {
 // run the example contains (title, section bodies, outcome figures) is
 // extracted, and the example is rejected if ANY of them equals a posting
 // number that is COMPENSATION-SHAPED (see compensationShapedNumbers above):
-// adjacent to a currency sign or a rate unit, or in a sentence with (or right
-// beside) a pay word. That catches the salary band, an hourly rate, a stipend
-// and a signing bonus at any magnitude — the exact harm R-135 named.
+// adjacent to a currency sign or a rate unit (at ANY magnitude), or large
+// enough to be pay and in a sentence with, right beside, or on a number-only
+// line under a pay word. That catches the salary band, an hourly rate, a
+// stipend and a signing bonus — the exact harm R-135 named.
 //
 // N125 (owner ruling) narrowed this from "any whole number the posting
 // states". The old blunt rule also rejected a headcount ("a team of 8"), an
