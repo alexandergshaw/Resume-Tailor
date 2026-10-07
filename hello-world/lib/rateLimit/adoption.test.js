@@ -212,6 +212,10 @@ const DEFERRED = [
     why: "OUT OF SCOPE for this change by instruction -- its diff must stay empty. It hard-authenticates, so it is the cheapest of these to bound and should be first in the next pass.",
   },
   {
+    route: "app/api/copilot/ideal-project/route.js",
+    why: "the worked-example endpoint N125 split out of the answer route: its TAILORED tier is a live per-question model call (resolveTailoredIdealProject, capped at TAILORED_DEADLINE_MS) and its READY tier starts the posting-only pool generation (idealPoolFor's prime()); the embedded engine reaches neither. It hard-authenticates via supabase.auth.getUser() and answers 401 without a user id, so it is cheap to bound -- same scope-reason deferral as app/api/copilot/answer/route.js above, which it sits beside. Applying a limit is an owner spend decision tracked as backlog N126, not part of N125.",
+  },
+  {
     route: "app/api/chat/route.js",
     why: "auth here is best-effort and used only for logging; the model call happens for a signed-out caller too. Needs an identity decision before a bound can be correct.",
   },

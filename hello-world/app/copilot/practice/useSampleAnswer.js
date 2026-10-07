@@ -349,6 +349,15 @@ export function useSampleAnswer({ question, profile, interviewType, applicationI
     cues: active.cues,
     buzzwords: active.buzzwords,
     anchor: active.anchor,
+    // N125: still carried (the answer response has one, and the cache entry
+    // keeps its shape stable) but READ BY NO RENDERER. This is the draft's own
+    // example, FROZEN at the moment `queue` or `request` resolved — long
+    // before a reveal — and PracticeClient no longer passes it to the answer
+    // panel or the card: both render the worked example from useIdealProject
+    // (IdealAnswerAids), which peeks the pool at DISPLAY time and asks for the
+    // per-question one then. Rendering this beside that would be a second
+    // example on the same answer. Removing the field is a later chunk's job,
+    // once nothing references it.
     idealProject: active.idealProject,
     pageSources: active.pageSources,
     grounding: active.grounding,

@@ -11,8 +11,8 @@ import Typography from "@mui/material/Typography";
 import { answerLines } from "@/lib/copilot/answerPoints";
 import { answerStatusMessage, visuallyHidden } from "@/lib/copilot/answerStatus";
 import { latestQuestionEntry } from "@/lib/copilot/currentQuestion";
-import AnswerAids from "./AnswerAids";
 import AnswerLines from "./AnswerLines";
+import IdealAnswerAids from "./IdealAnswerAids";
 // BUG-3/R-121 group-L: the SAME "what's current" decision CopilotDashboard's
 // panels use, not a second hand-rolled copy of it — see latestQuestionEntry's
 // own doc for why `questions[questions.length - 1]` stopped being that
@@ -206,8 +206,11 @@ function QuestionCard({ q, onDraft }) {
           {/* AC-K1.2/AC-K1.3: the posting's own vocabulary to work in, and
               which role and project on the candidate's resume this answer
               came out of, plus the ideal-project benchmark for this posting.
-              Renders nothing when the draft carries none of them. */}
-          <AnswerAids buzzwords={q.buzzwords} anchor={q.anchor} idealProject={q.idealProject} />
+              Renders nothing when the draft carries none of them. N125: the
+              benchmark comes from useIdealProject (via IdealAnswerAids),
+              NOT from `q.idealProject` — the entry still carries one, but
+              rendering it beside the hook's would show two examples. */}
+          <IdealAnswerAids buzzwords={q.buzzwords} anchor={q.anchor} question={q.question} />
         </Box>
       ) : null}
 

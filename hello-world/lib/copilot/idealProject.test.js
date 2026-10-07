@@ -65,6 +65,26 @@ const NO_BUCKET_POSTING = [
   "Excellent storytelling skills required.",
 ].join("\n");
 
+// N125 §9 C-fix: the infra bucket drops `performance`/`platform`/`migrat` and
+// adds `site reliability`/`\bSRE\b`. A non-infra posting whose ONLY infra-ish
+// words are the three dropped tokens must stop selecting the infra archetype;
+// a posting whose only infra signal is the bare "SRE" acronym must now select
+// it. Both fixtures carry a SHAPE term (Journalism / Python) so idealProject
+// proceeds to the bucket ranking rather than falling to the generic
+// no-shape-term path.
+const DROPPED_TOKEN_POSTING = [
+  "Senior Staff Writer, Newsroom",
+  "We are hiring a writer for our newsroom. Journalism experience preferred.",
+  "You will care about performance, publish on our content platform, and help migrate legacy archives.",
+  "Excellent storytelling skills required.",
+].join("\n");
+
+const SRE_ACRONYM_POSTING = [
+  "Senior SRE, Payments",
+  "We are hiring an SRE with strong Python experience to own the on-call rotation.",
+  "The SRE will run incident response and keep the deploy cadence steady.",
+].join("\n");
+
 describe("idealProject", () => {
   it("names a shape built only from terms the posting actually contains", () => {
     const result = idealProject(POSTING);
@@ -164,9 +184,23 @@ describe("idealProject", () => {
     expect(idealProject(null)).toBeNull();
   });
 
-  it("returns null when the posting yields no recognizable project shape", () => {
+  // RULED INVERSION (N125 §5.4/§6, owner "ALWAYS an example"): a NON-EMPTY
+  // posting with zero taxonomy-recognized shape terms used to return null; it
+  // now returns a role-agnostic GENERIC example (shape "", 4 sections, 3
+  // outcomes) so a selected posting always yields a benchmark. The
+  // missing/blank/null cases ABOVE stay null (no posting selected = no
+  // example). RED on HEAD: idealProject returns null for this noise posting
+  // until genericIdealProject lands. Do NOT revert to the old toBeNull.
+  it("returns a generic example — never null — when the posting yields no recognizable project shape", () => {
     const posting = "asdf qwer zxcv this is not a real job posting at all just noise";
-    expect(idealProject(posting)).toBeNull();
+    const result = idealProject(posting);
+    expect(result).not.toBeNull();
+    expect(result.shape).toBe("");
+    expect(result.project.sections).toHaveLength(4);
+    expect(result.project.outcomes).toHaveLength(3);
+    // The generic archetype's own defaults fill every slot — no leftover
+    // template token and no stringified "undefined" leaks into the example.
+    expect(JSON.stringify(result.project)).not.toMatch(/\{D1\}|\{D2\}|\{M\}|undefined/);
   });
 
   it("is deterministic for the same posting and question", () => {
@@ -268,5 +302,33 @@ describe("idealProject", () => {
 
   it("is deterministic for the product posting the fit-ranking fix targets", () => {
     expect(idealProject(PRODUCT_POSTING)).toEqual(idealProject(PRODUCT_POSTING));
+  });
+
+  // N125 §9 (L8), C-regression: a non-infra posting whose only infra-ish words
+  // were the three DROPPED tokens (performance / platform / migrat) no longer
+  // selects infra — it falls through to GENERIC_METRICS, exactly like
+  // NO_BUCKET_POSTING. RED on HEAD: the current regex still contains all three,
+  // so this posting scores infra=3 and comes back with latency/uptime/
+  // throughput metrics.
+  it("routes a non-infra posting whose only infra-ish words were dropped tokens to generic, not infrastructure", () => {
+    const result = idealProject(DROPPED_TOKEN_POSTING);
+    expect(result).not.toBeNull();
+    expect(result.metrics).toEqual(["cost saved", "adoption rate", "time-to-ship"]);
+    expect(result.metrics).not.toContain("latency reduction %");
+    // And the worked example is the generic archetype, not the infra one.
+    expect(result.project.title).not.toMatch(/war room/i);
+  });
+
+  // N125 §9 (L8), SRE-positive via the ADDED bare acronym: the only infra
+  // signal here is "SRE" (no retained infra token — no reliability, latency,
+  // uptime, distributed, cloud, backend, devops, scaling, infrastructure,
+  // throughput, and NOT the dropped platform either). RED on HEAD: "sre" is
+  // not in the current regex, so this posting scores infra=0 and falls to
+  // GENERIC_METRICS; once `\bsre\b` is added it selects infra.
+  it("still selects the infra archetype for a bare-SRE posting (the added \\bSRE\\b token carries it)", () => {
+    const result = idealProject(SRE_ACRONYM_POSTING);
+    expect(result).not.toBeNull();
+    expect(result.metrics).toEqual(["latency reduction %", "uptime / reliability %", "throughput at scale"]);
+    expect(result.project.title).toMatch(/war room/i);
   });
 });

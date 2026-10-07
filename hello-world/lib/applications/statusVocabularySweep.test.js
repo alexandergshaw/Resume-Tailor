@@ -182,6 +182,24 @@ const KNOWN_CONSTRUCT_FALSE_POSITIVES = new Map([
     // touches that column.
     'setMainTab("interviewing")',
   ],
+  [
+    "app/api/copilot/ideal-project/route.js",
+    // The TAILORED tier's response, `tier: "tailored",` at line 98 of the
+    // endpoint (`return Response.json({ tier: "tailored", source: ...,
+    // idealProject: ... })`). `tier` names which of the endpoint's two
+    // worked-example tiers a response carries -- "ready" (line 114) or
+    // "tailored" -- the example-KIND vocabulary the useIdealProject hook
+    // reads back. The endpoint reads and writes no `applications` row at all
+    // (it has no `.from(...)` call: the posting arrives through
+    // loadAnswerContext and the only writes are caches), so this is never a
+    // write to applications.status. Coincidental spelling only: "tailored"
+    // also happens to be one of the eleven real statuses
+    // (lib/applications/statusVocabulary.js). Excluded at the construct level,
+    // not wholesale, because the endpoint is application-scoped (it takes an
+    // `applicationId` and resolves that application's posting), so a future
+    // genuine status literal in it must still be caught.
+    'tier: "tailored"',
+  ],
 ]);
 
 // Removes ONLY the exact, documented construct for a file that has one

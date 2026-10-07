@@ -17,11 +17,13 @@ import {
   buildPointsPrompt,
   buildAnswerPrompt,
 } from "@/lib/copilot/answerPrompts";
-// normalizeModelPoints/generateIdealProjectExample/answerAids, moved to
-// lib/copilot/answerAids.js for the identical reason answerPrompts.js was
-// split out of this same file earlier — see that module's own header, and
-// this one's.
-import { normalizeModelPoints, generateIdealProjectExample, answerAids } from "@/lib/copilot/answerAids";
+// normalizeModelPoints/answerAids, moved to lib/copilot/answerAids.js for the
+// identical reason answerPrompts.js was split out of this same file earlier —
+// see that module's own header, and this one's.
+import { normalizeModelPoints, answerAids } from "@/lib/copilot/answerAids";
+// N125: the READY worked example is read off a prefetched cache, never
+// generated on this route's own request — see that module's own header.
+import { idealPoolFor } from "@/lib/copilot/idealProjectResolver";
 import { normalizeInterviewType, interviewType } from "@/lib/copilot/interviewTypes";
 import { deriveCues, resolveCues } from "@/lib/copilot/answerCues";
 import {
@@ -90,14 +92,17 @@ import { startCodeLanguageResolution, peekCodeLanguage } from "@/lib/copilot/ans
 //                consider ideal, and the metrics they'd want to hear — a
 //                BENCHMARK, never a claim (lib/copilot/idealProject.js). Same
 //                posting-description-only input as `buzzwords`; never reaches
-//                either prompt either. AC-N3: on the Gemini path, `project`
-//                inside it is now the MODEL'S OWN worked example when one
-//                survives lib/copilot/idealProjectPrompt.js's validator —
-//                idealProject.js's hand-authored archetype is the fallback,
-//                not the answer, for every other case (embedded engine, no
-//                posting, a network error, a malformed or rejected
-//                response). See answerAids' own comment, in
-//                lib/copilot/answerAids.js.
+//                either prompt either. N125: on the Gemini path, `project`
+//                inside it is the model's POOL example when one was already
+//                prefetched for this application (a synchronous cache peek,
+//                question-INDEPENDENT, zero model calls on this request's own
+//                path), and idealProject.js's hand-authored archetype
+//                otherwise (cold pool, embedded engine, no posting, a failed
+//                or rejected generation). The per-question example is not
+//                generated here at all: it has its own non-blocking channel,
+//                /api/copilot/ideal-project. See answerAids' own comment, in
+//                lib/copilot/answerAids.js, and lib/copilot/
+//                idealProjectResolver.js's header.
 // This is the one part of the response shape that did move for live mode: it
 // gained keys, and every existing key kept its meaning.
 
@@ -173,16 +178,15 @@ function ndjsonResponse(producer) {
 // terminal `done` (full payload, same shape the non-streaming branch
 // returns) or `error` frame.
 //
-// AC-N3/AC-P3.2: the Gemini-generated worked example (generateIdealProject
-// Example) normally rides ALONGSIDE the main call so its latency is the
-// slower of the two requests, not their sum — but here there is no later
-// point in the wire protocol for it to land on without either blocking the
-// first points frame on it (forbidden, see this route's own streaming
-// tests) or inventing a THIRD frame type nothing downstream reads. The
-// streaming path settles for the same deterministic idealProjectFor()
-// result every OTHER failure mode of that call already falls back to
-// (no posting, a network error, a rejected response) — never the
-// Gemini-enriched one. See this function's own report for why.
+// AC-N3/AC-P3.2/N125: the worked example never blocks the first points frame
+// (forbidden, see this route's own streaming tests), and nothing on this path
+// generates it: `generatedProject` is the READY pool example POST already
+// PEEKED (a synchronous cache read, null on a cold pool) and hands down by
+// value. streamAnswer is a module-level function, not a closure over POST, so
+// the value has to arrive as a parameter — it cannot be read from POST's
+// scope, which is also why it is peeked once on the request's own tick rather
+// than re-read inside the producer: the same tick the non-streaming branches
+// peek on, so all three answer paths agree about what "cold" means.
 async function streamAnswer({
   mode,
   question,
@@ -199,6 +203,12 @@ async function streamAnswer({
   // frame alone: `kb` carries only the `{ id, title, excerpted }` whitelist.
   // Nothing about the prompt reads this.
   pages,
+  // N125: the READY pool example, peeked once in POST (null on a cold pool)
+  // and handed straight to answerAids below — see this function's own header.
+  generatedProject,
+  // N125: starts the READY pool prefetch; called right AFTER the stream call
+  // below is issued, so the prefetch never sits ahead of the answer.
+  primeIdealPool,
   // §B.8: `{ override, resolved } | undefined` — computed once in POST (the
   // peek that started it lives there too) and handed down unchanged, exactly
   // like `questionRoleTerms` below.
@@ -240,7 +250,7 @@ async function streamAnswer({
 
     let stream;
     try {
-      stream = await client.models.generateContentStream({
+      const streamPromise = client.models.generateContentStream({
         model: geminiModel,
         contents: [{ role: "user", parts: [{ text: promptText }] }],
         // AC-V5.1: this is the streaming points call — the path a candidate
@@ -260,6 +270,8 @@ async function streamAnswer({
         // exactly as they are, per the record's own scoping of AC-V5.1.
         config: { systemInstruction, responseMimeType: "application/json", thinkingConfig: { thinkingBudget: 0 } },
       });
+      primeIdealPool();
+      stream = await streamPromise;
     } catch (err) {
       write({ t: "error", error: err?.message || "Could not generate an answer." });
       return;
@@ -288,7 +300,7 @@ async function streamAnswer({
       return;
     }
     const type = VALID_TYPES.includes(parsed?.type) ? parsed.type : "general";
-    const aids = await answerAids({ postingDescription: posting, resume, profile, question, points, story });
+    const aids = await answerAids({ postingDescription: posting, resume, profile, question, points, generatedProject, story });
     // AC-6.2/§4e: `pageSources` rides the `done` frame ONLY — the same rule
     // `cues`/`buzzwords`/`resumeAnchor`/`idealProject` already follow on this
     // path — for BOTH modes now (points mode gained it alongside its own
@@ -490,6 +502,20 @@ export async function POST(request) {
     });
     const codeLanguage = { override: codeLanguageChoice, resolved: peekCodeLanguage(contextCacheKey) };
 
+    // N125: the READY worked example — a synchronous peek of the prefetched,
+    // question-INDEPENDENT pool, never a model call on this request's path; see
+    // idealPoolFor's own doc for why it is peeked now and primed later (every
+    // branch primes right after its own answer call is issued; the streaming
+    // one does so inside streamAnswer, handed `prime`). The embedded branches below pass a
+    // literal `generatedProject: null` and never prime. The per-question
+    // example lives behind its own deadline, /api/copilot/ideal-project.
+    const { generatedProject, prime: primeIdealPool } = idealPoolFor({
+      userId: user.id,
+      applicationId,
+      engine: body?.engine,
+      description: posting,
+    });
+
     // AC-1.1/AC-1.5/ARCH §1.1/§6.6: the RANKING query is built from the
     // question plus the transcript context WITH ITS SPEAKER LABELS
     // STRIPPED — the model itself still sees the labelled context below,
@@ -632,6 +658,8 @@ export async function POST(request) {
         story,
         kb,
         pages,
+        generatedProject,
+        primeIdealPool,
         codeLanguage,
         questionRoleTerms,
         // AC-V5.4: the THUNK, not an already-awaited result — streamAnswer
@@ -694,7 +722,7 @@ export async function POST(request) {
           // established rule for every AI feature in this repo is that
           // engine choice governs whether a feature calls a model, and
           // idealProjectFor's deterministic path is this one's.
-          ...(await answerAids({ postingDescription: posting, resume, profile, question, points, story })),
+          ...(await answerAids({ postingDescription: posting, resume, profile, question, points, generatedProject: null, story })),
           // §4d/§9: embedded, so this is `embeddedRoleTermsFlag` with
           // `story` — the pages this draft actually quoted from — never
           // `kb.block` (see roleTermsFlag.js's own header for why that would
@@ -735,14 +763,7 @@ export async function POST(request) {
         ],
         config: { systemInstruction: ANSWER_SYSTEM, responseMimeType: "application/json" },
       });
-      // Started before `responsePromise` is awaited, so the two requests are
-      // actually concurrent — see generateIdealProjectExample's own comment.
-      const generatedProjectPromise = generateIdealProjectExample({
-        client,
-        geminiModel,
-        description: posting,
-        question,
-      });
+      primeIdealPool();
       const response = await responsePromise;
 
       const parsed = parseModelJson(response.text?.trim() || "");
@@ -776,7 +797,7 @@ export async function POST(request) {
           profile,
           question,
           points,
-          generatedProjectPromise,
+          generatedProject,
           story,
         })),
         // §4d: Gemini path, so this is `geminiRoleTermsFlag` with `kb.block`
@@ -827,7 +848,7 @@ export async function POST(request) {
         pageSources: attachCitationDetail(localSources, { points, pages }),
         // Embedded engine: no model call at all — see the answer-mode
         // branch above for the same rule stated once already.
-        ...(await answerAids({ postingDescription: posting, resume, profile, question, points, story })),
+        ...(await answerAids({ postingDescription: posting, resume, profile, question, points, generatedProject: null, story })),
         // §4d/§9: embedded — `story`, not `kb.block`. See the answer-mode
         // embedded branch above for why.
         ...embeddedRoleTermsFlag({
@@ -867,13 +888,7 @@ export async function POST(request) {
       ],
       config: { systemInstruction: POINTS_SYSTEM, responseMimeType: "application/json" },
     });
-    // Started before `responsePromise` is awaited — see generateIdealProjectExample's own comment.
-    const generatedProjectPromise = generateIdealProjectExample({
-      client,
-      geminiModel,
-      description: posting,
-      question,
-    });
+    primeIdealPool();
     const response = await responsePromise;
 
     const parsed = parseModelJson(response.text?.trim() || "");
@@ -906,7 +921,7 @@ export async function POST(request) {
       ...(companyFacts
         ? { factSources: resolveFactSources(factIds, { includedFacts: facts, pointCount: points.length }) }
         : {}),
-      ...(await answerAids({ postingDescription: posting, resume, profile, question, points, generatedProjectPromise, story })),
+      ...(await answerAids({ postingDescription: posting, resume, profile, question, points, generatedProject, story })),
       // §4d: Gemini path, so `geminiRoleTermsFlag` with `kb.block`.
       ...geminiRoleTermsFlag({ terms: questionRoleTerms, points, profile, resume, coverLetter, pagesBlock: kb.block }),
     });

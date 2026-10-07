@@ -761,7 +761,19 @@ describe("every export of a shipping module is asked for, or is on a ledger with
     // reviewPresentation) now call the new flagRows, which wraps it inside its own
     // module, so only flagPresentation.test.js still imports it. flagRows has shipping
     // importers and is in neither bucket; nothing joined the orphan half.
-    expect(TEST_REFERENCED.length).toBe(392);
+    // N125 wave A: 392 -> 394 (+2, -0): answerSessionCache.js#idealProjectPoolCache and
+    // #idealProjectTailoredCache, pinned by name by idealProjectCaches.test.js and imported
+    // by no shipping module YET (the N125 resolver that reads them lands in a later wave,
+    // which takes both back out of this bucket). Test-referenced, not orphan: a suite does
+    // import them. ORPHAN_EXPORTS unmoved at 66.
+    // N125 wave B: 394 -> 396 (+4, -2). OUT (-2): the two ideal-project caches, now imported by
+    // idealProjectResolver.js (shipping). IN (+4), from that resolver, pinned by name by
+    // idealProjectResolver.test.js and reached by shipping code only through its idealPoolFor:
+    // idealProjectPoolKey, idealProjectQuestionKey, startIdealProjectResolution, peekIdealProject.
+    // Every other new export has a shipping importer (idealPoolFor, idealProjectTailoredKey,
+    // resolveTailoredIdealProject, enrichIdealProject, fetchIdealProject, useIdealProject,
+    // IdealProjectScope). ORPHAN_EXPORTS unmoved at 66.
+    expect(TEST_REFERENCED.length).toBe(396);
     // A classifier that swept everything into this bucket would make the
     // orphan ledger vacuous, so pin the split rather than only the total.
     expect(UNUSED_IN_SHIPPING_MODULES.length).toBe(TEST_REFERENCED.length + ORPHANS.length);
@@ -902,7 +914,11 @@ describe("every export of a shipping module is asked for, or is on a ledger with
     // unmoved at 66 -- all five are test-referenced, none are new orphans).
     // N115 r2: 457 -> 458 (TEST_REFERENCED's +1, groupFlagsBySpan, described above;
     // ORPHAN_EXPORTS unmoved at 66). TEST_REFERENCED 392 + ORPHANS 66.
-    expect(UNUSED_IN_SHIPPING_MODULES.length).toBe(458);
+    // N125 wave A: 458 -> 460 (TEST_REFERENCED's +2, the two ideal-project caches; ORPHANS
+    // unmoved at 66). TEST_REFERENCED 394 + ORPHANS 66.
+    // N125 wave B: 460 -> 462 (TEST_REFERENCED's +2 net, described above; ORPHAN_EXPORTS unmoved
+    // at 66). TEST_REFERENCED 396 + ORPHANS 66.
+    expect(UNUSED_IN_SHIPPING_MODULES.length).toBe(462);
   });
 
   it("still reports the two symbol-level cases this sweep was built for", () => {

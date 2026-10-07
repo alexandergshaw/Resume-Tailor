@@ -9,6 +9,7 @@ import { buildPrivacyNotice } from "@/lib/copilot/practiceNotices";
 import { useEngine } from "@/app/settings/engine";
 import { ExpansionScope } from "../useAnswerExpansions";
 import { GlossaryProvider } from "../GlossaryProvider";
+import { IdealProjectScope } from "../IdealAnswerAids";
 import { useIsTablet } from "@/app/hooks/useResponsive";
 import TranscriptView from "../TranscriptView";
 import QuestionFeed from "../QuestionFeed";
@@ -336,7 +337,10 @@ export default function PracticeClient({
         cues: sampleAnswer.cues,
         buzzwords: sampleAnswer.buzzwords,
         anchor: sampleAnswer.anchor,
-        idealProject: sampleAnswer.idealProject,
+        // N125: deliberately NO `idealProject` here. The panel renders the
+        // worked example from useIdealProject (IdealAnswerAids), asked for the
+        // question above; carrying the sample answer's own frozen copy on this
+        // entry too would put a second example beside it.
         pageSources: sampleAnswer.pageSources,
         error: sampleAnswer.error,
       },
@@ -348,7 +352,6 @@ export default function PracticeClient({
     sampleAnswer.cues,
     sampleAnswer.buzzwords,
     sampleAnswer.anchor,
-    sampleAnswer.idealProject,
     sampleAnswer.pageSources,
     sampleAnswer.error,
   ]);
@@ -593,6 +596,10 @@ export default function PracticeClient({
     // question and the RAW points array the answer on screen came from.
     // GLOSSARY TERMS -- see CopilotClient.js's note above its own provider.
     <GlossaryProvider applicationId={posting?.id || ""}>
+    {/* N125: the selected posting's id for every IdealAnswerAids beneath it
+        (the dashboard's answer panel, QuestionCard's SampleAnswer, the room
+        questions' QuestionFeed) — see IdealAnswerAids.js. */}
+    <IdealProjectScope applicationId={posting?.id || ""}>
     <ExpansionScope
       questions={dashboardQuestions}
       request={{ applicationId: posting?.id || "", profile, interviewType, codeLanguage, engine }}
@@ -768,7 +775,6 @@ export default function PracticeClient({
                 sampleCues={sampleAnswer.cues}
                 sampleBuzzwords={sampleAnswer.buzzwords}
                 sampleAnchor={sampleAnswer.anchor}
-                sampleIdealProject={sampleAnswer.idealProject}
                 samplePageSources={sampleAnswer.pageSources}
                 sampleGrounding={sampleAnswer.grounding}
                 sampleError={sampleAnswer.error}
@@ -898,6 +904,7 @@ export default function PracticeClient({
       </Box>
     </Box>
     </ExpansionScope>
+    </IdealProjectScope>
     </GlossaryProvider>
   );
 }

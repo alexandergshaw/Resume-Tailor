@@ -1,18 +1,28 @@
-// AC-N3 follow-up: the route's wiring of the MODEL-GENERATED worked example
-// into the ideal-project aid.
+// AC-N3 follow-up, RE-POINTED for N125 (§5.2, ruled inversion).
 //
-// This file exists because of a specific hole. `route.test.js`'s `mockGemini`
-// returns ONE canned payload for every `generateContent` call, so the second
-// call — the one asking for a worked example — always came back as the answer
-// payload, always failed validation, and always fell back to the deterministic
-// archetype. The accept path was therefore never executed by any test, and it
-// shipped broken: the route substituted the generated `{ title, sections,
-// outcomes }` for the WHOLE aid, dropping `shape`, `summary` and `metrics`, and
-// `AnswerAids` then computed `hasIdealRow === false` and rendered nothing at
-// all. The headline feature reached the user only when it failed.
+// This file used to assert that the answer response's `idealProject` carried
+// the per-question MODEL example on the accept path. N125 moves that
+// per-question generation OFF the answer serve path entirely: the answer
+// response now carries the READY/POOL example (question-INDEPENDENT), served
+// by a synchronous `peekIdealProject` that MISSES on a cold tick and returns
+// the deterministic archetype. The per-question accept path moves to the NEW
+// `/api/copilot/ideal-project` endpoint (see idealProject.endpoint.test.js).
 //
-// So every case here mocks the two calls SEPARATELY. That is the whole point:
-// a mock that cannot tell the two calls apart cannot test either one.
+// So the accept assertion below inverts: on a cold tick the answer response's
+// `idealProject.project.title` is the DETERMINISTIC archetype's, NEVER
+// `GOOD_EXAMPLE.title` — asserting the opposite would prove the per-question
+// accept leaked back onto the answer path, which is exactly what N125 removes.
+// The remaining cases stay green but their MEANING shifts (noted per case).
+//
+// RED on HEAD: the route still generates the example inline and accepts it, so
+// `idealProject.project.title === GOOD_EXAMPLE.title` until step 6 lands the
+// pool peek + removes the inline call. (This file's reds are grounded on the
+// N125 §3.3 contract; see the TDD notes — the route change itself was not
+// reference-built by the TDD seat.)
+//
+// Each case still mocks the two `generateContent` calls (answer + pool
+// prefetch) separately, since a mock that cannot tell them apart cannot test
+// either one.
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
@@ -24,6 +34,7 @@ import { POST } from "./route.js";
 import { getServerEnv } from "@/lib/config/env";
 import { getGeminiClient } from "@/lib/llm/geminiClient";
 import { createClient } from "@/lib/supabase/server";
+import { idealProjectPoolCache, idealProjectTailoredCache } from "@/lib/copilot/answerSessionCache";
 
 const POSTING = [
   "Senior Product Manager, Education Technology",
@@ -124,14 +135,24 @@ async function draft() {
 describe("the generated worked example is wired into the aid, not substituted for it", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    // The ideal-project caches are module-level and outlive a test. Production
+    // starts every application with a COLD pool (so the prefetch fires); a pool
+    // warmed by an earlier case here would suppress the prefetch and make a later
+    // case's call-count assertion depend on declaration order.
+    idealProjectPoolCache.clear();
+    idealProjectTailoredCache.clear();
     mockUserWithPosting();
   });
 
-  // The bug this file was written for. A valid example must ENRICH the aid,
-  // never replace it: `shape`, `summary` and `metrics` are computed
-  // deterministically and are what the rest of the block renders from. Without
-  // them `AnswerAids` finds nothing to show and the whole row disappears.
-  it("keeps shape, summary and metrics when the model's example is accepted", () => {
+  // RE-POINTED (N125 §5.2). The answer response's `idealProject` is the POOL
+  // peek (question-INDEPENDENT), which MISSES on a cold tick and returns the
+  // deterministic archetype. So shape/summary/metrics are still present (they
+  // are deterministic), and `project` carries the DETERMINISTIC example —
+  // `project.title !== GOOD_EXAMPLE.title`. That inequality is the load-bearing
+  // part: it proves the per-question model accept did NOT leak onto the answer
+  // path. The accept path itself is exercised by idealProject.endpoint.test.js.
+  // RED on HEAD: the inline accept makes `project.title === GOOD_EXAMPLE.title`.
+  it("carries the deterministic POOL example on a cold tick, never the per-question model one", () => {
     mockGeminiPerCall({ example: GOOD_EXAMPLE });
     return draft().then((data) => {
       expect(data.idealProject).not.toBeNull();
@@ -140,16 +161,19 @@ describe("the generated worked example is wired into the aid, not substituted fo
       expect(data.idealProject.summary).toMatch(/^They want a project built around/);
       expect(Array.isArray(data.idealProject.metrics)).toBe(true);
       expect(data.idealProject.metrics.length).toBeGreaterThan(0);
-      // And the generated example is what `project` carries.
-      expect(data.idealProject.project.title).toBe(GOOD_EXAMPLE.title);
+      // The deterministic archetype — a complete 4-section example — NOT the
+      // per-question model example the mock would have returned.
+      expect(data.idealProject.project.sections).toHaveLength(4);
       expect(data.idealProject.project.sections.map((s) => s.label)).toEqual(["Problem", "Built", "Ran", "Landed"]);
+      expect(data.idealProject.project.title).not.toBe(GOOD_EXAMPLE.title);
     });
   });
 
-  // The exact condition AnswerAids uses to decide whether to render the row at
-  // all. Asserting the fields individually above is not enough — this is the
-  // predicate that actually failed, and it must hold on BOTH paths.
-  it("renders a complete block whether the example is accepted or rejected", async () => {
+  // GREEN, meaning SHIFTED (N125 §5.2): the answer path is now ALWAYS the
+  // pool/deterministic example on a cold tick, whatever the (pool-prefetch)
+  // mock returns, so this now proves "the pool/deterministic block always
+  // renders" rather than "the accept-wiring produces a complete block".
+  it("renders a complete pool/deterministic block regardless of the model response", async () => {
     for (const example of [GOOD_EXAMPLE, { title: "", sections: [], outcomes: [] }, undefined]) {
       vi.clearAllMocks();
       mockUserWithPosting();
@@ -164,9 +188,11 @@ describe("the generated worked example is wired into the aid, not substituted fo
     }
   });
 
-  // A rejected example must leave the deterministic one in place — not null,
-  // not a half-built object.
-  it("falls back to the deterministic example when the model's is rejected", async () => {
+  // GREEN, now TRIVIAL (N125 §5.2): with the answer path always deterministic
+  // on a cold tick, this no longer distinguishes reject from accept — it is an
+  // answer-contract-shape guard (4 sections, not the rejected title). The
+  // accept/reject DISTINCTION now lives in idealProject.endpoint.test.js.
+  it("carries a complete deterministic example on the answer path (answer-contract shape)", async () => {
     mockGeminiPerCall({ example: { title: "I owned it.", sections: [], outcomes: [] } });
     const data = await draft();
     expect(data.idealProject.project).toBeTruthy();

@@ -478,6 +478,16 @@ describe("idealProject worked example", () => {
     expect(idealProject("   ", CTX)).toBeNull();
     expect(idealProject(null, CTX)).toBeNull();
     expect(idealProject(undefined, CTX)).toBeNull();
-    expect(idealProject("asdf qwer zxcv nothing here at all", CTX)).toBeNull();
+    // RULED INVERSION (N125 always-an-example ruling, owner): this fifth case
+    // used to assert null for a NON-EMPTY posting with no recognizable shape
+    // term. A selected posting now ALWAYS yields an example, so it returns the
+    // role-agnostic generic one (empty `shape`, a full 4-section/3-outcome
+    // project) — still never an EMPTY example, which is what this test's name
+    // guards. Only the four empty/blank/null cases above stay null.
+    const generic = idealProject("asdf qwer zxcv nothing here at all", CTX);
+    expect(generic).not.toBeNull();
+    expect(generic.shape).toBe("");
+    expect(generic.project.sections).toHaveLength(4);
+    expect(generic.project.outcomes).toHaveLength(3);
   });
 });

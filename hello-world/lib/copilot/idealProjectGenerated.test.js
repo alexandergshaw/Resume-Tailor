@@ -19,10 +19,19 @@
 //     malformed model response reaches the screen.
 //   - R-135's actual failure — the posting's salary band presented as a metric
 //     — is now the model's most likely mistake rather than an impossible one,
-//     because the posting IS in its context. A figure containing any digit run
-//     that occurs literally in the posting is rejected. That covers the salary
-//     band, the years-of-experience floor, the headcount and the campus count
-//     in one rule, without trying to tell them apart.
+//     because the posting IS in its context. N125 (owner ruling 2026-10) made
+//     the rule COMPENSATION-SHAPED rather than "any digit run the posting
+//     contains": a posting digit run is rejected only when it is adjacent to a
+//     pay marker ($/€/£ immediately before, a /hr-style rate unit after, or a
+//     salary/stipend/bonus/pay word in the number's own sentence or within a
+//     short window of it). A figure echoing a
+//     comp-shaped posting number (the salary band, an hourly rate, a stipend,
+//     a signing bonus) is rejected AT ANY MAGNITUDE; an incidental non-comp
+//     integer the posting merely happens to state (a headcount "team of 8", an
+//     experience floor "5+ years", a "99.95%" uptime figure) is now ALLOWED to
+//     recur in the example. That change is why the two headcount/floor cases in
+//     the comp-shaped describe below assert `not.toBeNull` — a deliberate owner
+//     inversion of the old blunt small-integer rejection, not a regression.
 //   - The bounds the last round established (four labelled bullets, 12-28 words
 //     each, 120 total) are imported from the archetype module rather than
 //     restated, so a generated example and a templated one cannot drift into
@@ -108,25 +117,145 @@ describe("normalizeIdealProject — the shape it will vouch for", () => {
   });
 });
 
-describe("normalizeIdealProject — the posting's own numbers can never come back", () => {
-  // R-135's exact failure, now reachable for the first time: the posting is in
-  // the model's context, so it can echo the salary band straight back as an
-  // outcome. The rule is deliberately blunt — any digit run that occurs
-  // literally in the posting disqualifies the figure — because there is no way
-  // to tell a salary from a metric by shape, which is precisely the conclusion
-  // R-135 reached when posting-number mining was deleted.
-  it("rejects an example that quotes a number out of the posting", () => {
+describe("normalizeIdealProject — a COMPENSATION-SHAPED posting number can never come back (N125 comp-shaped rule, L6/L7)", () => {
+  // N125 ruling: the old rule rejected ANY digit run the posting contained;
+  // the new rule rejects only COMP-SHAPED ones (a run adjacent to a pay
+  // marker). The four reject cases below each echo a comp-shaped posting
+  // number and must still return null; the two accept cases echo an incidental
+  // NON-comp integer and now return the example.
+  //
+  // RED/GREEN at hand-off (disclosed in the TDD notes): the two reject
+  // describes are GREEN on HEAD too — the old blunt rule already rejected them
+  // — and exist to KILL the "revert to ≥1000 magnitude" mutant (which would
+  // let the sub-1000 $42/$950/$5 echoes through) and the "drop the guard"
+  // mutant (which would let the salary band through). The two ACCEPT cases are
+  // the ones that are RED on HEAD: the blunt rule rejects "8"/"3"/"5"/"99"/"95"
+  // because they occur in the posting, so `not.toBeNull` fails until the
+  // comp-shaped rule lands. Those are the ruled inversions of the old
+  // idealProjectGenerated.test.js:123-129 assertions.
+
+  // (a) R-135, pinned as its own case: the salary band, read straight back as
+  // a budget figure. `$78,496` is comp-shaped in POSTING ("$" immediately
+  // before, "Salary"/"Compensation"/"annually" in the window), so it is
+  // rejected under BOTH the old and the new rule.
+  it("rejects the R-135 salary-band echo (comp-shaped, $ before)", () => {
     const salary = goodResponse();
     salary.outcomes[0] = { metric: "adoption rate", figure: "$78,496 of budget recovered" };
     expect(normalizeIdealProject(salary, { description: POSTING })).toBeNull();
+  });
 
+  // (b)/(c)/(d) comp-shaped echoes BELOW the old ≥1000 magnitude line — $42/hr,
+  // a $950 stipend, a $5k signing bonus. A magnitude-based rule would admit all
+  // three (42, 950, 5 are each < 1000); the comp-shaped rule rejects them on
+  // the pay marker. Each posting states exactly the comp-shaped number the
+  // example then echoes, so the example falls back to the deterministic
+  // archetype — the comp figure never reaches the screen.
+  it("rejects a comp-shaped echo at any magnitude — $42/hr (rate unit after)", () => {
+    const hourly = goodResponse();
+    hourly.outcomes[0] = { metric: "adoption rate", figure: "cut average handle time to 42 seconds per case" };
+    expect(normalizeIdealProject(hourly, { description: "Contract role. Pay is $42/hr for the duration." })).toBeNull();
+  });
+
+  it("rejects a comp-shaped echo at any magnitude — $950 stipend (comp word after)", () => {
+    const stipend = goodResponse();
+    stipend.outcomes[0] = { metric: "adoption rate", figure: "reduced manual steps from 950 to 20 per release" };
+    expect(normalizeIdealProject(stipend, { description: "Includes a $950 stipend per month." })).toBeNull();
+  });
+
+  it("rejects a comp-shaped echo at any magnitude — $5k signing bonus (comp word after)", () => {
+    const bonus = goodResponse();
+    bonus.outcomes[0] = { metric: "adoption rate", figure: "grew the pilot from 5 to 40 teams in a quarter" };
+    expect(normalizeIdealProject(bonus, { description: "We offer a $5k signing bonus on day one." })).toBeNull();
+  });
+
+  // N125 fresh-verify F1 (R-135, the hard floor): a CURRENCY-LESS salary whose
+  // pay word sits further from the number than COMP_WINDOW characters. The
+  // window-only rule passed every one of these, so an example echoing the
+  // number put the posting's real pay on screen. The pay-word test is
+  // SENTENCE-scoped now: a number is comp-shaped when the sentence (or line)
+  // that encloses it carries a pay word, however many words apart. Each posting
+  // below has no $/€/£ and no rate unit, so the sentence scope is the ONLY
+  // thing that can reject it.
+  describe.each([
+    ["the pay word 'salary' is far before the number", "The annual salary for this position, after a probation period, is 95000 flat.", "95000"],
+    ["the pay word 'Compensation' opens a long sentence", "Compensation for this role is extremely competitive, landing around 128000 depending.", "128000"],
+    ["the pay word is the inflected 'pays'", "pays whatever the market dictates, roughly 140000 per the committee.", "140000"],
+  ])("a currency-less salary where %s", (_label, sentence, figure) => {
+    const description = `Senior Engineer, Platform\n${sentence}\nYou will join a small team.`;
+    const echo = () => {
+      const response = goodResponse();
+      response.outcomes[0] = { metric: "adoption rate", figure: `cut the open backlog from ${figure} tickets to 2100 over two quarters` };
+      return response;
+    };
+
+    it("rejects an example that echoes the number", () => {
+      expect(normalizeIdealProject(echo(), { description })).toBeNull();
+    });
+
+    // Positive control: the SAME example against the SAME number is admitted
+    // when the number's own sentence carries no pay word, so the rejection above
+    // is the pay-word scope and nothing else about the example.
+    it("admits the same example when the number sits in a sentence with no pay word", () => {
+      const neutral = `Senior Engineer, Platform\nThe queue holds ${figure} tickets at peak. Compensation is competitive.\nYou will join a small team.`;
+      expect(normalizeIdealProject(echo(), { description: neutral })).not.toBeNull();
+    });
+  });
+
+  it("scopes the pay word to the SENTENCE: a pay-free sentence on the same line as a pay sentence still admits its number", () => {
+    const response = goodResponse();
+    response.outcomes[1] = { metric: "team size managed", figure: "a team of 8, up from 3" };
+    expect(
+      normalizeIdealProject(response, { description: "Our salary bands are published internally and reviewed yearly. A team of 8 ships weekly." }),
+    ).not.toBeNull();
+  });
+
+  // The window stays as an INDEPENDENT catch, so a pay word that sits just
+  // across a sentence or line break from its number is still read as pay.
+  it("still rejects a number whose pay word is within the window but across a line break", () => {
+    const response = goodResponse();
+    response.outcomes[0] = { metric: "adoption rate", figure: "cut the open backlog from 95000 tickets to 2100 over two quarters" };
+    expect(normalizeIdealProject(response, { description: "Salary:\n95000 and equity" })).toBeNull();
+  });
+
+  // Abbreviation periods do not end a sentence, or a title like "Sr." would
+  // split the pay word away from its number.
+  it("does not let an abbreviation period ('Sr.', 'e.g.') split a pay word from its number", () => {
+    const response = goodResponse();
+    response.outcomes[0] = { metric: "adoption rate", figure: "cut the open backlog from 95000 tickets to 2100 over two quarters" };
+    for (const sentence of [
+      "The salary for Sr. Engineers on this platform team is set well above 95000 for the first year.",
+      "Our pay for senior hires, e.g. Principal Engineers on the platform team, starts at 95000 before review.",
+    ]) {
+      expect(normalizeIdealProject(response, { description: sentence })).toBeNull();
+    }
+  });
+
+  // RULED INVERSION (N125 §4, owner-sanctioned): the old
+  // idealProjectGenerated.test.js:123-129 asserted these two `toBeNull`. "8"
+  // and "3" ("a team of 8, up from 3") sit beside "team of"/"up from" with no
+  // pay marker, and "5" ("5+ years") beside "years", so none is comp-shaped in
+  // POSTING — re-verified here against the SAME POSTING fixture R-135 uses, the
+  // hinge of the inversion. On HEAD the blunt rule rejects them (RED); under
+  // the comp-shaped rule they are admitted.
+  it("ACCEPTS an incidental non-comp integer echo — a headcount and an experience floor the posting states", () => {
     const headcount = goodResponse();
     headcount.outcomes[1] = { metric: "team size managed", figure: "a team of 8, up from 3" };
-    expect(normalizeIdealProject(headcount, { description: POSTING })).toBeNull();
+    expect(normalizeIdealProject(headcount, { description: POSTING })).not.toBeNull();
 
     const floor = goodResponse();
-    floor.sections[0].body = "Nobody on the team had the 5+ years the role called for, and the enrolment flow ran to seven screens each time.";
-    expect(normalizeIdealProject(floor, { description: POSTING })).toBeNull();
+    floor.sections[0].body =
+      "Nobody on the team had the 5+ years the role called for, and the enrolment flow ran to seven screens each time.";
+    expect(normalizeIdealProject(floor, { description: POSTING })).not.toBeNull();
+  });
+
+  // RULED INVERSION: a non-comp posting figure the example legitimately reuses.
+  // "99.95%" is a reliability target, not pay — `%` is not a marker — so an
+  // example quoting the same uptime figure is admitted. On HEAD the blunt rule
+  // rejects it because "99"/"95" occur in the posting (RED).
+  it("ACCEPTS an echo of a non-comp posting figure — a 99.95% uptime target", () => {
+    const uptime = goodResponse();
+    uptime.outcomes[1] = { metric: "uptime / reliability %", figure: "monthly availability 99.2% → 99.95% of the month" };
+    expect(normalizeIdealProject(uptime, { description: "Our platform holds 99.95% uptime." })).not.toBeNull();
   });
 
   it("still allows ordinary numbers the posting does not contain", () => {
@@ -137,7 +266,9 @@ describe("normalizeIdealProject — the posting's own numbers can never come bac
 
   // A digit run inside a longer number is not the same number: rejecting "9
   // weeks" because the posting said "$105,974" (which contains "9") would
-  // reject essentially every example.
+  // reject essentially every example. The comp-shaped rule preserves this —
+  // `$105,974` is comp ($ before, "pay"), yet "5+ years" is not, and neither
+  // reaches the example here.
   it("matches whole numbers, not digits inside other numbers", () => {
     const result = normalizeIdealProject(goodResponse(), { description: "We pay $105,974 and want 5+ years." });
     expect(result).not.toBeNull();

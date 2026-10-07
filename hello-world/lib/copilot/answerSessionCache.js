@@ -39,7 +39,9 @@
 // Only cache raw fetch results — with two named exceptions, defined below
 // (companyFactsCache, codeLanguageCache): both are a model call over data
 // scoped to the APPLICATION, not the question, so neither can reproduce the
-// question-one-answers-question-two hazard this paragraph rules out.
+// question-one-answers-question-two hazard this paragraph rules out. The N125
+// ideal-project pair (idealProjectPoolCache, idealProjectTailoredCache) follows
+// the same exemption by a stated reason of its own, set out beside them.
 
 // A cache entry is fresh from `entry.createdAt` for `ttlMs`, then it is dead
 // weight: "stale" and "miss" are deliberately the same event (see `get`
@@ -202,6 +204,38 @@ export const companyFactsCache = createTtlCache({ ttlMs: 30 * 60 * 1000, maxEntr
 // same as they would see stale company facts. Same 200-entry bound, for the
 // same reason.
 export const codeLanguageCache = createTtlCache({ ttlMs: 30 * 60 * 1000, maxEntries: 200 });
+
+// N125: the two ideal-project caches, each in its OWN Map. The worked example
+// is shown in two tiers — a READY example served in milliseconds from a
+// prefetched, question-INDEPENDENT pool entry, and a TAILORED one generated for
+// the exact question — and the tiers must never share a Map, because the
+// pool entry is written FIRST in a session (the oldest) and so is the first
+// thing evicted once per-question entries fill a shared 200-entry bound. That
+// would silently break the milliseconds promise mid-interview. Separate Maps
+// make it structurally impossible: per-question churn cannot reach the pool.
+//
+// idealProjectPoolCache: keyed `${userId}::${applicationId}::ip`, posting-only,
+// built with an EMPTY question, so it is scoped to the APPLICATION exactly like
+// codeLanguageCache and carries none of the question-one-answers-question-two
+// hazard this file's header rules out. One entry per (user, application), so a
+// single interview session adds exactly one no matter how many questions it
+// asks and can never evict its own entry; 200 is 200 concurrent sessions on
+// one instance (the same concurrency reasoning as answerContextCache), not a
+// byte bound.
+//
+// idealProjectTailoredCache: keyed with the QUESTION in the key
+// (`...::ipq:<question>`), which is what makes it safe under the header's rule —
+// a different question is a different key, so "answer question two with
+// question one's example" cannot be constructed. Its eviction is
+// correctness-neutral AND latency-neutral: a missing entry just regenerates on
+// the next identical question, which the TAILORED tier is already allowed to
+// spend seconds on. So 200 here is a soft cap against unbounded growth, not a
+// latency guarantee.
+//
+// 30 minutes for both, matching codeLanguageCache: a model-generated result
+// over the posting, with the same TTL-only staleness answer.
+export const idealProjectPoolCache = createTtlCache({ ttlMs: 30 * 60 * 1000, maxEntries: 200 });
+export const idealProjectTailoredCache = createTtlCache({ ttlMs: 30 * 60 * 1000, maxEntries: 200 });
 
 // AC-V4.6 (wave 2, verified company facts): "start it, don't block on it,
 // except for a company-directed question." Resolves to the promise's value,

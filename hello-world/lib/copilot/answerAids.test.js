@@ -201,21 +201,29 @@ describe("answerAids", () => {
     // the generated project for the WHOLE aid, rather than only its
     // `project` field, drops `shape`/`summary`/`metrics` and the aid
     // silently renders as nothing downstream.
+    //
+    // N125 §3.4/§5.7 (ruled): answerAids now takes an ALREADY-RESOLVED
+    // `generatedProject` value, not a `generatedProjectPromise` it awaits
+    // itself (the per-question model call moved off this function's path). Same
+    // enrichment behaviour; the promise is resolved by the caller. RED on HEAD:
+    // the current signature reads `generatedProjectPromise` and ignores
+    // `generatedProject`, so the aid carries the deterministic project, not
+    // this one.
     const description = "We need a Senior Product Manager with Agile experience to lead a cross-functional team.";
-    const generatedProjectPromise = Promise.resolve({ title: "Generated title", sections: [], outcomes: [] });
+    const generatedProject = { title: "Generated title", sections: [], outcomes: [] };
     const result = await answerAids({
       postingDescription: description,
       resume: "",
       profile: "",
       question: "Tell me about a project.",
       points: ["A point."],
-      generatedProjectPromise,
+      generatedProject,
       story: { matched: false },
     });
-    if (result.idealProject) {
-      expect(result.idealProject.project).toEqual({ title: "Generated title", sections: [], outcomes: [] });
-      expect(result.idealProject).toHaveProperty("shape");
-    }
+    expect(result.idealProject).not.toBeNull();
+    expect(result.idealProject.project).toEqual({ title: "Generated title", sections: [], outcomes: [] });
+    expect(result.idealProject).toHaveProperty("shape");
+    expect(result.idealProject.shape.trim()).not.toBe("");
   });
 
   it("falls back to the page-derived project aid, source PROJECT_PAGE_SOURCE, only when neither résumé nor prep notes name a role", async () => {

@@ -33,11 +33,12 @@ import {
   SECTION_LABELS,
 } from "./idealProjectNarrative.js";
 
-// Mirrors app/api/copilot/answer/route.js's own MAX_POSTING_CHARS. Restated
-// here rather than imported from the route (a lib module importing from a
-// route file would run the wrong direction) so this module is safe to call
-// with an uncapped description on its own, not only from behind the route's
-// existing cap.
+// Mirrors the 20000-character posting cap lib/copilot/answerContext.js applies
+// when it loads a posting for the answer route (that module's own private
+// MAX_POSTING_CHARS; the route defines no such constant). Restated here rather
+// than imported — it is not exported, and a lib module importing from a route
+// file would run the wrong direction in any case — so this module is safe to
+// call with an uncapped description on its own, not only from behind that cap.
 const MAX_POSTING_CHARS = 20000;
 
 // Sits beside POINTS_SYSTEM/ANSWER_SYSTEM in the route, so it gets the same
@@ -134,6 +135,96 @@ function digitRuns(text) {
   return matches.map((run) => run.replace(/[,.\s]/g, ""));
 }
 
+// N125: which of the POSTING's digit runs are compensation-shaped, as the
+// normalized runs digitRuns would report them. The posting's own numbers are
+// no longer all off-limits (see normalizeIdealProject's header) — only the ones
+// that read as pay. Four signals, any one of which marks a run:
+//   - a currency sign ($/€/£) immediately before it ("$78,496", "$ 42");
+//   - a rate unit immediately after it ("/hr", "/yr", "per hour", "per year",
+//     "/week", "/month" — and their short forms);
+//   - a pay word ANYWHERE in the run's own SENTENCE (see sentenceSpans), however
+//     many words separate them — "The annual salary for this position, after a
+//     probation period, is 95000 flat." carries no currency sign and no rate
+//     unit, and its pay word is further from the number than any fixed window;
+//   - a pay word within COMP_WINDOW characters on either side, kept as an
+//     independent catch for a pay word just across a sentence or line break
+//     ("Salary:\n95000"), which the sentence scope alone would split apart.
+// The sentence scope replaced a window-only pay-word test that leaked exactly
+// that shape (R-135's harm: the posting's real pay reaching the screen as a
+// project metric). Over-rejecting a benign number that merely shares a sentence
+// with a pay word is the accepted cost — it forces the deterministic fallback,
+// never a leak. A bare trailing "k" is deliberately NOT a signal: "5k users" is
+// a count, and "$5k" is already caught by the currency sign. Same number
+// grammar as digitRuns above (this one only adds POSITIONS, so adjacency can be
+// tested); the run is then normalized the same way, separators stripped.
+const NUMBER_RUN_RE = /\d{1,3}(?:[,.\s]\d{3}(?!\d))+|\d+/g;
+const COMP_WINDOW = 16;
+const CURRENCY_BEFORE = /[$€£]\s?$/;
+const RATE_UNIT_AFTER = /^\s?(?:\/|per\s)\s?(?:hr|hour|yr|year|annum|wk|week|mo|month)\b/i;
+const COMP_WORD =
+  /\b(?:salary|salaries|salaried|compensation|compensated|compensate|comps?|stipends?|bonus|bonuses|wages?|hourly|annually|annum|remuneration|pay|pays|paid|paying|payscale|paycheck|earn|earns|earning|earnings|income|ote)\b/i;
+
+// A sentence ends at a newline, or at a run of . ! ? that is followed by
+// whitespace and a capital letter (or by the end of the text). Requiring the
+// space-then-capital is what keeps a thousands/decimal point ("$78,496.00",
+// "99.95%") from ending one, and every way of being WRONG here only MERGES two
+// sentences (a terminator followed by a quote, a digit or a lowercase word is
+// not a break) — a merge can only mark more numbers as pay, never fewer, which
+// is the safe direction for this guard.
+const SENTENCE_END_RE = /\n|[.!?]+(?=\s+[A-Z]|\s*$)/g;
+// A period after fewer letters than this is read as an abbreviation ("Sr.",
+// "Dr.", "e.g.", "Inc.") and does not end the sentence — otherwise "The salary
+// for Sr. Engineers is 95000" would split its pay word away from its number.
+// Short real sentence endings ("...built in AI.") merge with the next sentence,
+// which is the safe direction again.
+const MIN_SENTENCE_WORD_LETTERS = 4;
+
+function endsOnAbbreviation(text, index) {
+  if (text[index] !== ".") return false;
+  let i = index;
+  while (i > 0 && /[A-Za-z]/.test(text[i - 1])) i -= 1;
+  const letters = index - i;
+  return letters > 0 && letters < MIN_SENTENCE_WORD_LETTERS;
+}
+
+// [start, end) of every sentence in `text`, in order and covering all of it
+// (a terminator belongs to the sentence it closes).
+function sentenceSpans(text) {
+  const spans = [];
+  let start = 0;
+  for (const match of text.matchAll(SENTENCE_END_RE)) {
+    if (endsOnAbbreviation(text, match.index)) continue;
+    spans.push([start, match.index]);
+    start = match.index + match[0].length;
+  }
+  spans.push([start, text.length]);
+  return spans;
+}
+
+function compensationShapedNumbers(description) {
+  const text = String(description || "");
+  const spans = sentenceSpans(text);
+  const spanHasPayWord = spans.map(([from, to]) => COMP_WORD.test(text.slice(from, to)));
+  const out = [];
+  let span = 0;
+  for (const match of text.matchAll(NUMBER_RUN_RE)) {
+    const start = match.index;
+    const end = start + match[0].length;
+    // Matches arrive in text order, so the sentence pointer only moves forward.
+    while (span < spans.length - 1 && start >= spans[span + 1][0]) span += 1;
+    const before = text.slice(Math.max(0, start - COMP_WINDOW), start);
+    const after = text.slice(end, end + COMP_WINDOW);
+    const compShaped =
+      CURRENCY_BEFORE.test(before) ||
+      RATE_UNIT_AFTER.test(after) ||
+      spanHasPayWord[span] ||
+      COMP_WORD.test(before) ||
+      COMP_WORD.test(after);
+    if (compShaped) out.push(match[0].replace(/[,.\s]/g, ""));
+  }
+  return out;
+}
+
 // Vouches for a model's JSON response, or returns null. Never repairs and
 // never partially accepts: a half-valid example would still render as a
 // benchmark, still be labelled as one, and nothing downstream would know it
@@ -146,14 +237,20 @@ function digitRuns(text) {
 // model that reads the posting has neither property, and R-135's exact
 // failure (a posting's own salary band, echoed back as if it were a project
 // metric) is now the model's most likely mistake rather than a structurally
-// impossible one, because the posting IS sitting in its context. The rule
-// below is deliberately blunt rather than clever: every digit run the
-// example contains (title, section bodies, outcome figures) is extracted,
-// and the example is rejected if ANY of them occurs as a whole number
-// anywhere in the posting. That one rule catches the salary band, the
-// experience floor, the headcount and the campus count without trying to
-// tell them apart — which is exactly the conclusion R-135 reached when
-// mining the posting's own numbers was deleted instead of filtered.
+// impossible one, because the posting IS sitting in its context. Every digit
+// run the example contains (title, section bodies, outcome figures) is
+// extracted, and the example is rejected if ANY of them equals a posting
+// number that is COMPENSATION-SHAPED (see compensationShapedNumbers above):
+// adjacent to a currency sign or a rate unit, or in a sentence with (or right
+// beside) a pay word. That catches the salary band, an hourly rate, a stipend
+// and a signing bonus at any magnitude — the exact harm R-135 named.
+//
+// N125 (owner ruling) narrowed this from "any whole number the posting
+// states". The old blunt rule also rejected a headcount ("a team of 8"), an
+// experience floor ("5+ years") and a reliability target ("99.95%") that the
+// example had every right to reuse, and with a posting full of such figures it
+// pushed nearly every generated example back to the deterministic fallback. An
+// incidental non-comp integer is not pay and is no longer rejected.
 export function normalizeIdealProject(parsed, { description } = {}) {
   if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
 
@@ -203,10 +300,10 @@ export function normalizeIdealProject(parsed, { description } = {}) {
     if (!/\d/.test(outcome.figure)) return null;
   }
 
-  // The posting's own numbers can never come back — see this function's
-  // header comment for why this is a blunt whole-number match rather than an
-  // attempt to tell a salary apart from a metric.
-  const postingNumbers = new Set(digitRuns(description));
+  // The posting's own COMPENSATION-SHAPED numbers can never come back — see
+  // this function's header comment for the rule and why it is not every digit
+  // run the posting contains.
+  const postingNumbers = new Set(compensationShapedNumbers(description));
   const exampleNumbers = digitRuns(allText.join(" "));
   if (exampleNumbers.some((n) => postingNumbers.has(n))) return null;
 

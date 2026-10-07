@@ -14,6 +14,7 @@ import { visuallyHidden } from "@/lib/copilot/answerStatus";
 import { useEngine } from "@/app/settings/engine";
 import { ExpansionScope } from "./useAnswerExpansions";
 import { GlossaryProvider } from "./GlossaryProvider";
+import { IdealProjectScope } from "./IdealAnswerAids";
 import { useIsMobile } from "@/app/hooks/useResponsive";
 import TabHeader from "@/app/components/TabHeader";
 import LiveHearingStrip from "./LiveHearingStrip";
@@ -577,6 +578,10 @@ export default function CopilotClient() {
     // the provider's own default, because a default parameter on an id is what
     // let the ask-AI box ship sending `applicationId: ""` on every request.
     <GlossaryProvider applicationId={posting?.id || ""}>
+    {/* N125: the selected posting's id for every IdealAnswerAids beneath it
+        (QuestionFeed's cards, the dashboard's current answer and its
+        history) — see IdealAnswerAids.js. */}
+    <IdealProjectScope applicationId={posting?.id || ""}>
     <ExpansionScope
       questions={questions}
       request={{
@@ -934,6 +939,7 @@ export default function CopilotClient() {
       )}
     </Box>
     </ExpansionScope>
+    </IdealProjectScope>
     </GlossaryProvider>
   );
 }

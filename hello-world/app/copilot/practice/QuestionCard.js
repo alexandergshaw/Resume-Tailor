@@ -41,8 +41,9 @@ export default function QuestionCard({
   // this card. AC-H9: `sampleAnswerPoints` carries the sample answer as a
   // bullet-point array (each a complete, speakable sentence). AC-K1:
   // `sampleCues` is the few-word version actually rendered, and
-  // `sampleBuzzwords`/`sampleAnchor`/`sampleIdealProject` are the
-  // subsections under it. `samplePageSources` is the positional,
+  // `sampleBuzzwords`/`sampleAnchor` are the subsections under it (N125: the
+  // ideal-project benchmark is no longer threaded through here — SampleAnswer
+  // fetches it for `question` itself). `samplePageSources` is the positional,
   // per-point knowledge-base-page citation array threaded straight to
   // SampleAnswer's `pageSources` prop.
   sampleVisible,
@@ -51,7 +52,6 @@ export default function QuestionCard({
   sampleCues,
   sampleBuzzwords,
   sampleAnchor,
-  sampleIdealProject,
   samplePageSources,
   sampleGrounding,
   sampleError,
@@ -210,7 +210,7 @@ export default function QuestionCard({
           cues={sampleCues}
           buzzwords={sampleBuzzwords}
           anchor={sampleAnchor}
-          idealProject={sampleIdealProject}
+          question={question}
           pageSources={samplePageSources}
           grounding={sampleGrounding}
           error={sampleError}

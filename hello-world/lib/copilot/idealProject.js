@@ -26,7 +26,8 @@
 // posting.
 //
 // Same posture as postingBuzzwords.js throughout: deterministic, no network,
-// no LLM, degrades to null on any failure, and both engines get the same
+// no LLM, null only when there is no posting at all (any failure past that
+// point degrades to a generic example, N125), and both engines get the same
 // answer for the same posting because neither ever calls this — only
 // answerAids() (app/api/copilot/answer/route.js) does, from the SAME
 // `postingDescription` buzzwords already reads. The posting description
@@ -107,7 +108,14 @@ function collect(grouped, categories) {
 const METRIC_BUCKETS = [
   {
     key: "infra",
-    test: /\b(latency|throughput|uptime|reliability|scalab|scaling|infrastructure|distributed|cloud|backend|platform|devops|migrat|performance)\b/gi,
+    // N125: `platform`, `migrat` and `performance` are NOT here. Each is an
+    // everyday word in a non-infra posting ("learning platform", "performance
+    // review", "migrate our archives"), and one incidental hit with no other
+    // bucket scoring was enough to hand a product or newsroom role the infra
+    // archetype AND its latency/uptime metrics. A genuine SRE or platform
+    // posting still lands here on the retained terms; `site reliability` and
+    // `sre` cover the postings whose only infra signal is the role's own name.
+    test: /\b(latency|throughput|uptime|reliability|scalab|scaling|infrastructure|distributed|cloud|backend|devops|site reliability|sre)\b/gi,
     metrics: ["latency reduction %", "uptime / reliability %", "throughput at scale", "infrastructure cost saved"],
   },
   {
@@ -216,11 +224,30 @@ function joinShapeTerms(terms) {
 // postingBuzzwords' `context` does — the same posting yields a different
 // emphasis per question.
 //
+// A selected posting ALWAYS yields an example (owner, N125). When no KIND of
+// project can be named — no shape term survives, or the taxonomy itself
+// failed — this is the role-agnostic last resort: the `generic` archetype with
+// its own safe default for {D1} ("the core of the business"), an empty `shape`
+// (the renderer falls back to `summary`, which is always non-empty), and the
+// same category metrics every other path gets. Needs nothing from the
+// taxonomy, which is exactly why the failure path can use it too:
+// categoryMetrics reads only `text`, and buildProject("generic", []) reads only
+// the archetype's own defaults.
+function genericIdealProject(text) {
+  return {
+    shape: "",
+    summary: "They want a project owned end to end, with a measurable outcome.",
+    metrics: categoryMetrics(text, MAX_METRICS),
+    project: buildProject("generic", []),
+  };
+}
+
 // Returns null for an empty/blank/non-string description (no posting
 // selected -> no block at all, same contract as postingBuzzwords/
-// resumeAnchor), and also whenever no shape term survives — without a KIND
-// of project to name, a benchmark with a blank headline is worse than no
-// benchmark at all.
+// resumeAnchor). Any non-empty posting yields an example: when no shape term
+// survives (or the taxonomy throws) it is the generic one above rather than
+// nothing, because "a selected posting shows no example" is a worse outcome
+// than a role-agnostic one.
 export function idealProject(description, { question = "", points = [] } = {}) {
   const text = String(description || "").trim();
   if (!text) return null;
@@ -229,9 +256,9 @@ export function idealProject(description, { question = "", points = [] } = {}) {
   try {
     grouped = extractKeywords(text, defaultLibraryData.taxonomy);
   } catch {
-    // Same posture as postingBuzzwords: a taxonomy failure degrades this
-    // block to absent, never breaks the answer around it.
-    return null;
+    // Unlike postingBuzzwords, a taxonomy failure does NOT degrade this block
+    // to absent: the generic example needs no taxonomy output at all.
+    return genericIdealProject(text);
   }
 
   const context = [String(question || ""), ...(Array.isArray(points) ? points : [])]
@@ -265,7 +292,7 @@ export function idealProject(description, { question = "", points = [] } = {}) {
     shapeTerms.push({ canonical: item.canonical, category: item.category });
     if (shapeTerms.length >= MAX_SHAPE_TERMS) break;
   }
-  if (shapeTerms.length === 0) return null;
+  if (shapeTerms.length === 0) return genericIdealProject(text);
 
   const shapeNames = shapeTerms.map((t) => t.canonical);
 
