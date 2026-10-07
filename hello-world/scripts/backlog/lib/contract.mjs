@@ -6,6 +6,30 @@ import { HELLO_WORLD_ROOT, REPO_ROOT } from "./loadBacklog.mjs";
 const VALID_STATES = new Set(["actionable", "owner", "verification"]);
 const ID_SHAPE = /^[A-Za-z]+\d+$/;
 
+// docs/backlog.yml's schema header: an id's leading letter IS its section (N = actionable, D = owner
+// decision, V = verification owed), and `state` is a second, independent field that must agree with
+// it. Each field is individually valid when they disagree (an N-id with state "owner"), so no other
+// check here can see it. This map used to exist only as an inline copy inside yamlLite.test.js,
+// i.e. enforced in CI after the push and never before it (N136).
+const STATE_OF_ID_PREFIX = Object.freeze({ N: "actionable", D: "owner", V: "verification" });
+
+/**
+ * Pure: does `id`'s namespace letter agree with `state`? Returns null when it does, otherwise the
+ * violation text. The namespace is the id's whole leading run of letters, so an id with no known
+ * namespace (`X1`, `n1`, `NA1`) is a violation too: nothing can say which state it must carry.
+ * validateContract only calls this for an id that already matched ID_SHAPE; a malformed id is
+ * reported there as non-namespaced. Called directly with a non-string it returns a violation.
+ */
+export function idNamespaceViolation(id, state) {
+  const prefix = typeof id === "string" ? /^[A-Za-z]*/.exec(id)[0] : "";
+  if (!Object.hasOwn(STATE_OF_ID_PREFIX, prefix)) {
+    return `${id}: id namespace ${JSON.stringify(prefix)} is not one of N (actionable), D (owner), V (verification)`;
+  }
+  const expected = STATE_OF_ID_PREFIX[prefix];
+  if (state === expected) return null;
+  return `${id}: id namespace "${prefix}" requires state "${expected}" but state is ${JSON.stringify(state)} (N = actionable, D = owner decision, V = verification owed)`;
+}
+
 // Matches a vitest `-t`/`--testNamePattern` filter as its own CLI token. This is the exact shape
 // measured to defeat a naive verify gate: `npx vitest run x.test.js -t "zzNoSuchTestzz"` exits 0
 // with "Tests N skipped (N)" and no "failed" anywhere in the summary — a command that structurally
@@ -103,6 +127,7 @@ function verifyProofViolations(item) {
  * may honestly sit unscoped for many rounds. What this DOES enforce, always:
  *   - every id is namespaced (B3 shape) and globally unique (B3 fix)
  *   - state is one of the three known values, with its state-specific required text present
+ *   - the id's namespace letter agrees with its state: N = actionable, D = owner, V = verification (N136)
  *   - a non-null `verify` never uses a dead `-t`/`--testNamePattern` filter (B4)
  *   - a non-null `verify` only cites file paths that exist under hello-world/ or the repo root (N21)
  *   - a non-null `verify` carries a complete, internally-consistent, hash-pinned verify_proof (B4)
@@ -127,6 +152,11 @@ export function validateContract(items) {
     if (!VALID_STATES.has(item.state)) {
       violations.push(`${item.id}: unknown state ${JSON.stringify(item.state)}`);
       continue;
+    }
+    // A malformed id was already reported above; only a well-shaped id has a namespace to check.
+    if (typeof item.id === "string" && ID_SHAPE.test(item.id)) {
+      const namespaceViolation = idNamespaceViolation(item.id, item.state);
+      if (namespaceViolation) violations.push(namespaceViolation);
     }
     if (item.state === "actionable") {
       if (!item.title) violations.push(`${item.id}: actionable item has no title`);

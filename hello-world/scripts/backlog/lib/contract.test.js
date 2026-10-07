@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
-import { validateContract, sha256 } from "./contract.mjs";
+import { validateContract, sha256, idNamespaceViolation } from "./contract.mjs";
 import { parseBacklogYaml } from "./yamlLite.mjs";
 import { BACKLOG_YML_PATH } from "./loadBacklog.mjs";
 
@@ -80,6 +80,99 @@ describe("validateContract — structural rules", () => {
   it("does NOT require owns/verify on an actionable item (B8: nullable until scoped)", () => {
     const { ok } = validateContract([item({ id: "N1", owns: null, verify: null })]);
     expect(ok).toBe(true);
+  });
+});
+
+// N136: the id-namespace <-> state agreement (N = actionable, D = owner, V = verification) used to be
+// asserted only by an inline map in yamlLite.test.js, so a valid-but-wrong pairing (an N id with state
+// "owner") passed validateContract, passed the renderGate hook, and went red on main after the push.
+describe("validateContract — N136: an id's namespace must agree with its state", () => {
+  // Every field a state could require is populated, so the ONLY thing a wrong pairing can trip is the
+  // namespace rule - a violation count of exactly 1 proves no other check is what rejected it.
+  const full = (id, state) =>
+    item({ id, state, title: "t", owed_by: "o", blocked_reason: "why blocked", instrument: "the instrument" });
+
+  it("no-op control: each namespace with its own state has 0 violations", () => {
+    for (const [id, state] of [["N1", "actionable"], ["D1", "owner"], ["V1", "verification"]]) {
+      const { ok, violations } = validateContract([full(id, state)]);
+      expect(violations, `${id}/${state}`).toEqual([]);
+      expect(ok).toBe(true);
+    }
+  });
+
+  it("THE miss, literally: an N id set to the VALID state \"owner\" is rejected, naming the id, the namespace and both states", () => {
+    const { ok, violations } = validateContract([full("N134", "owner")]);
+    expect(ok).toBe(false);
+    expect(violations).toHaveLength(1);
+    expect(violations[0]).toContain("N134");
+    expect(violations[0]).toContain('namespace "N"');
+    expect(violations[0]).toContain('requires state "actionable"');
+    expect(violations[0]).toContain('state is "owner"');
+  });
+
+  it("every one of the 6 wrong namespace/state pairings is rejected with exactly one violation, and the 3 right ones with none", () => {
+    const states = ["actionable", "owner", "verification"];
+    const right = { N: "actionable", D: "owner", V: "verification" };
+    let rejected = 0;
+    for (const prefix of ["N", "D", "V"]) {
+      for (const state of states) {
+        const { violations } = validateContract([full(`${prefix}7`, state)]);
+        if (state === right[prefix]) {
+          expect(violations, `${prefix}7/${state}`).toEqual([]);
+        } else {
+          expect(violations, `${prefix}7/${state}`).toHaveLength(1);
+          rejected += 1;
+        }
+      }
+    }
+    expect(rejected).toBe(6);
+  });
+
+  it("an id whose namespace is not N/D/V is rejected whatever its state (X1, n1, and the multi-letter NA1)", () => {
+    for (const id of ["X1", "n1", "NA1", "SEC1"]) {
+      const { ok, violations } = validateContract([full(id, "actionable")]);
+      expect(ok, id).toBe(false);
+      expect(violations, id).toHaveLength(1);
+      expect(violations[0], id).toContain("not one of N (actionable), D (owner), V (verification)");
+    }
+  });
+
+  it("the historical spelling: an N id with state \"shipped\" is rejected exactly once, as an unknown state (no second, derived violation)", () => {
+    const { ok, violations } = validateContract([full("N134", "shipped")]);
+    expect(ok).toBe(false);
+    expect(violations).toHaveLength(1);
+    expect(violations[0]).toContain('unknown state "shipped"');
+  });
+
+  it("a malformed id is reported once as non-namespaced and never reaches (or crashes) the namespace rule", () => {
+    for (const id of ["notnamespaced", "", null, 7, undefined]) {
+      let result;
+      expect(() => {
+        result = validateContract([full(id, "actionable")]);
+      }, String(id)).not.toThrow();
+      expect(result.ok, String(id)).toBe(false);
+      expect(result.violations, String(id)).toHaveLength(1);
+      expect(result.violations[0], String(id)).toContain("non-namespaced");
+    }
+  });
+
+  it("reports every disagreement in a file at once, not just the first", () => {
+    const { violations } = validateContract([full("N1", "owner"), full("D2", "actionable"), full("V3", "verification")]);
+    expect(violations).toHaveLength(2);
+    expect(violations.some((v) => v.startsWith("N1:"))).toBe(true);
+    expect(violations.some((v) => v.startsWith("D2:"))).toBe(true);
+  });
+
+  it("idNamespaceViolation is the same pure predicate: null on agreement, text on disagreement, never throws", () => {
+    expect(idNamespaceViolation("N5", "actionable")).toBeNull();
+    expect(idNamespaceViolation("D5", "owner")).toBeNull();
+    expect(idNamespaceViolation("V5", "verification")).toBeNull();
+    expect(idNamespaceViolation("N5", "owner")).toContain("N5");
+    expect(idNamespaceViolation("N5", "shipped")).toContain('"shipped"');
+    expect(idNamespaceViolation("N5", undefined)).not.toBeNull();
+    expect(idNamespaceViolation(undefined, "actionable")).not.toBeNull();
+    expect(idNamespaceViolation(null, null)).not.toBeNull();
+    expect(idNamespaceViolation("", "actionable")).not.toBeNull();
   });
 });
 

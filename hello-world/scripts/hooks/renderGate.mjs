@@ -1,7 +1,8 @@
 #!/usr/bin/env node
-// PreToolUse hook (N119): blocks a `git commit` / `git push` when docs/BACKLOG.md is stale.
-// Registered in .claude/settings.json (matcher "Bash|PowerShell"). Reads the hook JSON from stdin,
-// exits 2 with the remedy on stderr ONLY on a confirmed drift, and exits 0 for everything else -
+// PreToolUse hook (N119, N136): blocks a `git commit` / `git push` when docs/BACKLOG.md is stale OR
+// docs/backlog.yml violates the backlog contract (validateContract). Registered in
+// .claude/settings.json (matcher "Bash|PowerShell"). Reads the hook JSON from stdin, exits 2 with the
+// remedy on stderr ONLY on a confirmed drift or violation, and exits 0 for everything else -
 // including any error of its own. All logic lives in lib/renderGate.mjs (unit-tested there).
 import { evaluateRenderGate } from "./lib/renderGate.mjs";
 import { readStdin } from "./lib/readStdin.mjs";

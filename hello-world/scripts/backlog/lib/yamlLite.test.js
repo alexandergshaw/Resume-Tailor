@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { parseBacklogYaml } from "./yamlLite.mjs";
+import { idNamespaceViolation } from "./contract.mjs";
 
 describe("parseBacklogYaml", () => {
   it("parses a single item with every scalar kind: quoted string, null, empty array, populated array", () => {
@@ -80,7 +81,11 @@ describe("parseBacklogYaml", () => {
   // independent fields that must agree. Cross-checking them is a real
   // assertion; re-deriving a count from the file it validates would only prove
   // self-consistency ([[loop-traps-tests]]'s canary trap, backlog N3).
-  const STATE_OF_PREFIX = { N: "actionable", D: "owner", V: "verification" };
+  //
+  // N136: the prefix -> state map no longer lives in this test body. It is
+  // contract.mjs's idNamespaceViolation, the SAME predicate validateContract
+  // (and so the PreToolUse renderGate hook) runs, so the rule is stated once
+  // and enforced before a push rather than only here, after it.
 
   it("real backlog.yml: every item's id namespace agrees with its state, and ids are unique", async () => {
     const { readFileSync } = await import("node:fs");
@@ -92,7 +97,7 @@ describe("parseBacklogYaml", () => {
 
     for (const it of items) {
       expect(it.id, `id "${it.id}" is not namespaced N/D/V`).toMatch(/^[NDV]\d+$/);
-      expect(it.state, `id "${it.id}" claims state "${it.state}"`).toBe(STATE_OF_PREFIX[it.id[0]]);
+      expect(idNamespaceViolation(it.id, it.state), `id "${it.id}" claims state "${it.state}"`).toBeNull();
     }
   });
 
@@ -113,7 +118,7 @@ describe("parseBacklogYaml", () => {
       ].join(String.fromCharCode(10)),
     );
     expect(items).toHaveLength(1);
-    expect(STATE_OF_PREFIX[items[0].id[0]]).toBe("verification");
-    expect(items[0].state).not.toBe(STATE_OF_PREFIX[items[0].id[0]]);
+    expect(items[0].state).toBe("actionable");
+    expect(idNamespaceViolation(items[0].id, items[0].state)).toMatch(/V9.*"V".*"verification".*"actionable"/);
   });
 });

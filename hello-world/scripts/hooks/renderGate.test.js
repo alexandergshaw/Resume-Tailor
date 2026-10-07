@@ -4,10 +4,11 @@ import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFile
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { decideRenderGate, evaluateRenderGate, firstDifferenceLine } from "./lib/renderGate.mjs";
+import { decideContractGate, decideRenderGate, evaluateRenderGate, firstDifferenceLine } from "./lib/renderGate.mjs";
 import { parseBacklogYaml } from "../backlog/lib/yamlLite.mjs";
 import { renderMarkdown } from "../backlog/lib/renderMarkdown.mjs";
 import { loadBacklogItems, BACKLOG_MD_PATH } from "../backlog/lib/loadBacklog.mjs";
+import { validateContract } from "../backlog/lib/contract.mjs";
 import { normalizeLineEndings } from "../backlog/lib/normalizeLineEndings.mjs";
 
 // N119: the PreToolUse render-currency gate. It blocks (exit 2) ONLY on a confirmed drift between
@@ -15,17 +16,26 @@ import { normalizeLineEndings } from "../backlog/lib/normalizeLineEndings.mjs";
 // outcome - a non-git command, a current file, an unreadable input, any internal error - is exit 0.
 // A gate that blocked by mistake would brick every commit, so the "allows" side is pinned as hard as
 // the "blocks" side, including through a real node process against a planted repo layout.
+//
+// N136: the same gate also runs validateContract(docs/backlog.yml) and blocks on a confirmed
+// violation (an N id set to the valid-but-wrong state "owner", or the unknown state "shipped" that
+// red-ed main). The two checks fail open independently, so every N119 row above still holds.
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const FRESH = "# Backlog\n\n| 1 | a |\n";
 const STALE = "# Backlog\n\n| 1 | b |\n";
+const CLEAN = { ok: true, violations: [] };
+const BAD_NAMESPACE =
+  'N134: id namespace "N" requires state "actionable" but state is "owner" (N = actionable, D = owner decision, V = verification owed)';
+const BAD = { ok: false, violations: [BAD_NAMESPACE] };
 
 const hookInput = (command, extra = {}) => JSON.stringify({ hook_event_name: "PreToolUse", tool_name: "Bash", tool_input: { command }, ...extra });
 
-function depsOf({ rendered = FRESH, onDisk = FRESH } = {}) {
+function depsOf({ rendered = FRESH, onDisk = FRESH, contract = CLEAN } = {}) {
   return {
     renderBacklog: vi.fn(() => rendered),
     readBacklogMd: vi.fn(() => onDisk),
+    validateBacklog: vi.fn(() => contract),
   };
 }
 
@@ -59,6 +69,31 @@ describe("decideRenderGate (render vs on-disk -> allow | block)", () => {
   it("throws (so the caller can fail open) when a side is not a string", () => {
     expect(() => decideRenderGate({ renderedText: undefined, onDiskText: FRESH })).toThrow();
     expect(() => decideRenderGate({ renderedText: FRESH, onDiskText: null })).toThrow();
+  });
+});
+
+describe("decideContractGate (validateContract result -> allow | block)", () => {
+  it("allows a result with no violations", () => {
+    expect(decideContractGate(CLEAN)).toEqual({ action: "allow" });
+  });
+
+  it("blocks a result that names a violation, carrying the violations through", () => {
+    expect(decideContractGate(BAD)).toEqual({ action: "block", violations: [BAD_NAMESPACE] });
+  });
+
+  it("decides on the NAMED violations: ok:false with none named is not a confirmed violation", () => {
+    expect(decideContractGate({ ok: false, violations: [] })).toEqual({ action: "allow" });
+  });
+
+  it.each([
+    ["undefined", undefined],
+    ["null", null],
+    ["a string", "nope"],
+    ["no violations field", { ok: false }],
+    ["violations not an array", { ok: false, violations: "N1: bad" }],
+    ["a non-string violation", { ok: false, violations: [42] }],
+  ])("throws (so the caller can fail open) on a malformed result: %s", (_label, result) => {
+    expect(() => decideContractGate(result)).toThrow();
   });
 });
 
@@ -128,11 +163,101 @@ describe("evaluateRenderGate (hook stdin -> exit code + stderr)", () => {
     expect(evaluateRenderGate(ps, depsOf()).exitCode).toBe(0);
   });
 
+  describe("N136: the backlog-contract check (a confirmed violation blocks a git commit/push)", () => {
+    const commit = hookInput('git commit -m "x"');
+
+    it("a git commit with a CURRENT BACKLOG.md but a contract violation: blocks with exit 2, naming the violation and the remedy", () => {
+      const r = evaluateRenderGate(commit, depsOf({ contract: BAD }));
+      expect(r.exitCode).toBe(2);
+      expect(r.stderr).toContain("backlog-contract gate");
+      expect(r.stderr).toContain(BAD_NAMESPACE);
+      expect(r.stderr).toContain("npm run backlog:check");
+      expect(r.stderr).toContain("node hello-world/scripts/backlog/render.mjs");
+      expect(r.stderr).not.toContain("render-currency gate: docs/BACKLOG.md is STALE");
+    });
+
+    it("a git push with a contract violation: blocks with exit 2", () => {
+      expect(evaluateRenderGate(hookInput("git push origin main"), depsOf({ contract: BAD })).exitCode).toBe(2);
+    });
+
+    it("a PowerShell-tool payload is gated the same way", () => {
+      const ps = hookInput("git commit -m x", { tool_name: "PowerShell" });
+      expect(evaluateRenderGate(ps, depsOf({ contract: BAD })).exitCode).toBe(2);
+    });
+
+    it("control: the SAME violation is allowed for a non-git command (and the contract is never evaluated), blocked for git, allowed once clean", () => {
+      const bad = depsOf({ contract: BAD });
+      expect(evaluateRenderGate(hookInput("npm run build"), bad)).toEqual({ exitCode: 0, stderr: "" });
+      expect(bad.validateBacklog).not.toHaveBeenCalled();
+      expect(evaluateRenderGate(commit, depsOf({ contract: BAD })).exitCode).toBe(2);
+      expect(evaluateRenderGate(commit, depsOf({ contract: CLEAN }))).toEqual({ exitCode: 0, stderr: "" });
+    });
+
+    it("a stale BACKLOG.md AND a contract violation: exit 2 with BOTH messages", () => {
+      const r = evaluateRenderGate(commit, depsOf({ onDisk: STALE, contract: BAD }));
+      expect(r.exitCode).toBe(2);
+      expect(r.stderr).toContain("STALE");
+      expect(r.stderr).toContain(BAD_NAMESPACE);
+    });
+
+    it("lists at most 10 violations and counts the rest", () => {
+      const many = Array.from({ length: 13 }, (_, i) => `N${i}: bad ${i}`);
+      const r = evaluateRenderGate(commit, depsOf({ contract: { ok: false, violations: many } }));
+      expect(r.exitCode).toBe(2);
+      expect(r.stderr).toContain("13 violation(s)");
+      expect(r.stderr).toContain("N9: bad 9");
+      expect(r.stderr).not.toContain("N10: bad 10");
+      expect(r.stderr).toContain("...and 3 more");
+    });
+
+    it("fails OPEN when the contract check throws: exit 0 with a warning (and a current BACKLOG.md)", () => {
+      const deps = { ...depsOf(), validateBacklog: () => { throw new Error("ENOENT: backlog.yml"); } };
+      const r = evaluateRenderGate(commit, deps);
+      expect(r.exitCode).toBe(0);
+      expect(r.stderr).toContain("ENOENT");
+      expect(r.stderr).toMatch(/allowing/i);
+    });
+
+    it.each([
+      ["undefined", undefined],
+      ["null", null],
+      ["no violations field", { ok: false }],
+      ["a non-array violations", { ok: false, violations: "N1: bad" }],
+    ])("fails OPEN when the contract check returns a malformed result: %s", (_label, malformed) => {
+      const r = evaluateRenderGate(commit, { ...depsOf(), validateBacklog: () => malformed });
+      expect(r.exitCode).toBe(0);
+      expect(r.stderr).toMatch(/allowing/i);
+    });
+
+    it("a thrown non-Error value from the contract check still fails open", () => {
+      const r = evaluateRenderGate(commit, { ...depsOf(), validateBacklog: () => { throw "boom"; } });
+      expect(r.exitCode).toBe(0);
+      expect(r.stderr).toContain("boom");
+    });
+
+    it("independence: a THROWING contract check never suppresses a confirmed render drift (exit 2 plus a warning)", () => {
+      const deps = { ...depsOf({ onDisk: STALE }), validateBacklog: () => { throw new Error("contract blew up"); } };
+      const r = evaluateRenderGate(commit, deps);
+      expect(r.exitCode).toBe(2);
+      expect(r.stderr).toContain("STALE");
+      expect(r.stderr).toContain("contract blew up");
+    });
+
+    it("independence: a THROWING render check never suppresses a confirmed contract violation (exit 2 plus a warning)", () => {
+      const deps = { ...depsOf({ contract: BAD }), renderBacklog: () => { throw new Error("render blew up"); } };
+      const r = evaluateRenderGate(commit, deps);
+      expect(r.exitCode).toBe(2);
+      expect(r.stderr).toContain(BAD_NAMESPACE);
+      expect(r.stderr).toContain("render blew up");
+    });
+  });
+
   describe("fails OPEN on any internal error (warns on stderr, exits 0)", () => {
     const git = hookInput("git commit -m x");
+    const contractOk = () => CLEAN;
 
     it("render throws (e.g. backlog.yml missing or unparseable)", () => {
-      const deps = { renderBacklog: () => { throw new Error("ENOENT: no such file backlog.yml"); }, readBacklogMd: () => FRESH };
+      const deps = { renderBacklog: () => { throw new Error("ENOENT: no such file backlog.yml"); }, readBacklogMd: () => FRESH, validateBacklog: contractOk };
       const r = evaluateRenderGate(git, deps);
       expect(r.exitCode).toBe(0);
       expect(r.stderr).toContain("ENOENT");
@@ -140,20 +265,20 @@ describe("evaluateRenderGate (hook stdin -> exit code + stderr)", () => {
     });
 
     it("reading BACKLOG.md throws", () => {
-      const deps = { renderBacklog: () => FRESH, readBacklogMd: () => { throw new Error("EACCES"); } };
+      const deps = { renderBacklog: () => FRESH, readBacklogMd: () => { throw new Error("EACCES"); }, validateBacklog: contractOk };
       const r = evaluateRenderGate(git, deps);
       expect(r.exitCode).toBe(0);
       expect(r.stderr).toContain("EACCES");
     });
 
     it("render returns a non-string", () => {
-      const r = evaluateRenderGate(git, { renderBacklog: () => undefined, readBacklogMd: () => FRESH });
+      const r = evaluateRenderGate(git, { renderBacklog: () => undefined, readBacklogMd: () => FRESH, validateBacklog: contractOk });
       expect(r.exitCode).toBe(0);
       expect(r.stderr.length).toBeGreaterThan(0);
     });
 
     it("a thrown non-Error value", () => {
-      const r = evaluateRenderGate(git, { renderBacklog: () => { throw "boom"; }, readBacklogMd: () => FRESH });
+      const r = evaluateRenderGate(git, { renderBacklog: () => { throw "boom"; }, readBacklogMd: () => FRESH, validateBacklog: contractOk });
       expect(r.exitCode).toBe(0);
       expect(r.stderr).toContain("boom");
     });
@@ -177,7 +302,13 @@ describe("evaluateRenderGate (hook stdin -> exit code + stderr)", () => {
     it("never returns any exit code other than 0 or 2 for any input shape", () => {
       const inputs = [undefined, null, "", "{", hookInput("git commit"), hookInput("ls"), "[]", "123"];
       for (const stdin of inputs) {
-        for (const deps of [depsOf(), depsOf({ onDisk: STALE }), { renderBacklog: () => { throw new Error("x"); }, readBacklogMd: () => "" }]) {
+        for (const deps of [
+          depsOf(),
+          depsOf({ onDisk: STALE }),
+          depsOf({ contract: BAD }),
+          { renderBacklog: () => { throw new Error("x"); }, readBacklogMd: () => "", validateBacklog: contractOk },
+          { renderBacklog: () => { throw new Error("x"); }, readBacklogMd: () => "", validateBacklog: () => { throw new Error("y"); } },
+        ]) {
           expect([0, 2]).toContain(evaluateRenderGate(stdin, deps).exitCode);
         }
       }
@@ -286,6 +417,72 @@ describe("renderGate.mjs as a real process (planted repo layout)", () => {
     expect(run("git push origin main").status).toBe(2);
   });
 
+  // N136: the contract check, through the real entry script and a real planted backlog.yml. BACKLOG.md
+  // is rendered FROM each bad yml, so the render check sees a current file and ONLY the contract can block.
+  const N_ID_WRONG_STATE_YML = FIXTURE_YML.replace('state: "actionable"', 'state: "owner"').replace(
+    "blocked_reason: null",
+    'blocked_reason: "waiting on the owner"',
+  );
+  const SHIPPED_YML = FIXTURE_YML.replace('state: "actionable"', 'state: "shipped"');
+  const plantCurrent = (yml) => plant({ yml, md: renderMarkdown(parseBacklogYaml(yml)) });
+
+  it("git commit with a CURRENT BACKLOG.md but an N id set to the valid state \"owner\": exit 2, violation and remedy on stderr", () => {
+    plantCurrent(N_ID_WRONG_STATE_YML);
+    const r = run('git commit -m "x"');
+    expect(r.status).toBe(2);
+    expect(r.stderr).toContain("backlog-contract gate");
+    expect(r.stderr).toContain('N1: id namespace "N" requires state "actionable" but state is "owner"');
+    expect(r.stderr).toContain("npm run backlog:check");
+    expect(r.stderr).not.toContain("STALE");
+  });
+
+  it("git push with the same N-id/owner file: exit 2", () => {
+    plantCurrent(N_ID_WRONG_STATE_YML);
+    expect(run("git push origin main").status).toBe(2);
+  });
+
+  it("the defect that red-ed main, literally: state \"shipped\" is invisible to the render (BACKLOG.md is current) yet the gate blocks it", () => {
+    plantCurrent(SHIPPED_YML);
+    // The blind spot being closed: renderMarkdown silently drops an unknown-state item, so the
+    // on-disk BACKLOG.md equals a fresh render and the N119 render check alone would allow this.
+    expect(readFileSync(join(docs(), "BACKLOG.md"), "utf8")).not.toContain("Fixture item");
+    const r = run("git commit -m x");
+    expect(r.status).toBe(2);
+    expect(r.stderr).toContain('unknown state "shipped"');
+  });
+
+  it("control: the SAME bad file is allowed for a non-git command; the clean fixture is allowed for git", () => {
+    plantCurrent(N_ID_WRONG_STATE_YML);
+    expect(run("git status")).toEqual({ status: 0, stdout: "", stderr: "" });
+    plantCurrent(FIXTURE_YML);
+    expect(run("git commit -m x")).toEqual({ status: 0, stdout: "", stderr: "" });
+  });
+
+  it("a contract violation AND a stale BACKLOG.md together: exit 2 naming both", () => {
+    plant({ yml: N_ID_WRONG_STATE_YML, md: FIXTURE_MD_STALE });
+    const r = run("git commit -m x");
+    expect(r.status).toBe(2);
+    expect(r.stderr).toContain("STALE");
+    expect(r.stderr).toContain("backlog-contract gate");
+  });
+
+  // `verify: []` parses (an empty flow array) but is not a string, so validateContract itself throws
+  // (TypeError inside the verify-path check): a REAL internal error in the contract check.
+  const CONTRACT_THROWS_YML = FIXTURE_YML.replace("verify: null", "verify: []");
+
+  it("fails OPEN when validateContract itself throws on a parseable file: exit 0 with a contract warning", () => {
+    plantCurrent(CONTRACT_THROWS_YML);
+    const r = run("git commit -m x");
+    expect(r.status).toBe(0);
+    expect(r.stderr).toContain("backlog-contract gate: could not validate docs/backlog.yml");
+    expect(r.stderr).toMatch(/allowing/i);
+  });
+
+  it("...and that contract-check failure never hides a stale BACKLOG.md: exit 2", () => {
+    plant({ yml: CONTRACT_THROWS_YML, md: FIXTURE_MD_STALE });
+    expect(run("git commit -m x").status).toBe(2);
+  });
+
   it("fails OPEN when backlog.yml is missing: exit 0 with a warning", () => {
     plant({ yml: null });
     const r = run("git commit -m x");
@@ -324,15 +521,21 @@ describe("renderGate.mjs against THIS repo's real files (wiring of the default d
     expect(r.stderr).toBe("");
   });
 
-  it("a git commit gets exit 0 exactly when the live BACKLOG.md equals a fresh render, else exit 2 (never a crash)", () => {
-    let expected;
+  it("a git commit gets exit 0 exactly when the live BACKLOG.md equals a fresh render AND the live backlog.yml has 0 contract violations, else exit 2 (never a crash)", () => {
+    let drifted = false;
     try {
       const fresh = normalizeLineEndings(renderMarkdown(loadBacklogItems()));
       const onDisk = normalizeLineEndings(readFileSync(BACKLOG_MD_PATH, "utf8"));
-      expected = fresh === onDisk ? 0 : 2;
+      drifted = fresh !== onDisk;
     } catch {
-      expected = 0; // the gate fails open when it cannot read or parse
+      drifted = false; // the gate fails open when it cannot read or parse
     }
-    expect(run("git commit -m x").status).toBe(expected);
+    let violated = false;
+    try {
+      violated = validateContract(loadBacklogItems()).violations.length > 0;
+    } catch {
+      violated = false;
+    }
+    expect(run("git commit -m x").status).toBe(drifted || violated ? 2 : 0);
   });
 });
