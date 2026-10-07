@@ -7,6 +7,7 @@ import CircularProgress from "@mui/material/CircularProgress";
 import ExpandMoreIcon from "@mui/icons-material/ExpandMore";
 import FactCheckOutlinedIcon from "@mui/icons-material/FactCheckOutlined";
 import { TOUCH_TARGET_SX } from "@/app/theme/mobileSx";
+import { visuallyHidden } from "@/lib/copilot/answerStatus";
 import { recordDecision } from "@/lib/activityLog/appActivityLog.js";
 import { DRAFT_KIND } from "@/lib/review/flagPresentation";
 import { REVIEW_DECISION_ID, reviewDecisionFor } from "@/lib/review/reviewDecision";
@@ -46,6 +47,15 @@ import DocumentReviewResult from "./DocumentReviewResult";
 // different document, and a review that resolves after the document changed (or
 // the section unmounted) is discarded. Nothing is persisted.
 //
+// N123: the section is three named parts in this one module -- `useDocumentReview` (all
+// of the state and `run`), `ReviewControl` (the button and its describedby caption) and
+// `ReviewResultRegion` (the download / collapse row, the result and the regenerate row) --
+// and the default export composes them in the order they have always had, so the modal
+// and every test that renders the section see the same DOM. The Ask-AI chat is the one
+// host that takes the parts separately: its Review button sits in the composer dock and
+// its result sits in the panel body above the dock, so a result can never push the
+// composer out of the panel. It passes `compact` to ReviewControl for that layout.
+//
 // The modal's strip has one more control, a Hide / Show results toggle (N103 UX 6.3:
 // on an Ideal job two bands can share a short viewport). The result starts shown and
 // a fresh review always shows it again; the choice is held in state only, never
@@ -62,6 +72,8 @@ import DocumentReviewResult from "./DocumentReviewResult";
 const NOUN = { resume: "resume", cover: "cover letter", hypothetical: "hypothetical resume" };
 
 const NONE_CAPTION = "Nothing to review yet - open a tailored resume or cover letter and choose Ask AI, then review it here.";
+// The compact (dock toolbar) layout has one short line for this state, not a 109-character sentence.
+const NONE_CAPTION_COMPACT = "Nothing to review yet. Open a tailored resume and choose Ask AI.";
 
 // DocumentReviewResult lists each missing keyword as its own row, so the summary and
 // the announcement are counted that way too: the same flag, from here, to every count.
@@ -85,7 +97,10 @@ function textOf(request) {
   return typeof request.text === "string" ? request.text : "";
 }
 
-export default function DocumentReviewSection({
+// All of the section's state and its one action. Every hook runs before the
+// `request === null` return below, so a host that has no document yet and one that
+// has still call the same hooks in the same order.
+export function useDocumentReview({
   request = null,
   surface = "modal",
   announce,
@@ -94,7 +109,6 @@ export default function DocumentReviewSection({
   loadRealMaterialLines,
   onReviewed,
   regenerateReport = null,
-  regenerateRow = null,
 }) {
   const helperId = useId();
   const resultId = useId();
@@ -167,13 +181,7 @@ export default function DocumentReviewSection({
     }
   }
 
-  if (!request) {
-    return (
-      <Box component="section" aria-label="Review" sx={ROOT_SX[surface] ?? ROOT_SX.modal}>
-        <Box sx={{ fontSize: "0.8rem", color: "var(--text-secondary)" }}>{NONE_CAPTION}</Box>
-      </Box>
-    );
-  }
+  if (!request) return { request: null, noun: null, landmarkLabel: "Review", hasResult: false, run };
 
   const noun = NOUN[request.scope] ?? "document";
   const running = runningKey === fullKey;
@@ -197,27 +205,96 @@ export default function DocumentReviewSection({
   // region would only duplicate it.
   const offerDownload = Boolean(presentation) && !regenerateReport;
 
-  return (
-    <Box component="section" aria-label={`Review of this ${noun}`} sx={ROOT_SX[surface] ?? ROOT_SX.modal}>
-      <Box sx={{ display: "flex", alignItems: "center", flexWrap: "wrap", columnGap: 1.25, rowGap: 0.5 }}>
-        <Button
-          type="button"
-          size="small"
-          variant="outlined"
-          onClick={run}
-          aria-describedby={helperId}
-          aria-disabled={unavailable ? "true" : undefined}
-          aria-busy={running ? "true" : undefined}
-          startIcon={running ? <CircularProgress size={14} aria-hidden="true" /> : <FactCheckOutlinedIcon fontSize="small" />}
-          sx={{ textTransform: "none", ...TOUCH_TARGET_SX, ...(unavailable ? { opacity: 0.7 } : null) }}
-        >
-          {label}
-        </Button>
-        <Box id={helperId} sx={{ flex: 1, minWidth: 0, fontSize: "0.8rem", color: "var(--text-secondary)", overflowWrap: "anywhere" }}>
-          {caption || "Checks this document for weak, unsupported and repeated lines."}
-        </Box>
-      </Box>
+  return {
+    request,
+    noun,
+    landmarkLabel: `Review of this ${noun}`,
+    running,
+    shown,
+    presentation,
+    unavailable,
+    label,
+    caption,
+    helperId,
+    resultId,
+    hasResult,
+    canCollapse,
+    offerDownload,
+    resultHidden,
+    setResultHidden,
+    run,
+  };
+}
 
+// The button and the caption it is described by. With no document it is the
+// nothing-to-review caption instead (there is no control to press). `compact` is the
+// chat dock's toolbar: the caption (the pinned document's title, which the Context bar
+// already shows in full) is kept as the button's description for assistive tech but is
+// not drawn a second time, and the nothing-to-review line is the short one.
+export function ReviewControl({ hook, compact = false }) {
+  if (!hook.request) {
+    return compact ? (
+      <Box sx={{ flex: "1 1 0", minWidth: 0, fontSize: 12, lineHeight: 1.3, color: "var(--text-secondary)" }}>{NONE_CAPTION_COMPACT}</Box>
+    ) : (
+      <Box sx={{ fontSize: "0.8rem", color: "var(--text-secondary)" }}>{NONE_CAPTION}</Box>
+    );
+  }
+
+  const button = (
+    <Button
+      type="button"
+      size="small"
+      variant="outlined"
+      onClick={hook.run}
+      aria-describedby={hook.helperId}
+      aria-disabled={hook.unavailable ? "true" : undefined}
+      aria-busy={hook.running ? "true" : undefined}
+      startIcon={hook.running ? <CircularProgress size={14} aria-hidden="true" /> : <FactCheckOutlinedIcon fontSize="small" />}
+      sx={{
+        textTransform: "none",
+        ...(compact ? { flexShrink: 0, whiteSpace: "nowrap" } : null),
+        ...TOUCH_TARGET_SX,
+        ...(hook.unavailable ? { opacity: 0.7 } : null),
+      }}
+    >
+      {hook.label}
+    </Button>
+  );
+  const caption = (
+    <Box
+      id={hook.helperId}
+      sx={compact ? visuallyHidden : { flex: 1, minWidth: 0, fontSize: "0.8rem", color: "var(--text-secondary)", overflowWrap: "anywhere" }}
+    >
+      {hook.caption || "Checks this document for weak, unsupported and repeated lines."}
+    </Box>
+  );
+
+  if (compact) {
+    return (
+      <>
+        {button}
+        {caption}
+      </>
+    );
+  }
+  return (
+    <Box sx={{ display: "flex", alignItems: "center", flexWrap: "wrap", columnGap: 1.25, rowGap: 0.5 }}>
+      {button}
+      {caption}
+    </Box>
+  );
+}
+
+// The download / collapse row, the result and the host's regenerate row -- everything
+// that follows the button. `resultSx` lets a host that sizes the result itself (the
+// chat's shrinkable body slot) merge its own keys over the surface's; unset, the
+// result's style is exactly the surface's.
+export function ReviewResultRegion({ hook, surface = "modal", regenerateReport = null, regenerateRow = null, resultSx = null }) {
+  if (!hook.request) return null;
+  const { canCollapse, offerDownload, resultHidden, setResultHidden, resultId, hasResult, shown, presentation } = hook;
+
+  return (
+    <>
       {canCollapse || offerDownload ? (
         <Box sx={{ display: "flex", alignItems: "center", flexWrap: "wrap", columnGap: 1.25, rowGap: 0.5, mt: 0.5 }}>
           {canCollapse ? (
@@ -242,12 +319,24 @@ export default function DocumentReviewSection({
       ) : null}
 
       {hasResult ? (
-        <Box id={resultId} hidden={canCollapse && resultHidden} sx={RESULT_SX[surface] ?? RESULT_SX.modal}>
+        <Box id={resultId} hidden={canCollapse && resultHidden} sx={{ ...(RESULT_SX[surface] ?? RESULT_SX.modal), ...resultSx }}>
           {regenerateReport}
           {presentation ? <DocumentReviewResult outcome={shown.outcome} presentation={presentation} /> : null}
         </Box>
       ) : null}
       {regenerateRow}
+    </>
+  );
+}
+
+export default function DocumentReviewSection(props) {
+  const { surface = "modal", regenerateReport = null, regenerateRow = null } = props;
+  const hook = useDocumentReview(props);
+
+  return (
+    <Box component="section" aria-label={hook.landmarkLabel} sx={ROOT_SX[surface] ?? ROOT_SX.modal}>
+      <ReviewControl hook={hook} />
+      <ReviewResultRegion hook={hook} surface={surface} regenerateReport={regenerateReport} regenerateRow={regenerateRow} />
     </Box>
   );
 }
