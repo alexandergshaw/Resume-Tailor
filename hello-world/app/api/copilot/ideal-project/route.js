@@ -45,10 +45,26 @@ import { MAX_QUESTION_CHARS } from "@/lib/copilot/questionVocabulary";
 // read the pool at all for it, so a pool a Gemini request warmed earlier in the
 // session cannot leak a model example to an embedded one.
 
-// Tunable in this ONE place. It is a design value, not a measured one: there
-// is no GEMINI_API_KEY in the development checkout to measure real latency
-// against, so retune it against production latency rather than defending it.
-const TAILORED_DEADLINE_MS = 6000;
+// Tunable in this ONE place. It is a backstop against a hung model call, NOT a
+// latency budget, and it is generous on purpose. The client shows the cached
+// READY example in milliseconds and aborts the TAILORED request on any
+// question / posting / engine change (useIdealProject's AbortController), so a
+// long wait here never strands anyone: the only thing the deadline protects
+// against is a call that truly never returns. The first value, 6000, did the
+// opposite of protecting — a live activity log showed every TAILORED request
+// ending at ~6.2s (the cap plus request overhead), so the generation was
+// abandoned and `idealProject: null` returned almost every time, and the
+// candidate never saw the tailored example at all. It has to sit well above
+// what a real per-question Gemini call takes; retune it against production
+// latency, upward only if a real call is seen to need it.
+const TAILORED_DEADLINE_MS = 20000;
+
+// The deadline above only works if the platform lets the function live that
+// long: with no segment config the host's default governs, which on some plans
+// is 10s and would kill the request mid-wait (the client reads that as a failed
+// request, the very outcome the longer deadline exists to avoid). 30s clears
+// the 20s deadline plus the auth and context round trips ahead of it.
+export const maxDuration = 30;
 
 // The answer route's own cap on `applicationId` (a private constant there).
 const MAX_APPLICATION_ID_CHARS = 100;
