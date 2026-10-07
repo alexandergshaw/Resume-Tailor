@@ -466,21 +466,48 @@ describe("renderGate.mjs as a real process (planted repo layout)", () => {
     expect(r.stderr).toContain("backlog-contract gate");
   });
 
-  // `verify: []` parses (an empty flow array) but is not a string, so validateContract itself throws
-  // (TypeError inside the verify-path check): a REAL internal error in the contract check.
-  const CONTRACT_THROWS_YML = FIXTURE_YML.replace("verify: null", "verify: []");
+  // N139: `verify: []` parses (an empty flow array) but is not a string. It USED to make validateContract
+  // throw (a TypeError inside the verify-path check), which is how the two rows below simulated "the
+  // contract check itself blew up". validateContract now reports it as a named violation, so the gate
+  // must BLOCK it; and since no file yamlLite parses can make validateContract throw any more, the
+  // fail-open rows plant a contract module that throws.
+  const NON_STRING_VERIFY_YML = FIXTURE_YML.replace("verify: null", "verify: []");
 
-  it("fails OPEN when validateContract itself throws on a parseable file: exit 0 with a contract warning", () => {
-    plantCurrent(CONTRACT_THROWS_YML);
+  it("N139: a non-string verify (verify: []) with a CURRENT BACKLOG.md is a confirmed violation: exit 2 naming the id and field, not a fail-open warning", () => {
+    plantCurrent(NON_STRING_VERIFY_YML);
     const r = run("git commit -m x");
+    expect(r.status).toBe(2);
+    expect(r.stderr).toContain("backlog-contract gate");
+    expect(r.stderr).toContain("N1: verify must be null or a single command string");
+    expect(r.stderr).not.toContain("could not validate");
+  });
+
+  const plantedContract = () => join(root, "hello-world", "scripts", "backlog", "lib", "contract.mjs");
+  function withThrowingContract(fn) {
+    const original = readFileSync(plantedContract(), "utf8");
+    writeFileSync(plantedContract(), 'export function validateContract() { throw new TypeError("planted contract failure"); }\n', "utf8");
+    try {
+      return fn();
+    } finally {
+      writeFileSync(plantedContract(), original, "utf8");
+    }
+  }
+
+  it("fails OPEN when validateContract itself throws: exit 0 with a contract warning naming the error", () => {
+    plantCurrent(FIXTURE_YML);
+    const r = withThrowingContract(() => run("git commit -m x"));
     expect(r.status).toBe(0);
     expect(r.stderr).toContain("backlog-contract gate: could not validate docs/backlog.yml");
+    expect(r.stderr).toContain("planted contract failure");
     expect(r.stderr).toMatch(/allowing/i);
   });
 
-  it("...and that contract-check failure never hides a stale BACKLOG.md: exit 2", () => {
-    plant({ yml: CONTRACT_THROWS_YML, md: FIXTURE_MD_STALE });
-    expect(run("git commit -m x").status).toBe(2);
+  it("...and that contract-check failure never hides a stale BACKLOG.md: exit 2 plus the warning", () => {
+    plant({ yml: FIXTURE_YML, md: FIXTURE_MD_STALE });
+    const r = withThrowingContract(() => run("git commit -m x"));
+    expect(r.status).toBe(2);
+    expect(r.stderr).toContain("STALE");
+    expect(r.stderr).toContain("planted contract failure");
   });
 
   it("fails OPEN when backlog.yml is missing: exit 0 with a warning", () => {

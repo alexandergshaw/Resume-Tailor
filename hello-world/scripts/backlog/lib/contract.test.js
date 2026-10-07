@@ -344,6 +344,144 @@ describe("validateContract — N21: a path cited in verify must exist", () => {
   });
 });
 
+// N139: validateContract's doc says it never throws, but `verify` was fed straight to string
+// operations (.split in missingCitedPaths, the hash in verifyProofViolations) with no type check, and
+// yamlLite happily parses `verify: []` / `verify: ["a"]` (a flow array is a legal scalar there). A
+// hand-edit that wrote a list where a command string belongs therefore made `npm run backlog:check`
+// die with a TypeError instead of naming the item - and made the renderGate hook fail OPEN on a defect
+// it should have blocked.
+describe("validateContract — N139: a non-string verify is a reported violation, never a throw", () => {
+  const REAL_VERIFY = "npx vitest run lib/llm/featureEngine.test.js";
+  const run = (items) => {
+    let result;
+    expect(() => {
+      result = validateContract(items);
+    }).not.toThrow();
+    return result;
+  };
+
+  // [label, value, the type word the message must name]. 0 and false are falsy but NOT null, so they
+  // are also the rows that a truthiness guard (`if (item.verify)`) in place of `!= null` would skip.
+  const NON_STRING_VERIFY = [
+    ["an empty array (verify: [])", [], "array"],
+    ["an array holding a would-be-valid command", [REAL_VERIFY], "array"],
+    ["a nested array", [[]], "array"],
+    ["an empty object (verify: {})", {}, "object"],
+    ["a number (verify: 7)", 7, "number"],
+    ["zero (falsy, not null)", 0, "number"],
+    ["false (falsy, not null)", false, "boolean"],
+  ];
+
+  it("no-op control: the very same item with a null verify has 0 violations (only the verify value differs below)", () => {
+    const { ok, violations } = run([item({ id: "N77", verify: null })]);
+    expect(violations).toEqual([]);
+    expect(ok).toBe(true);
+  });
+
+  it.each(NON_STRING_VERIFY)("%s: one violation naming the id, the field and the type found - no throw", (_label, value, kind) => {
+    const { ok, violations } = run([item({ id: "N77", verify: value })]);
+    expect(ok).toBe(false);
+    expect(violations).toHaveLength(1);
+    expect(violations[0].startsWith("N77: verify ")).toBe(true);
+    expect(violations[0]).toContain(kind);
+  });
+
+  it("with a populated verify_proof it is STILL exactly one violation: the proof checks hash the string, so they are not run on a non-string", () => {
+    for (const value of [[], {}, 7]) {
+      const { violations } = run([item({ id: "N1", verify: value, verify_proof: completeProof(REAL_VERIFY) })]);
+      expect(violations, JSON.stringify(value)).toHaveLength(1);
+      expect(violations[0]).toContain("verify must be");
+    }
+  });
+
+  it("does not hide the rest of the file: every item's violations are still reported at once", () => {
+    const { ok, violations } = run([
+      item({ id: "N1", verify: [] }),
+      item({ id: "N2", owed_by: null }),
+      item({ id: "N3", verify: {} }),
+    ]);
+    expect(ok).toBe(false);
+    expect(violations).toHaveLength(3);
+    expect(violations.some((v) => v.startsWith("N1: verify "))).toBe(true);
+    expect(violations.some((v) => v.startsWith("N2:") && v.includes("no owed_by"))).toBe(true);
+    expect(violations.some((v) => v.startsWith("N3: verify "))).toBe(true);
+  });
+
+  it("through the real parser, as backlog:check reaches it: yamlLite's list spellings of verify become a violation, not a crash", () => {
+    for (const spelling of ["[]", '["npx vitest run lib/llm/featureEngine.test.js"]', "[[]]"]) {
+      const yml = [
+        '- id: "N1"',
+        '  state: "actionable"',
+        '  title: "t"',
+        '  owed_by: "o"',
+        "  evidence: []",
+        "  blocked_reason: null",
+        "  instrument: null",
+        "  owns: null",
+        `  verify: ${spelling}`,
+        "  verify_proof: null",
+        "  blocked_by: []",
+        "",
+      ].join("\n");
+      const { ok, violations } = run(parseBacklogYaml(yml));
+      expect(ok, spelling).toBe(false);
+      expect(violations, spelling).toHaveLength(1);
+      expect(violations[0].startsWith("N1: verify "), spelling).toBe(true);
+    }
+  });
+
+  it("well-formed verify values are unchanged: null passes, and a real command with a complete proof passes", () => {
+    expect(run([item({ id: "N1", verify: null })])).toEqual({ ok: true, violations: [] });
+    const withProof = item({ id: "N1", owns: ["lib/llm/featureEngine.js"], verify: REAL_VERIFY, verify_proof: completeProof(REAL_VERIFY) });
+    expect(run([withProof])).toEqual({ ok: true, violations: [] });
+  });
+
+  it("a STRING verify still gets every pre-existing check (dead filter, missing path, missing proof): the guard short-circuits only non-strings", () => {
+    const cmd = 'npx vitest run lib/zzNoSuchFilezz.test.js -t "x"';
+    const { violations } = run([item({ id: "N1", verify: cmd, verify_proof: null })]);
+    expect(violations).toHaveLength(3);
+    expect(violations.some((v) => v.includes("-t"))).toBe(true);
+    expect(violations.some((v) => v.includes("does not exist"))).toBe(true);
+    expect(violations.some((v) => v.includes("verify_proof is not populated"))).toBe(true);
+  });
+
+  // The doc comment's claim, swept rather than sampled: every field an item carries, set to a value of
+  // every shape the parser can emit (null, a string, a flow array, a nested one) plus the non-parser
+  // shapes a direct caller could pass, must still return the { ok, violations: string[] } contract
+  // that decideContractGate and backlog:check both rely on.
+  const HOSTILE = [null, undefined, "", "x", 0, 7, true, false, [], ["a"], [[]], {}, { a: 1 }];
+  const FIELDS = Object.keys(item());
+
+  it(`never throws, and always returns { ok, violations: string[] }: ${FIELDS.length} fields x ${HOSTILE.length} values`, () => {
+    let rows = 0;
+    for (const field of FIELDS) {
+      for (const value of HOSTILE) {
+        const label = `${field} = ${JSON.stringify(value)}`;
+        const result = run([item({ [field]: value })]);
+        expect(Array.isArray(result.violations), label).toBe(true);
+        expect(result.violations.every((v) => typeof v === "string"), label).toBe(true);
+        expect(result.ok, label).toBe(result.violations.length === 0);
+        rows += 1;
+      }
+    }
+    expect(rows).toBe(FIELDS.length * HOSTILE.length);
+  });
+
+  it("never throws on a hostile verify_proof, or a hostile field inside one, beside a real string verify", () => {
+    const proofKeys = Object.keys(completeProof(REAL_VERIFY));
+    for (const value of HOSTILE) {
+      const { violations } = run([item({ id: "N1", verify: REAL_VERIFY, verify_proof: value })]);
+      expect(violations.every((v) => typeof v === "string"), JSON.stringify(value)).toBe(true);
+      for (const key of proofKeys) {
+        const { violations: inner } = run([
+          item({ id: "N1", verify: REAL_VERIFY, verify_proof: completeProof(REAL_VERIFY, { [key]: value }) }),
+        ]);
+        expect(inner.every((v) => typeof v === "string"), `${key} = ${JSON.stringify(value)}`).toBe(true);
+      }
+    }
+  });
+});
+
 describe("validateContract — real docs/backlog.yml", () => {
   it("the migrated 15-item file has 0 contract violations today (all verify are null, as migration requires)", () => {
     const items = parseBacklogYaml(readFileSync(BACKLOG_YML_PATH, "utf8"));
