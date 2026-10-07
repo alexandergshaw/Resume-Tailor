@@ -10,10 +10,12 @@ _Last updated: 2026-10-07 by the orchestrator._
 - None. All work is committed and pushed to main.
 
 ## 2. Mid-flight waves / active dispatches
-- N133 dispatched (truthy-empty-entry cover-only preview edge; AC + red test seat).
+- None.
 
 ## 3. Killed / stalled residue
 - None. (N134's first implementer was user-killed mid-work; the partial production edits were valid and were finished by a fresh implementer — N134 shipped.)
+- **BACKLOG-STATE TRAP (new, cost a red main this session):** N-prefixed backlog ids MUST keep `state: "actionable"` — yamlLite.test.js:95 + contract.test.js enforce the id-namespace↔state agreement. Record "SHIPPED …" in the TITLE, never by changing `state`. (Same family as the unknown-key trap.)
+- **N133 SHIPPED** 2026-10-07 (full suite 18492 green).
 
 ## 3a. N134 — SHIPPED 2026-10-07 (full suite 18453 green)
 - Direct-answer directive added to POINTS_SYSTEM + ANSWER_SYSTEM in lib/copilot/answerPrompts.js (first point/sentence = direct answer, rest = support; behavioral/STAR carved out). FROZEN_POINTS_SYSTEM/FROZEN_ANSWER_SYSTEM oracles updated; *_PROMPT_NO_PAGES user-prompt oracles byte-identical (no builder touched). New answerPrompts.directAnswer.test.js (54 tests, mutation controls M1-M5). ideal-project feature untouched per owner hard constraint.
