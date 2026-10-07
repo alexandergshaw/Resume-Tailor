@@ -1404,6 +1404,18 @@
   verify_proof: null
   blocked_by: []
 
+- id: "N131"
+  state: "actionable"
+  title: "**QUALITY: the DETERMINISTIC cold-start ideal-project example (the instant READY shown for the first question of each posting + the seconds before the TAILORED model example arrives) is still role-WRONG for non-tech roles — the 7 archetypes in lib/copilot/idealProjectNarrative.js are ALL tech-company stories (product/data/infra/revenue/support/security/generic), so a teaching/nursing/finance/ops posting gets a tech story with its domain slotted in ('SRE story in Education', the owner's pasted complaint). N125 narrowed the infra regex (dropped performance|platform|migrat, added SRE) but the CONTENT coverage is unchanged.** Two offline, deterministic, testable levers: (1) make the `generic` archetype genuinely FIELD-NEUTRAL — problem/built/ran/landed prose + 3 outcome CATEGORIES ('time saved','error/defect rate','volume handled','satisfaction', etc.) that read credibly for ANY role, not business-process-automation flavored; (2) bias rankBuckets (idealProject.js) so a specialized (tech) archetype only wins on a STRONG match (e.g. score>=2 distinct hits), else fall to `generic` — so a non-tech posting with one incidental tech word gets the neutral generic example, not infra. TEST: a representative non-tech posting (education/healthcare/finance) selects `generic`, and the generic example contains no tech-specific terms. NOTE: the TAILORED (model) example is the role-appropriate one and N129 just unblocked it; this only has to make the <7s deterministic placeholder LESS WRONG, not perfect. The further lever if the TAILORED content itself is weak is the idealProjectPrompt.js prompt (quality judgable only in the owner's Gemini env)."
+  owed_by: "A small offline round: field-neutral generic archetype + score>=2 selector bias, test-first; then assess whether the TAILORED prompt needs work (owner env)"
+  evidence: ["Owner 2026-10-06/07 pasted infra archetype 'in Education'", "idealProjectNarrative.js 7 tech-only archetypes", "idealProject.js rankBuckets picks archetype by top match count"]
+  blocked_reason: null
+  instrument: null
+  owns: null
+  verify: null
+  verify_proof: null
+  blocked_by: []
+
 - id: "N130"
   state: "actionable"
   title: "**N129 follow-ups (from the fix round 2026-10-07).** (1) A FAILED tailored generation caches {project:null} for 30 min under that question's key (idealProjectTailoredCache TTL), so a same-question retry gets null for 30 min — a transient model failure/timeout poisons that exact question. Fix: do NOT cache a null/empty tailored result (or cache it with a SHORT negative-TTL, seconds not 30min), so a retry re-attempts. (2) CLIENT DOUBLE-MOUNT: IdealAnswerAids mounts in two render sites, so two HTTP POSTs fire for the same tailored key; the SERVER in-flight promise dedupe coalesces them to ONE model call IN-PROCESS, but on serverless the two requests can land on DIFFERENT instances -> two model calls. Lower priority (in-process is deduped); if it bites, dedupe client-side (lift useIdealProject to one shared provider / a client in-flight map) rather than relying on instance affinity. (3) Minor stale test: app/api/copilot/ideal-project route.test.js:157-164 [REAL-ENV] skipped block still says '6s' deadline (now 20s) — update the comment when next touching it."
