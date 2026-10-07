@@ -30,11 +30,14 @@
 // on most fixtures and red on the one that reaches the gate at all).
 //
 // `generateIdealProjectExample` (answerAids.js) is the loader body for both and
-// resolves to null, never rejects, so a failed call caches `{ project: null }`
-// rather than a rejection. That is a deliberate cost bound — at most one pool
-// attempt per TTL, the posture answerCodeLanguage.js takes for its `NONE` — and
-// it costs nothing visible: a null pool peeks as a miss, the deterministic
-// example is always there, and TAILORED still attempts per question.
+// resolves to null, never rejects. For the POOL that null is cached as
+// `{ project: null }`: a deliberate cost bound — at most one pool attempt per
+// TTL, the posture answerCodeLanguage.js takes for its `NONE` — and it costs
+// nothing visible, since a null pool peeks as a miss and the deterministic
+// example is always there. For TAILORED the null is NOT kept (N130): the loader
+// turns it into a rejection, which the TTL cache never retains, so a retry of
+// the same question re-attempts the model instead of reading a cached null for
+// the rest of the TTL.
 
 import { getServerEnv } from "@/lib/config/env";
 import { getGeminiClient } from "@/lib/llm/geminiClient";
@@ -137,6 +140,14 @@ export function idealPoolFor({ userId, applicationId, engine, description }) {
 // own cache so an exact repeat is served at once and two concurrent identical
 // asks collapse to one call. Never rejects — a failed call is null, which the
 // endpoint turns into "READY stands alone".
+//
+// Only a REAL example is kept. The cache stores the loader's promise and drops
+// a rejected one the moment it settles, so the loader rejects on a null result
+// (a model failure, an unparseable reply, or one normalizeIdealProject refuses):
+// the entry is evicted, a retry of that question re-attempts the model, and
+// concurrent identical asks that were already sharing the in-flight call all
+// receive the same null via the catch below. A success is untouched: it caches
+// for the full TTL and a concurrent twin still shares its one call.
 export async function resolveTailoredIdealProject({ engine, description, question, cacheKey } = {}) {
   if (wantsEmbedded(engine)) return null;
   if (!String(description || "").trim()) return null;
@@ -147,10 +158,11 @@ export async function resolveTailoredIdealProject({ engine, description, questio
     if (hit?.project) return hit.project;
     const entry = await idealProjectTailoredCache.get(
       cacheKey,
-      async () => ({
-        project: await generateIdealProjectExample({ client, geminiModel, description, question }),
-        resolvedAt: Date.now(),
-      }),
+      async () => {
+        const project = await generateIdealProjectExample({ client, geminiModel, description, question });
+        if (!project) throw new Error("no tailored ideal-project example resolved");
+        return { project, resolvedAt: Date.now() };
+      },
       { now: Date.now() },
     );
     return entry?.project || null;
