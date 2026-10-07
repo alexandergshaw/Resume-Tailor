@@ -159,6 +159,6 @@ describe("POST /api/copilot/ideal-project — auth", () => {
 // real wall-clock. The settleWithin(..., TAILORED_DEADLINE_MS) timeout
 // BEHAVIOUR is asserted above via a failing (rejecting) model call; the
 // 20000ms NUMBER (raised from 6000ms by N129) is not pinned here on purpose.
-describe.skip("[REAL-ENV] TAILORED 6s deadline value and model role-fit (needs GEMINI_API_KEY)", () => {
+describe.skip("[REAL-ENV] TAILORED 20s deadline value and model role-fit (needs GEMINI_API_KEY)", () => {
   it("bounds the tailored wait at the tuned deadline", () => {});
 });
