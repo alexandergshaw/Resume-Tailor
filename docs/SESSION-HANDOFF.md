@@ -10,7 +10,8 @@ _Last updated: 2026-10-07 by the orchestrator._
 - None. The big copilot+tracking batch (N149 + expansion-panel re-render fix + N150 + N152) is committed + pushed; combined full-suite gate 18968 green.
 
 ## 2. Mid-flight waves / active dispatches
-- None. NEXT (not started): N151 (template workflow, design+ruled — build after this push, a/b/c slices; touches page.js/materials — watch for collision if other page.js work starts) and N144 (mobile-first copilot overhaul — now unblocked, all new rows exist).
+- N144a TDD then implement (CollapsibleAid accordion in AnswerAids; plan docs/loop/N144a.plan.r1.md; owner: accordion, answer+points open, 600px, desktop open, resume group open). Touches copilot/AnswerAids — DISJOINT from N151b/c (templates/page.js). Mind the landed-test traps: only Examples group role=group; lib aidDisclosure + importer in ONE commit (sweep); mobile tests need a matchMedia stub.
+- QUEUED: N151b (template switcher) + N151c (regenerate-into, OR-5 owner call) — templates/page.js; N144b (control stack) + N144c (tokens) after N144a. SHIPPED today: N143,N148,N149,N150,N152,N151a + expansion re-render fix.
 
 ## 3. Killed / stalled residue
 - None. (N134's first implementer was user-killed mid-work; the partial production edits were valid and were finished by a fresh implementer — N134 shipped.)
