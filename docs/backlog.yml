@@ -1776,6 +1776,18 @@
   verify_proof: null
   blocked_by: []
 
+- id: "N152"
+  state: "actionable"
+  title: "**OWNER 2026-10-08 (perf bug): the tracking page takes super long on every button click. DIAGNOSED (not the N143 prewarm hook — it's correctly gated; PRE-EXISTING): the tracking surface has ZERO memoization, so every click (a setState on the ~3000-line page.js god component) re-renders ALL of page.js + the entire card/table list. Culprits (file:line): ApplicationCard.js:41 not React.memo; all row/card handlers are inline closures recreated each render (ApplicationCard 180/183/191/199/210/219/234/241/242, TrackingTab 594/668/683/711/789/799/807); renderDigestCell redefined every render (TrackingTab.js:142); visibleApplicationData recomputed in render body (page.js:1313); emailClassificationsByAppId rebuilt inline every render (page.js:2816); O(n^2) findIndex in the per-row map (TrackingTab.js:423,572); inline MUI sx re-serialized per cell. SECONDARY (minor, N143): useApplicationProjectPool at page.js:293 has its return discarded but its settle-time setState re-renders the whole god component -> isolate into a null leaf. FIX (behavior-preserving): React.memo ApplicationCard + stabilize handlers (stable dispatcher + primitive id) + useCallback renderDigestCell + hoist sx; useMemo the two derived structures; precompute id->index Map; leaf-isolate the prewarm hook. Virtualization DEFERRED. Verify = render-count tests (unrelated state change doesn't re-render other cards) + all existing tracking behavior tests green; real speedup is owner-confirmed.**"
+  owed_by: "Implement the memoization pass + render-count tests -> fresh verify (behavior-preserving) -> full-suite gate; owner confirms the speedup in-app"
+  evidence: ["Owner 2026-10-08: tracking page slow on every button click", "Diagnosis 2026-10-08: zero memoization, full god-component re-render per click; N143 hook exonerated for the per-click path"]
+  blocked_reason: null
+  instrument: null
+  owns: null
+  verify: null
+  verify_proof: null
+  blocked_by: []
+
 # VERIFICATION (1)
 - id: "V1"
   state: "verification"
