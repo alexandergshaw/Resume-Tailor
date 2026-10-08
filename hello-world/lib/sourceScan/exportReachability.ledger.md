@@ -21,12 +21,12 @@ Current pinned values, as of the last entry in each section:
 | `ALLOWED_UNREACHABLE_MODULES.length`        | 14     |
 | `UNWIRED_MODULES` (exact list of 5 files)   | 5      |
 | `ORPHAN_EXPORTS.length`                     | 65     |
-| `TEST_REFERENCED.length` (rule TR-1)        | 407    |
-| `UNUSED_IN_SHIPPING_MODULES.length`         | 472    |
+| `TEST_REFERENCED.length` (rule TR-1)        | 422    |
+| `UNUSED_IN_SHIPPING_MODULES.length`         | 487    |
 
 The identity that ties the last three together, and that the test asserts
 directly, is `UNUSED_IN_SHIPPING_MODULES = TEST_REFERENCED + ORPHANS`
-(407 + 65 = 472).
+(422 + 65 = 487).
 
 ---
 
@@ -182,7 +182,7 @@ it.
 
 ---
 
-## 4. TEST_REFERENCED, rule TR-1 (pinned at 407)
+## 4. TEST_REFERENCED, rule TR-1 (pinned at 422)
 
 Exports unused by shipping code that at least one `.test.js` imports BY NAME.
 A raise is a review event: check the new export is a helper being pinned, not
@@ -582,11 +582,64 @@ and useSampleAnswer.js), useApplicationProjectPool (page.js, CopilotClient.js,
 PracticeClient.js). No new module is unreachable. ORPHAN_EXPORTS unmoved at 65. Measured
 by running the sweep's own scan (exportReachability.scan.js) over the post-wave tree and
 classifying every export of the fifteen files the feature touched.
+N149: 407 -> 410 (+3, -0): "More detail" expanders elaborate with general knowledge, with
+the materials as context. IN (+3), by name:
+  lib/copilot/expansionPrompt.js#MAX_CONTEXT_CHARS -- the resume slice bound (4000),
+    read inside buildExpansionUserTurn and pinned by name by expansionPrompt.test.js and
+    expand/route.test.js; no shipping module imports it;
+  lib/copilot/expansionTimeouts.js#DEFAULT_EXPANSION_SERVER_TIMEOUT_MS -- read only by
+    clampExpansionServerTimeout inside its own module, pinned by name by
+    expansionTimeouts.test.js and expansionStore.test.js;
+  lib/copilot/answerLocal.js#isPastWorkLine -- LEFT the reachable set. Its only shipping
+    importer was expansionHonesty.js, which retired it (the quote-everything cage that
+    reached it, composedPasses, is deleted). It is still called inside answerLocal.js and
+    still imported by name by answerLocal.test.js, so it lands here and not in the
+    orphan half; it was not deleted.
+Every other export the change added has a shipping importer and is in neither bucket:
+answerLocal.js#namedEntityTokens (expansionHonesty.js), expansionTimeouts.js's
+EXPANSION_CLIENT_TIMEOUT_MS (expansionClient.js) and clampExpansionServerTimeout
+(lib/config/env.js), env.js#getExpansionTimeoutMs (expand/route.js). The one new module, lib/copilot/expansionTimeouts.js, is reachable
+(expansionClient.js and env.js import it). projectStories.js#significantTerms also lost
+its expansionHonesty.js importer but keeps many other shipping importers, so it did not
+move. ORPHAN_EXPORTS unmoved at 65. Measured by running the sweep's own scan over the
+post-change tree and classifying every export of the files the change touched.
+N150: 410 -> 422 (+12, -0): the tech-buzzwords row (LLM-suggested terms under a drafted
+answer, each expandable to a short general explanation). IN (+12), by name and by module,
+each pinned by name by its module's own suite and each read ONLY from inside its own
+module in production (so none is dead, and none is an orphan -- a suite does import it):
+  lib/copilot/techTermsGen.js x6 -- the owner-tunable constants TECH_TERMS_COUNT,
+    TECH_TERM_MAX_WORDS, TECH_TERMS_GEN_TIMEOUT_MS and TECH_TERMS_SYSTEM (read by the
+    prompt builder, the parser and generateTechTerms' default timeout), and the pure
+    helpers buildTechTermsPrompt and parseTechTermsResponse (both called by
+    generateTechTerms, which the tech-terms route imports);
+  lib/copilot/techTermDetailHonesty.js x2 -- TECH_TERM_DETAIL_MAX_SENTENCES and
+    isFirstPersonClaim (both read by sanitizeTechTermDetail, which the tech-term-detail
+    route imports);
+  lib/copilot/techTermDetailStore.js x2 -- TECH_TERM_DETAIL_STORE_MAX (the LRU bound,
+    read by the store's own write) and resetTechTermDetailStore (the store's test-only
+    reset, the same role resetExpansionStore plays; never called from application code);
+  lib/copilot/techTermsLive.js x2 -- TECH_TERMS_PENDING_MAX_MS (the default of
+    startTechTerms' watchdog) and normalizeTechTermsResult (called by it).
+Every other export the feature added has a shipping importer and is in neither bucket:
+generateTechTerms (tech-terms route), TECH_TERM_DETAIL_SYSTEM and
+buildTechTermDetailUserTurn (tech-term-detail route), sanitizeTechTermDetail
+(tech-term-detail route), TECH_TERM_MAX_CHARS (the detail route and techTermsGen.js) and
+techTermDetailKey (useTechTermDetails.js), subscribe / getSnapshot / getTechTermDetail /
+beginTechTermDetail (useTechTermDetails.js), fetchTechTermDetail (useTechTermDetails.js),
+startTechTerms (useDraftAnswer.js, useSampleAnswer.js, useRoomQuestions.js),
+fetchTechTerms (answerClient.js, via the namespace import in the same three hooks), and
+TechTermDetailScope / useTechTermDetailApi (CopilotClient.js, PracticeClient.js and
+AnswerAids.js). No new module is unreachable: ALLOWED_UNREACHABLE_MODULES and
+UNWIRED_MODULES unmoved at 14 and 5. ORPHAN_EXPORTS unmoved at 65. Measured by running
+the sweep's own scan (exportReachability.scan.js) over the post-wire tree and
+classifying every export of the ten new modules (seven under lib/copilot, the two
+routes, useTechTermDetails.js) and the files the feature edited; the twelve names above
+are the complete symmetric difference against the N149 baseline.
 ```
 
 ---
 
-## 5. UNUSED_IN_SHIPPING_MODULES total (pinned at 472)
+## 5. UNUSED_IN_SHIPPING_MODULES total (pinned at 487)
 
 The sum of the two halves above (`TEST_REFERENCED + ORPHANS`); the test also
 asserts that identity directly, so the split is pinned and not only the total.
@@ -743,4 +796,14 @@ constants and pure helpers, named at section 4; ORPHAN_EXPORTS unmoved at 65). T
 total moving by exactly the TR-1 half's +16 with the orphan half frozen is what says
 this was a widened export surface for unit suites and not a feature built and never
 wired. TEST_REFERENCED 407 + ORPHANS 65.
+N149: 472 -> 475 (TEST_REFERENCED's +3, named at section 4: MAX_CONTEXT_CHARS,
+DEFAULT_EXPANSION_SERVER_TIMEOUT_MS, and isPastWorkLine leaving the reachable set;
+ORPHAN_EXPORTS unmoved at 65). The total moving by exactly the TR-1 half's +3 with the
+orphan half frozen is what says none of it is a feature built and never wired.
+TEST_REFERENCED 410 + ORPHANS 65.
+N150: 475 -> 487 (TEST_REFERENCED's +12, named at section 4: techTermsGen.js x6,
+techTermDetailHonesty.js x2, techTermDetailStore.js x2, techTermsLive.js x2;
+ORPHAN_EXPORTS unmoved at 65). The total moving by exactly the TR-1 half's +12 with the
+orphan half frozen is what says this was a widened export surface for unit suites and
+not a feature built and never wired. TEST_REFERENCED 422 + ORPHANS 65.
 ```

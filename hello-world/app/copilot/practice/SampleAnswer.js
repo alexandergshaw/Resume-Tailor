@@ -106,6 +106,9 @@ export default function SampleAnswer({
   // undefined when there is no posting selected or the engine is embedded.
   projectExample,
   projectExampleLive,
+  // The tech-buzzwords row (LLM-suggested terms, each expandable), straight
+  // through to AnswerAids; undefined under the same conditions as the two above.
+  techTerms,
   // ARCH §3.5/§4e: which knowledge-base page (if any) each point in
   // `points` came from — Array<{id, title} | null>, positionally paired.
   // Passed straight to answerLines below, exactly like `cues`; AnswerLines
@@ -222,6 +225,7 @@ export default function SampleAnswer({
                 anchor={anchor}
                 projectExample={projectExample}
                 projectExampleLive={projectExampleLive}
+                techTerms={techTerms}
               />
               <Typography variant="caption" sx={{ color: "var(--text-muted)", display: "block", mt: 1 }}>
                 {sourceCaption(isEmbedded, grounding)}

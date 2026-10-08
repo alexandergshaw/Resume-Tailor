@@ -454,6 +454,7 @@ function CurrentAnswerPanel({
                 anchor={current.anchor}
                 projectExample={current.projectExample}
                 projectExampleLive={current.projectExampleLive}
+                techTerms={current.techTerms}
               />
             </>
           ) : (
@@ -752,6 +753,7 @@ function HistoryItem({ entry, copy }) {
                 anchor={entry.anchor}
                 projectExample={entry.projectExample}
                 projectExampleLive={entry.projectExampleLive}
+                techTerms={entry.techTerms}
                 finalOnly
               />
             </>

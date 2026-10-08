@@ -10,6 +10,7 @@ import {
   projectExampleFromResponse,
   startProjectExampleLive,
 } from "@/lib/copilot/projectExampleLive";
+import { startTechTerms } from "@/lib/copilot/techTermsLive";
 import { readEngine } from "@/app/settings/engine";
 import {
   emptySampleAnswer,
@@ -27,6 +28,21 @@ import { normalizeQuestion } from "@/lib/copilot/questions";
 // the same probe for the same reason.
 function liveFetchAvailable() {
   return "fetchProjectExampleLive" in answerClientModule && typeof answerClientModule.fetchProjectExampleLive === "function";
+}
+
+// The tech-buzzwords row's own probe, for the same stale-partial-mock reason. It
+// checks fetchTechTerms, never fetchProjectExampleLive: the two rows call
+// different exports and must each be gated on the one they actually call.
+function techTermsFetchAvailable() {
+  return "fetchTechTerms" in answerClientModule && typeof answerClientModule.fetchTechTerms === "function";
+}
+
+// The Row-1 core BOTH rows below gate on: an application is selected and the
+// answer carried a Row 1 value (in any status), which is the one authoritative
+// "the server ran a model backend for this posting" signal this hook has. One
+// predicate rather than two inline copies, so the rows cannot drift apart.
+function exampleRowEnabled(appId, example) {
+  return !!appId && !!example;
 }
 
 // G1: thin React wrapper around lib/copilot/sampleAnswerState.js's pure
@@ -103,6 +119,9 @@ export function useSampleAnswer({ question, profile, interviewType, applicationI
   // from `genRef`, which gates the ANSWER's own write -- a Row 2 for a reveal
   // served from the cache has no answer request to borrow a generation from.
   const liveGenRef = useRef(0);
+  // The same ownership counter for the tech-buzzwords row, kept apart from
+  // `liveGenRef` so the two rows' requests can never invalidate one another.
+  const techTermsGenRef = useRef(0);
 
   // Row 2 of the example-projects group for the sample answer now on screen:
   // an invented project written for `q`, requested after the answer has landed
@@ -119,7 +138,7 @@ export function useSampleAnswer({ question, profile, interviewType, applicationI
   // sample answer for a server-embedded deployment would spend a request on every
   // reveal to be told "nothing to show".
   const fireProjectExampleLive = useCallback((q, appId, example) => {
-    if (!appId || !example || !liveFetchAvailable()) return;
+    if (!exampleRowEnabled(appId, example) || !liveFetchAvailable()) return;
     const liveGen = (liveGenRef.current += 1);
     try {
       startProjectExampleLive({
@@ -134,6 +153,30 @@ export function useSampleAnswer({ question, profile, interviewType, applicationI
       });
     } catch {
       // Row 2 is a supplement; nothing here may interrupt the sample answer.
+    }
+  }, []);
+
+  // The tech-buzzwords row for the sample answer now on screen, requested after
+  // the answer has landed and never awaited, from the same two places and under
+  // the same Row-1 core as Row 2 above. Never cached: a revealed-again answer
+  // asks again, so a pending or failed list is never replayed. A settle that
+  // arrives after a newer draft (or fire) took over repaints nothing.
+  const fireTechTerms = useCallback((q, appId, example) => {
+    if (!exampleRowEnabled(appId, example) || !techTermsFetchAvailable()) return;
+    const termsGen = (techTermsGenRef.current += 1);
+    try {
+      startTechTerms({
+        applicationId: appId,
+        question: q,
+        engine: readEngine(),
+        fetchTerms: answerClientModule.fetchTechTerms,
+        apply: (value) => {
+          if (techTermsGenRef.current !== termsGen) return;
+          setState((prev) => (prev.question === q ? { ...prev, techTerms: value } : prev));
+        },
+      });
+    } catch {
+      // The row is a supplement; nothing here may interrupt the sample answer.
     }
   }, []);
 
@@ -168,6 +211,7 @@ export function useSampleAnswer({ question, profile, interviewType, applicationI
     // A Row 2 still in flight for the draft this one replaces must not land on
     // the new one's panel.
     liveGenRef.current += 1;
+    techTermsGenRef.current += 1;
     setState({
       question: q,
       visible: true,
@@ -242,6 +286,7 @@ export function useSampleAnswer({ question, profile, interviewType, applicationI
           pageSources: cleanPageSources,
           projectExample: cleanExample,
           projectExampleLive: undefined,
+          techTerms: undefined,
           grounding: cleanGrounding,
           error: "",
           profile: p,
@@ -272,6 +317,7 @@ export function useSampleAnswer({ question, profile, interviewType, applicationI
           codeLanguage: cl,
         });
         fireProjectExampleLive(q, appId, cleanExample);
+        fireTechTerms(q, appId, cleanExample);
         reportRowOneStatus(appId, cleanExample);
       })
       .catch((err) => {
@@ -293,7 +339,7 @@ export function useSampleAnswer({ question, profile, interviewType, applicationI
           codeLanguage: cl,
         }));
       });
-  }, [fireProjectExampleLive, reportRowOneStatus]);
+  }, [fireProjectExampleLive, fireTechTerms, reportRowOneStatus]);
 
   // Shared by the toggle's "show" branch (force=false — serve the cache
   // when it's still valid per needsRedraft) and by Retry/Regenerate
@@ -332,6 +378,7 @@ export function useSampleAnswer({ question, profile, interviewType, applicationI
             const raw = cacheRef.current.get(normalizeQuestion(question));
             setState({ ...cached, projectExample: finalProjectExample(raw?.projectExample) });
             fireProjectExampleLive(question, applicationId, raw?.projectExample);
+            fireTechTerms(question, applicationId, raw?.projectExample);
             return;
           }
         }
@@ -340,7 +387,7 @@ export function useSampleAnswer({ question, profile, interviewType, applicationI
       }
       setState((prev) => (prev.question === question ? { ...prev, visible: true } : prev));
     },
-    [active, profile, interviewType, applicationId, codeLanguage, question, request, fireProjectExampleLive],
+    [active, profile, interviewType, applicationId, codeLanguage, question, request, fireProjectExampleLive, fireTechTerms],
   );
 
   // AC-N2: fetches a draft for `q` and writes it to the cache via the exact
@@ -454,6 +501,9 @@ export function useSampleAnswer({ question, profile, interviewType, applicationI
     // carried none (no posting selected, or the embedded engine).
     projectExample: active.projectExample,
     projectExampleLive: active.projectExampleLive,
+    // The tech-buzzwords row (suggested terms to be aware of); undefined under
+    // the same conditions as the two rows above.
+    techTerms: active.techTerms,
     grounding: active.grounding,
     error: active.error,
     toggle,

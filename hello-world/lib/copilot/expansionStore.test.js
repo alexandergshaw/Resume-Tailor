@@ -30,6 +30,7 @@ import {
   subscribe,
 } from "./expansionStore.js";
 import { fetchExpansion } from "./expansionClient.js";
+import { EXPANSION_CLIENT_TIMEOUT_MS, DEFAULT_EXPANSION_SERVER_TIMEOUT_MS } from "./expansionTimeouts.js";
 
 const STORE_SRC = readFileSync(fileURLToPath(new URL("./expansionStore.js", import.meta.url)), "utf8");
 const CLIENT_SRC = readFileSync(fileURLToPath(new URL("./expansionClient.js", import.meta.url)), "utf8");
@@ -244,11 +245,26 @@ describe("fetchExpansion", () => {
   });
 
   it("bounds the round trip, and longer than the server's own budget", () => {
-    // 6000 against the server's 4000, deliberately: when both fire, the
-    // server's diagnosis wins the race and the reader is told what actually
-    // happened rather than "network error".
-    expect(CLIENT_SRC).toContain("6000");
-    expect(CLIENT_SRC).toContain("AbortSignal.timeout");
+    // The client's budget is the SHARED constant, not a literal of its own, so
+    // it and the server's clamped budget (getExpansionTimeoutMs) cannot drift
+    // apart. When both fire, the server's diagnosis wins the race and the
+    // reader is told what actually happened rather than "network error".
+    expect(CLIENT_SRC).toContain("EXPANSION_CLIENT_TIMEOUT_MS");
+    expect(CLIENT_SRC).toContain("AbortSignal.timeout(EXPANSION_CLIENT_TIMEOUT_MS)");
+    expect(CLIENT_CODE).not.toMatch(/AbortSignal\.timeout\(\s*\d/);
+    expect(EXPANSION_CLIENT_TIMEOUT_MS).toBeGreaterThan(DEFAULT_EXPANSION_SERVER_TIMEOUT_MS);
+  });
+
+  it("actually hands the shared budget to fetch as its abort signal", async () => {
+    const fetchMock = vi.fn(async () => ({ ok: true, status: 200, json: async () => DONE }));
+    vi.stubGlobal("fetch", fetchMock);
+    const timeoutSpy = vi.spyOn(AbortSignal, "timeout");
+    try {
+      await fetchExpansion(REQUEST);
+      expect(timeoutSpy).toHaveBeenCalledWith(EXPANSION_CLIENT_TIMEOUT_MS);
+    } finally {
+      timeoutSpy.mockRestore();
+    }
   });
 
   it("throws a coded error rather than a raw provider string", async () => {

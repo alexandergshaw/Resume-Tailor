@@ -11,6 +11,7 @@ import Typography from "@mui/material/Typography";
 import { BREAK_LONG_WORDS_SX, TOUCH_TARGET_SX } from "@/app/theme/mobileSx";
 import { createChoiceStore } from "../../lib/copilot/choiceStore.js";
 import { PROJECT_PAGE_SOURCE } from "../../lib/copilot/projectStories.js";
+import { useTechTermDetailApi } from "./useTechTermDetails";
 
 // AC-K1.2/AC-K1.3: the two groups that sit UNDER a drafted answer's cues —
 // what the candidate actually has (the role and project their answer came
@@ -56,6 +57,15 @@ import { PROJECT_PAGE_SOURCE } from "../../lib/copilot/projectStories.js";
 // CSS `order`, the second row appended last) is the stable surface the mobile
 // pass restyles; keep it. Every state the two rows can be in, and the exact
 // strings, are the example-projects UX design's (docs/loop/N143.ux.r1.md).
+//
+// A FOURTH group sits between the posting's words and the example projects: the
+// tech buzzwords, LLM-suggested terms relevant to the question that the candidate
+// may well NOT have in their materials. It is a fourth provenance (not the
+// candidate's, not the posting's own words, not an invented project), so it gets
+// its own `dl`, and its lead says plainly that these are suggestions to be aware
+// of rather than anything the candidate has done. Each term is a button that
+// opens a short general explanation inline; the explanation comes from the
+// scope-provided api (useTechTermDetails.js), so this file still fetches nothing.
 
 // Below `md` the grid collapses to one column ordered dt, dd, dt, dd — a
 // single uniform rowGap would put a label exactly as far from its OWN value
@@ -402,7 +412,203 @@ function ExampleProjectsGroup({ rowOne, rowTwo }) {
   );
 }
 
-export default function AnswerAids({ buzzwords, anchor, projectExample, projectExampleLive, finalOnly }) {
+// ---------------------------------------------------------------------------
+// The tech-buzzwords group. Presentation only: the list arrives on its prop
+// already decided (written by the hooks after the answer lands), and the
+// explanation behind each term arrives through the scope's api. Nothing here
+// decides which terms are relevant or what a term means.
+// ---------------------------------------------------------------------------
+
+// Pinned copy. No em dash or en dash (a screen reader does not speak one), no
+// emoji. The lead is NOT conditional on anything about a term: a suggestion read
+// as a claim of experience is the lie that ends an interview, so whenever terms
+// are on screen the warning is beside them.
+const TECH_TERMS_LABEL = "Tech buzzwords";
+const TECH_TERMS_LEAD_BOLD = "Suggestions, not claims.";
+const TECH_TERMS_LEAD_REST = " Terms to be aware of for this question. Only use ones you can speak to honestly.";
+const TT_PENDING = "Finding tech terms for this question…";
+const TT_FAILED = "Couldn't find tech terms this time.";
+const TT_DETAIL_LOADING = "Looking that up…";
+const TT_DETAIL_EMPTY = "Nothing useful to add for this one.";
+const TT_DETAIL_ERROR = "Couldn't look that up.";
+const TT_DETAIL_TIMEOUT = "That took too long to look up.";
+const TT_DETAIL_DISABLED = "Term explanations are unavailable on this server right now.";
+
+// What the group shows for one card's `techTerms`. null means the row does not
+// exist for this card (no application, the embedded engine, or the request not
+// yet started), which is different from any state below. Terms are shown only
+// for a `ready` value holding at least one non-empty string; anything half-built
+// reads as failed. `finalOnly` is a past question's card: a list that never
+// settled reads as failed there instead of a "finding" line on an old answer.
+function techTermsView(techTerms, finalOnly) {
+  if (!techTerms || typeof techTerms !== "object") return null;
+  if (techTerms.status === "ready") {
+    const seen = new Set();
+    const terms = [];
+    for (const raw of Array.isArray(techTerms.terms) ? techTerms.terms : []) {
+      const term = typeof raw === "string" ? raw.trim() : "";
+      if (!term || seen.has(term.toLowerCase())) continue;
+      seen.add(term.toLowerCase());
+      terms.push(term);
+    }
+    return terms.length > 0 ? { kind: "ready", terms } : { kind: "failed" };
+  }
+  if (techTerms.status === "pending") return { kind: finalOnly ? "failed" : "pending" };
+  return { kind: "failed" };
+}
+
+function detailMessage(status, code) {
+  if (status === "empty") return TT_DETAIL_EMPTY;
+  if (code === "timeout") return TT_DETAIL_TIMEOUT;
+  if (code === "disabled") return TT_DETAIL_DISABLED;
+  return TT_DETAIL_ERROR;
+}
+
+// One open term's explanation, inline below the chips. The term is named again
+// above its text so several open at once stay attributable.
+function TechTermDetail({ term, record, onRetry }) {
+  const status = record?.status ?? "idle";
+  // `idle` on an OPEN term means its record was evicted from the bounded store;
+  // it reads as a failure with a Retry rather than a "looking" line that never
+  // ends.
+  const retryable = (status === "error" || status === "idle") && record?.code !== "disabled";
+  return (
+    <Box sx={{ borderLeft: "2px solid var(--border-strong)", pl: 1.25, ...BREAK_LONG_WORDS_SX }}>
+      <Typography variant="caption" component="p" sx={{ m: 0, color: "var(--text-secondary)", fontWeight: 700 }}>
+        {term}
+      </Typography>
+      {status === "loading" ? (
+        <Typography variant="body2" aria-busy="true" sx={{ color: "var(--text-secondary)" }}>
+          {TT_DETAIL_LOADING}
+        </Typography>
+      ) : status === "done" ? (
+        <Typography variant="body2" sx={{ color: "var(--text-primary)" }}>
+          {record.detail}
+        </Typography>
+      ) : (
+        <Stack direction="row" spacing={1} sx={{ alignItems: "center", flexWrap: "wrap" }} useFlexGap>
+          <Typography variant="body2" sx={{ color: "var(--text-secondary)" }}>
+            {detailMessage(status, record?.code)}
+          </Typography>
+          {retryable ? (
+            // No Retry on the kill switch (retrying what an operator switched
+            // off is a lie) and none on an honest empty (it would spend money to
+            // be told the same thing).
+            <Button
+              type="button"
+              size="small"
+              color="inherit"
+              onClick={onRetry}
+              aria-label={`Retry explaining ${term}`}
+              sx={TOUCH_TARGET_SX}
+            >
+              Retry
+            </Button>
+          ) : null}
+        </Stack>
+      )}
+    </Box>
+  );
+}
+
+// One term as a NATIVE <button> (a Chip rendered as `button`) whose accessible
+// name IS the term. Not a Tooltip, which would replace that name, and not a
+// Modal or Popover, which trap focus on the sentence the candidate is about to
+// say. `aria-controls` points at the group's one always-present detail region, so
+// it is never a dangling reference. A term the scope cannot resolve (no scope
+// mounted, or no answer in it suggested the term) is disabled rather than a
+// button that silently does nothing.
+function TechTermChip({ term, api, regionId }) {
+  const interactive = !!api && api.resolves(term);
+  const open = interactive && api.isOpen(term);
+  return (
+    <Box component="li" sx={{ display: "flex" }}>
+      <Chip
+        component="button"
+        type="button"
+        size="small"
+        label={term}
+        disabled={!interactive}
+        onClick={() => api?.toggle(term)}
+        aria-expanded={open ? "true" : "false"}
+        aria-controls={regionId}
+        sx={{
+          height: "auto",
+          fontSize: 12,
+          color: "var(--text-primary)",
+          background: open ? "var(--bg-soft)" : "var(--bg-surface)",
+          // The open state is never colour alone (WCAG 1.4.1): the border also
+          // thickens to the accent rule the invented-example rows use.
+          border: open ? "2px solid var(--accent)" : "1px solid var(--text-muted)",
+          ...TOUCH_TARGET_SX,
+          "& .MuiChip-label": {
+            overflow: "visible",
+            whiteSpace: "normal",
+            textOverflow: "clip",
+            py: 0.5,
+            ...BREAK_LONG_WORDS_SX,
+          },
+        }}
+      />
+    </Box>
+  );
+}
+
+function TechTermsGroup({ view }) {
+  const api = useTechTermDetailApi();
+  const regionId = useId();
+
+  if (view.kind !== "ready") {
+    const pending = view.kind === "pending";
+    return (
+      <Box component="dl" sx={AID_GRID_SX}>
+        <Aid label={TECH_TERMS_LABEL} ddProps={pending ? { "aria-busy": "true" } : undefined}>
+          <QuietLine>{pending ? TT_PENDING : TT_FAILED}</QuietLine>
+        </Aid>
+      </Box>
+    );
+  }
+
+  const openTerms = api ? view.terms.filter((term) => api.isOpen(term)) : [];
+  return (
+    <Box component="dl" sx={AID_GRID_SX}>
+      <Aid label={TECH_TERMS_LABEL}>
+        <Stack spacing={LINE_GAP}>
+          <Typography variant="body2" sx={{ color: "var(--text-primary)" }}>
+            <Box component="strong" sx={{ fontWeight: 700 }}>
+              {TECH_TERMS_LEAD_BOLD}
+            </Box>
+            {TECH_TERMS_LEAD_REST}
+          </Typography>
+          <Stack
+            component="ul"
+            role="list"
+            direction="row"
+            useFlexGap
+            sx={{ flexWrap: "wrap", gap: 0.75, listStyle: "none", m: 0, p: 0 }}
+          >
+            {view.terms.map((term) => (
+              <TechTermChip key={term} term={term} api={api} regionId={regionId} />
+            ))}
+          </Stack>
+          {/* Mounted whether or not anything is open, so the chips'
+              aria-controls always names a real element and a polite live
+              region exists before its text changes (a region that appears
+              already populated is the case screen readers fail to announce).
+              Deliberately NOT a role="region" landmark: one per card would
+              leave an empty landmark for every answer on the page. */}
+          <Stack id={regionId} aria-live="polite" spacing={LINE_GAP}>
+            {openTerms.map((term) => (
+              <TechTermDetail key={term} term={term} record={api.get(term)} onRetry={() => api.retry(term)} />
+            ))}
+          </Stack>
+        </Stack>
+      </Aid>
+    </Box>
+  );
+}
+
+export default function AnswerAids({ buzzwords, anchor, projectExample, projectExampleLive, techTerms, finalOnly }) {
   const terms = (Array.isArray(buzzwords) ? buzzwords : []).filter((t) => typeof t === "string" && t.trim());
 
   // A plausibility gate upstream (lib/copilot/resumeAnchor.js) can suppress
@@ -441,12 +647,17 @@ export default function AnswerAids({ buzzwords, anchor, projectExample, projectE
   const exampleRowTwo = rowTwoView(projectExampleLive, !!finalOnly);
   const hasExampleGroup = !!exampleRowOne || !!exampleRowTwo;
 
+  // The tech buzzwords: null when the card has no such row (no application, or
+  // the embedded engine, or the request not yet started).
+  const techTermsRow = techTermsView(techTerms, !!finalOnly);
+  const hasTechTermsGroup = !!techTermsRow;
+
   // Nothing to show is nothing rendered — never a header with an empty
   // group under it. No posting selected means no posting group; no
   // submitted résumé means no résumé group; both are ordinary states, not
   // errors. A group whose every row is empty renders neither that `dl` nor
   // the divider next to it.
-  if (!hasResumeGroup && !hasPostingGroup && !hasExampleGroup) return null;
+  if (!hasResumeGroup && !hasPostingGroup && !hasTechTermsGroup && !hasExampleGroup) return null;
 
   return (
     <Box sx={{ mt: 1.5, pt: 1.5, borderTop: "1px solid var(--border)" }}>
@@ -564,7 +775,16 @@ export default function AnswerAids({ buzzwords, anchor, projectExample, projectE
         </Box>
       ) : null}
 
-      {hasExampleGroup && (hasResumeGroup || hasPostingGroup) ? (
+      {hasTechTermsGroup && (hasResumeGroup || hasPostingGroup) ? (
+        // Same separator, same reasoning, ahead of the tech buzzwords: only when
+        // an earlier group rendered, so a terms-only card opens with no line that
+        // divides nothing from nothing.
+        <Box role="separator" sx={{ my: 1.25, borderTop: "1px solid var(--border)" }} />
+      ) : null}
+
+      {hasTechTermsGroup ? <TechTermsGroup view={techTermsRow} /> : null}
+
+      {hasExampleGroup && (hasResumeGroup || hasPostingGroup || hasTechTermsGroup) ? (
         // Same separator, same reasoning, as the one above: it gives the third
         // group's boundary a presence in the accessibility tree. Rendered only
         // when an earlier group did, so an examples-only card does not open with

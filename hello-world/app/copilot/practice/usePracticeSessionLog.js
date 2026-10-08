@@ -50,6 +50,9 @@ export function usePracticeSessionLog({
   // explains an example that was missing or failed. Both are optional.
   projectExample,
   projectExampleLive,
+  // The sample answer's tech-buzzwords row (LLM-suggested terms), observed the
+  // same way. Optional.
+  techTerms,
 }) {
   const logRef = useRef(null);
   // AC-Q7.5: reactive twin of "does logRef hold anything" — the log itself
@@ -93,6 +96,7 @@ export function usePracticeSessionLog({
   // re-render that hands back the same object logs nothing a second time.
   const loggedExampleRef = useRef(null);
   const loggedExampleLiveRef = useRef(null);
+  const loggedTechTermsRef = useRef(null);
 
   // AC-Q2.3 correlation: practice questions have no server-issued id, but
   // sessionLog.js's renderer needs one to pair a spoken answer's metrics and
@@ -150,6 +154,7 @@ export function usePracticeSessionLog({
       lastCritiqueErrorRef.current = "";
       loggedExampleRef.current = null;
       loggedExampleLiveRef.current = null;
+      loggedTechTermsRef.current = null;
       questionIdRef.current = 0;
       currentQuestionIdRef.current = undefined;
       answerQuestionIdRef.current = undefined;
@@ -359,10 +364,40 @@ export function usePracticeSessionLog({
     });
   }, [projectExampleLive, event]);
 
+  // The tech buzzwords' outcome, once settled (the pending placeholder is not an
+  // outcome): the status and how many terms, never the terms themselves, the
+  // question or any posting text.
+  useEffect(() => {
+    if (!techTerms || techTerms.status === "pending") return;
+    if (techTerms === loggedTechTermsRef.current) return;
+    loggedTechTermsRef.current = techTerms;
+    event("techTerms.shown", {
+      id: currentQuestionIdRef.current,
+      status: techTerms.status,
+      count: Array.isArray(techTerms.terms) ? techTerms.terms.length : 0,
+    });
+  }, [techTerms, event]);
+
+  // One expanded term's outcome ({ term, status, code }), handed to the detail
+  // scope. The term is a model-chosen label, not the person's words; the
+  // explanation and the question never reach the log.
+  const logTechTermDetail = useCallback(
+    (detail) => {
+      event("techTerms.detail", {
+        id: currentQuestionIdRef.current,
+        term: detail?.term,
+        status: detail?.status,
+        code: detail?.code ?? undefined,
+      });
+    },
+    [event],
+  );
+
   return {
     hasLog,
     onStart,
     sessionLogSnapshot,
     downloadLog,
+    logTechTermDetail,
   };
 }

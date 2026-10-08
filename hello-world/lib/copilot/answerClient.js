@@ -168,3 +168,26 @@ export async function fetchProjectExampleLive({ applicationId, question, signal 
   }
   return json;
 }
+
+// The tech-buzzwords row: a short list of technical terms relevant to ONE
+// question, requested AFTER the answer has landed for the same reason
+// fetchProjectExampleLive is (see app/api/copilot/answer/tech-terms/route.js).
+// Resolves with the route's body verbatim, { techTerms }, where techTerms is a
+// ready list, { status: "failed" } or null (the embedded engine: nothing to
+// show). Rejects on a non-ok response or an aborted request; the caller
+// (lib/copilot/techTermsLive.js) turns every rejection into the failed state.
+// `signal` lets that caller's watchdog stop the request it has already given up
+// on.
+export async function fetchTechTerms({ applicationId, question, signal } = {}) {
+  const res = await fetch("/api/copilot/answer/tech-terms", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ applicationId, question, engine: readEngine() }),
+    signal,
+  });
+  const json = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error(json.error || `Tech terms request failed (${res.status}).`);
+  }
+  return json;
+}

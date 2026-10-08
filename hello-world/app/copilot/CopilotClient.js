@@ -13,6 +13,7 @@ import { briefStatusMessage } from "@/lib/copilot/companyBrief";
 import { visuallyHidden } from "@/lib/copilot/answerStatus";
 import { useEngine } from "@/app/settings/engine";
 import { ExpansionScope } from "./useAnswerExpansions";
+import { TechTermDetailScope } from "./useTechTermDetails";
 import { GlossaryProvider } from "./GlossaryProvider";
 import { useIsMobile } from "@/app/hooks/useResponsive";
 import TabHeader from "@/app/components/TabHeader";
@@ -580,6 +581,16 @@ export default function CopilotClient() {
         engine,
       }}
     >
+    {/* TECH BUZZWORD DETAILS: the same single-scope arrangement as the expansion
+        scope around it, for the chips under each answer. Each expanded term's
+        outcome goes to the session log as the term and its status only. */}
+    <TechTermDetailScope
+      questions={questions}
+      request={{ applicationId: posting?.id || "", engine }}
+      onDetailOutcome={(detail) =>
+        logEvent("techTerms.detail", { term: detail.term, status: detail.status, code: detail.code ?? undefined })
+      }
+    >
     <Box sx={{ maxWidth: 1180, mx: "auto", p: { xs: 1.5, sm: 3 } }}>
       {/* I8: consolidated pin/brief live region, mounted empty, never
           conditionally rendered — only its text ever changes. */}
@@ -926,6 +937,7 @@ export default function CopilotClient() {
         </>
       )}
     </Box>
+    </TechTermDetailScope>
     </ExpansionScope>
     </GlossaryProvider>
   );

@@ -9,6 +9,7 @@ import { draftAnswer } from "@/lib/copilot/answerClient";
 // liveFetchAvailable below for why a named import cannot be used here.
 import * as answerClientModule from "@/lib/copilot/answerClient";
 import { projectExampleFromResponse, startProjectExampleLive } from "@/lib/copilot/projectExampleLive";
+import { startTechTerms } from "@/lib/copilot/techTermsLive";
 import { readEngine } from "@/app/settings/engine";
 import { normalizeManualQuestion } from "@/lib/copilot/manualQuestion";
 import { getInterviewType } from "../useInterviewType";
@@ -24,6 +25,18 @@ function liveFetchAvailable() {
   return "fetchProjectExampleLive" in answerClientModule && typeof answerClientModule.fetchProjectExampleLive === "function";
 }
 
+// The tech-buzzwords row's own probe: it checks fetchTechTerms, never
+// fetchProjectExampleLive, because the two rows call different exports.
+function techTermsFetchAvailable() {
+  return "fetchTechTerms" in answerClientModule && typeof answerClientModule.fetchTechTerms === "function";
+}
+
+// The Row-1 core both rows gate on: an application is selected and the answer
+// carried a Row 1 value in any status. One predicate, so the rows cannot drift.
+function exampleRowEnabled(appId, example) {
+  return !!appId && !!example;
+}
+
 // Row 2 for one detected-question card: an invented project written for the
 // question, requested after the answer has landed and never awaited, so it can
 // neither delay the answer nor fail it. `example` is the Row 1 value the ANSWER
@@ -34,7 +47,7 @@ function liveFetchAvailable() {
 // card's rows, so a format change leaves no placeholder waiting on a settle that
 // the token gate will now drop.
 function fireRoomExampleLive({ setQuestions, id, token, question, appId, example }) {
-  if (!appId || !example || !liveFetchAvailable()) return;
+  if (!exampleRowEnabled(appId, example) || !liveFetchAvailable()) return;
   try {
     startProjectExampleLive({
       applicationId: appId,
@@ -49,6 +62,28 @@ function fireRoomExampleLive({ setQuestions, id, token, question, appId, example
     });
   } catch {
     // Row 2 is a supplement; nothing here may interrupt the draft.
+  }
+}
+
+// The tech-buzzwords row for one detected-question card, fired from the same
+// place and under the same Row-1 core and token gate as Row 2 above. Never
+// cached, and cleared with the example rows on a redraft or invalidation.
+function fireRoomTechTerms({ setQuestions, id, token, question, appId, example }) {
+  if (!exampleRowEnabled(appId, example) || !techTermsFetchAvailable()) return;
+  try {
+    startTechTerms({
+      applicationId: appId,
+      question,
+      engine: readEngine(),
+      fetchTerms: answerClientModule.fetchTechTerms,
+      apply: (value) => {
+        setQuestions((prev) =>
+          prev.map((q) => (q.id === id && q.draftToken === token ? { ...q, techTerms: value } : q)),
+        );
+      },
+    });
+  } catch {
+    // The row is a supplement; nothing here may interrupt the draft.
   }
 }
 
@@ -226,7 +261,15 @@ export function useRoomQuestions({ applicationId, profile, myTag, collecting, on
         // not sit beside the last answer's example, and a previous Row 2 is
         // never carried across.
         q.id === id
-          ? { ...q, status: "loading", error: "", draftToken: token, projectExample: undefined, projectExampleLive: undefined }
+          ? {
+              ...q,
+              status: "loading",
+              error: "",
+              draftToken: token,
+              projectExample: undefined,
+              projectExampleLive: undefined,
+              techTerms: undefined,
+            }
           : q,
       ),
     );
@@ -267,6 +310,7 @@ export function useRoomQuestions({ applicationId, profile, myTag, collecting, on
                 projectExample: example,
                 // Row 2 starts below, after this write; never carried over.
                 projectExampleLive: undefined,
+                techTerms: undefined,
                 // Prefer the type confirmQuestion already classified this
                 // question as (set when the entry was first added, below)
                 // over draftAnswer's own guess — same precedence
@@ -278,6 +322,7 @@ export function useRoomQuestions({ applicationId, profile, myTag, collecting, on
       );
       if (latestTokenByIdRef.current.get(id) === token) {
         fireRoomExampleLive({ setQuestions, id, token, question, appId, example });
+        fireRoomTechTerms({ setQuestions, id, token, question, appId, example });
       }
       // Guarded on its own: the answer above has landed, and a throw out of the
       // warm-up report must not reach the catch below and turn it into an error.
@@ -509,6 +554,7 @@ export function useRoomQuestions({ applicationId, profile, myTag, collecting, on
         // pending would otherwise wait on a settle the token gate now drops.
         projectExample: undefined,
         projectExampleLive: undefined,
+        techTerms: undefined,
         draftToken: null,
       })),
     );

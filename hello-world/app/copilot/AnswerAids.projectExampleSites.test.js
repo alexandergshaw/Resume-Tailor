@@ -15,7 +15,7 @@
 //     purely to reach them). They are covered by the four-site call-site census
 //     below, which — paired with T14's proof that AnswerAids renders the group
 //     given the props — establishes the same chain: AnswerAids renders given
-//     the props AND each of the four sites supplies them. HistoryItem (:742) is
+//     the props AND each of the four sites supplies them. HistoryItem (:751) is
 //     the site AC r1 and 1b r1 both dropped, so the census names it explicitly.
 //
 // RED on HEAD: AnswerAids ignores the props and no parent passes them, so the
@@ -47,6 +47,10 @@ const READY = (over = {}) => ({
 });
 
 const anchor = { title: "Senior Engineer", company: "Initech", project: "Payments migration", description: [], matched: true, source: "resume" };
+
+// N150: a ready tech-buzzwords list, threaded through the SAME real parents so
+// the row is driven the way a human reaches it, not by calling AnswerAids direct.
+const TECH_TERMS_READY = { status: "ready", terms: ["idempotency keys", "circuit breaker"] };
 
 let container;
 let root;
@@ -81,15 +85,18 @@ describe("real-parent render — the two exported presentational parents (T13)",
         anchor,
         projectExample: READY(),
         projectExampleLive: READY({ title: "Scaled a read-replica fleet" }),
+        techTerms: TECH_TERMS_READY,
       },
     ];
     const text = await render(createElement(QuestionFeed, { questions, onDraft: () => {} }));
     expect(text).toContain(GROUP_LABEL);
     expect(text).toContain("Rebuilt the paging rotation");
     expect(text).toContain("Scaled a read-replica fleet");
+    // N150: the tech-buzzwords row reaches the DOM through the real parent.
+    expect(text).toContain("idempotency keys");
   });
 
-  it("SampleAnswer supplies both props so the group renders (site SampleAnswer.js:214)", async () => {
+  it("SampleAnswer supplies all three example props so the group renders (site SampleAnswer.js:223)", async () => {
     const props = {
       visible: true,
       status: "done",
@@ -106,18 +113,24 @@ describe("real-parent render — the two exported presentational parents (T13)",
       onRegenerate: () => {},
       projectExample: READY(),
       projectExampleLive: READY({ title: "Scaled a read-replica fleet" }),
+      techTerms: TECH_TERMS_READY,
     };
     const text = await render(createElement(SampleAnswer, props));
     expect(text).toContain(GROUP_LABEL);
     expect(text).toContain("Rebuilt the paging rotation");
+    // N150: the tech-buzzwords row reaches the DOM through the real parent.
+    expect(text).toContain("idempotency keys");
   });
 });
 
 describe("four-site call-site census — every <AnswerAids> mount passes both props", () => {
   const sites = [
-    { file: "app/copilot/dashboard/CopilotDashboard.js", count: 2, note: "CurrentAnswerPanel :452 + HistoryItem :742" },
+    // N150 M1: notes refreshed to the live mount lines read after the techTerms
+    // prop landed (HistoryItem :742 -> :751, SampleAnswer :214 -> :223). Comments
+    // are not evidence of WHAT — the tag extraction below reads the real source.
+    { file: "app/copilot/dashboard/CopilotDashboard.js", count: 2, note: "CurrentAnswerPanel :452 + HistoryItem :751" },
     { file: "app/copilot/QuestionFeed.js", count: 1, note: "QuestionCard :209" },
-    { file: "app/copilot/practice/SampleAnswer.js", count: 1, note: "SampleAnswer :214" },
+    { file: "app/copilot/practice/SampleAnswer.js", count: 1, note: "SampleAnswer :223" },
   ];
 
   // Extract each <AnswerAids ... /> opening tag from comment-stripped source.
@@ -144,6 +157,24 @@ describe("four-site call-site census — every <AnswerAids> mount passes both pr
         if (!tag.includes("projectExample") || !tag.includes("projectExampleLive")) {
           offenders.push(`${site.file}: ${tag}`);
         }
+      }
+    }
+    expect(offenders).toEqual([]);
+  });
+
+  // N150: the same forgotten-prop guard for the tech-buzzwords row. RED on HEAD
+  // (no mount passes techTerms yet). This is the ONLY coverage for the two
+  // module-internal CopilotDashboard mounts (CurrentAnswerPanel :452 +
+  // HistoryItem :751): they are not exported and the standing rule forbids
+  // adding an export purely to reach them, so — paired with
+  // AnswerAids.techTerms.test.js's proof that AnswerAids renders the group given
+  // the prop — the chain "AnswerAids renders it AND each of the four sites
+  // supplies it" is what establishes the row is not silently NA anywhere.
+  it("every <AnswerAids> mount also passes techTerms (a forgotten mount = RED, not a silent NA)", () => {
+    const offenders = [];
+    for (const site of sites) {
+      for (const tag of answerAidsTags(site.file)) {
+        if (!tag.includes("techTerms")) offenders.push(`${site.file}: ${tag}`);
       }
     }
     expect(offenders).toEqual([]);

@@ -8,6 +8,7 @@ import { interviewTypeLabel } from "@/lib/copilot/interviewTypes";
 import { buildPrivacyNotice } from "@/lib/copilot/practiceNotices";
 import { useEngine } from "@/app/settings/engine";
 import { ExpansionScope } from "../useAnswerExpansions";
+import { TechTermDetailScope } from "../useTechTermDetails";
 import { GlossaryProvider } from "../GlossaryProvider";
 import { useIsTablet } from "@/app/hooks/useResponsive";
 import TranscriptView from "../TranscriptView";
@@ -362,6 +363,8 @@ export default function PracticeClient({
         // (CurrentAnswerPanel reads them off its entry like the fields above).
         projectExample: sampleAnswer.projectExample,
         projectExampleLive: sampleAnswer.projectExampleLive,
+        // The tech-buzzwords row, read off the entry like the two above.
+        techTerms: sampleAnswer.techTerms,
         error: sampleAnswer.error,
       },
     ];
@@ -375,6 +378,7 @@ export default function PracticeClient({
     sampleAnswer.pageSources,
     sampleAnswer.projectExample,
     sampleAnswer.projectExampleLive,
+    sampleAnswer.techTerms,
     sampleAnswer.error,
   ]);
 
@@ -518,6 +522,7 @@ export default function PracticeClient({
     activeSessionId,
     captureError: error, captureWarning: warning,
     answering, answerMetrics, critique, critiqueStatus, critiqueError,
+    techTerms: sampleAnswer.techTerms,
     projectExample: sampleAnswer.projectExample,
     projectExampleLive: sampleAnswer.projectExampleLive,
   });
@@ -623,6 +628,14 @@ export default function PracticeClient({
     <ExpansionScope
       questions={dashboardQuestions}
       request={{ applicationId: posting?.id || "", profile, interviewType, codeLanguage, engine }}
+    >
+    {/* TECH BUZZWORD DETAILS: one scope, like the expansion scope around it,
+        which also lists the detected room questions so their chips resolve. */}
+    <TechTermDetailScope
+      questions={dashboardQuestions}
+      extraQuestions={roomQuestions.questions}
+      request={{ applicationId: posting?.id || "", engine }}
+      onDetailOutcome={sessionLog.logTechTermDetail}
     >
     <Box>
       <PracticeSetup
@@ -798,6 +811,7 @@ export default function PracticeClient({
                 samplePageSources={sampleAnswer.pageSources}
                 sampleProjectExample={sampleAnswer.projectExample}
                 sampleProjectExampleLive={sampleAnswer.projectExampleLive}
+                sampleTechTerms={sampleAnswer.techTerms}
                 sampleGrounding={sampleAnswer.grounding}
                 sampleError={sampleAnswer.error}
                 isEmbedded={isEmbedded}
@@ -925,6 +939,7 @@ export default function PracticeClient({
         <PracticeHistory refreshSignal={savedAnswerVersion} />
       </Box>
     </Box>
+    </TechTermDetailScope>
     </ExpansionScope>
     </GlossaryProvider>
   );

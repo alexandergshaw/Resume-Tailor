@@ -12,6 +12,7 @@ import {
   projectExampleFromResponse,
   startProjectExampleLive,
 } from "@/lib/copilot/projectExampleLive";
+import { startTechTerms } from "@/lib/copilot/techTermsLive";
 import { readEngine } from "@/app/settings/engine";
 
 // AC-P4.2: runDraft's one and only answer-fetching call, in production
@@ -52,6 +53,14 @@ function liveFetchAvailable() {
   return "fetchProjectExampleLive" in answerClientModule && typeof answerClientModule.fetchProjectExampleLive === "function";
 }
 
+// The tech-buzzwords row probes ITS OWN export, for the same stale-partial-mock
+// reason as above. It must not borrow liveFetchAvailable: that probes
+// fetchProjectExampleLive, a different export, and a test (or a build) that
+// carries one without the other would wire the wrong function.
+function techTermsFetchAvailable() {
+  return "fetchTechTerms" in answerClientModule && typeof answerClientModule.fetchTechTerms === "function";
+}
+
 // What the session log records about the two example rows: the card's id, the
 // value's status and the identity tags a pool entry carries, never the entry's
 // text. Row 1 is logged when it lands on a card (the selection decision), Row 2
@@ -79,6 +88,19 @@ function logExampleShown(logEvent, id, example) {
 function logExampleLive(logEvent, id, example) {
   if (!example) return;
   logEvent("projectExample.live", { id, status: example.status, competency: example.competency || "" });
+}
+
+// The tech-buzzwords row's outcome, once it has settled: the card's id, the
+// value's status and HOW MANY terms it carried. Never the terms themselves,
+// the question or any posting text -- identity and outcome only, like the two
+// example rows above.
+function logTechTermsShown(logEvent, id, value) {
+  if (!value) return;
+  logEvent("techTerms.shown", {
+    id,
+    status: value.status,
+    count: Array.isArray(value.terms) ? value.terms.length : 0,
+  });
 }
 
 // AC-P4/AC-N1/AC-Q6.9: split out of useLiveSession.js purely to keep that
@@ -211,9 +233,19 @@ export function useDraftAnswer({
       // the user has left, and dropping the settle left "Writing one for this
       // question" on it forever. A card a newer draft has taken fails the token
       // gate, so the clear can never touch the newer draft's own row.
+      //
+      // THE ROW-1 GATE IS ONE NAMED LOCAL, `exampleRowEnabled`, because a second
+      // row (the tech buzzwords below) leans on the identical "a posting is
+      // selected AND the server ran a model backend" signal. Two parallel inline
+      // copies would drift; a future change to when Row 1 is emitted has to
+      // change this one predicate, and the answer route's emission guard
+      // (route.techTermsEmission.test.js) turns red if it changes silently.
+      // Each fire ANDs its OWN fetch-export probe on top, because the two rows
+      // call different exports.
+      const exampleRowEnabled = (example) =>
+        !!grounding.applicationId && !!example && latestTokenByIdRef.current.get(id) === token;
       const fireProjectExampleLive = (example) => {
-        if (!grounding.applicationId || !example || !liveFetchAvailable()) return;
-        if (latestTokenByIdRef.current.get(id) !== token) return;
+        if (!exampleRowEnabled(example) || !liveFetchAvailable()) return;
         try {
           startProjectExampleLive({
             applicationId: grounding.applicationId,
@@ -233,6 +265,33 @@ export function useDraftAnswer({
           });
         } catch {
           // Row 2 is a supplement; nothing here may interrupt the draft.
+        }
+      };
+      // The tech-buzzwords row, requested after the answer has landed and never
+      // awaited, from the same two places and under the same shared gate as Row 2.
+      // Same write rules too: gated `it.id === id && it.draftToken === token`, and
+      // a settle that arrives after a GENERATION bump clears the row instead of
+      // being dropped. Never cached: a reused answer asks again, so a pending or
+      // failed list from an earlier draft is never replayed.
+      const fireTechTerms = (example) => {
+        if (!exampleRowEnabled(example) || !techTermsFetchAvailable()) return;
+        try {
+          startTechTerms({
+            applicationId: grounding.applicationId,
+            question,
+            engine: readEngine(),
+            fetchTerms: answerClientModule.fetchTechTerms,
+            apply: (value, settled) => {
+              const superseded = settled && draftGenRef.current !== gen;
+              const next = superseded ? undefined : value;
+              setQuestions((prev) =>
+                prev.map((it) => (it.id === id && it.draftToken === token ? { ...it, techTerms: next } : it)),
+              );
+              if (settled && !superseded) logTechTermsShown(logEvent, id, value);
+            },
+          });
+        } catch {
+          // The row is a supplement; nothing here may interrupt the draft.
         }
       };
       // Reuse a prior answer for the same (normalized) question — interviewers
@@ -294,6 +353,8 @@ export function useDraftAnswer({
                     // draft of this card must not survive a reuse. The fire
                     // below writes the fresh one.
                     projectExampleLive: undefined,
+                    // Same for the tech buzzwords: never part of a cached entry.
+                    techTerms: undefined,
                     type: it.type || cached.type,
                     cached: true,
                     // AC-A16b: a cache hit ADVANCES the token — it must not
@@ -307,6 +368,7 @@ export function useDraftAnswer({
           // The RAW cached Row 1 is the gate (any status), not the replayed one:
           // whether the answer carried a Row 1 at all is what says Row 2 applies.
           fireProjectExampleLive(cached.projectExample);
+          fireTechTerms(cached.projectExample);
           return;
         }
       }
@@ -337,6 +399,8 @@ export function useDraftAnswer({
                 pageSources: [],
                 projectExample: undefined,
                 projectExampleLive: undefined,
+                // The tech buzzwords go with the answer they sat beside.
+                techTerms: undefined,
                 draftToken: token,
               }
             : it,
@@ -448,6 +512,7 @@ export function useDraftAnswer({
           ),
         );
         fireProjectExampleLive(aids.projectExample);
+        fireTechTerms(aids.projectExample);
         // A fresh answer is the only evidence of the pool's state at question
         // time (a reused one made no server call), so only this branch reports it.
         // Guarded on its own: the answer above has already landed, and a throw

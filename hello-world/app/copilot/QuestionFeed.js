@@ -211,6 +211,7 @@ function QuestionCard({ q, onDraft }) {
             anchor={q.anchor}
             projectExample={q.projectExample}
             projectExampleLive={q.projectExampleLive}
+            techTerms={q.techTerms}
           />
         </Box>
       ) : null}

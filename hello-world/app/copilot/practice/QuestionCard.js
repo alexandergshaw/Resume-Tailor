@@ -55,6 +55,8 @@ export default function QuestionCard({
   // SampleAnswer's `projectExample` / `projectExampleLive` props.
   sampleProjectExample,
   sampleProjectExampleLive,
+  // The tech-buzzwords row, straight through to SampleAnswer's `techTerms`.
+  sampleTechTerms,
   sampleGrounding,
   sampleError,
   isEmbedded,
@@ -215,6 +217,7 @@ export default function QuestionCard({
           pageSources={samplePageSources}
           projectExample={sampleProjectExample}
           projectExampleLive={sampleProjectExampleLive}
+          techTerms={sampleTechTerms}
           grounding={sampleGrounding}
           error={sampleError}
           isEmbedded={isEmbedded}

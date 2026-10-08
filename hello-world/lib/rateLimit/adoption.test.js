@@ -178,6 +178,17 @@ const BOUNDED = [
     windowMs: 600_000,
     why: "N60 second chunk -- one chat-derived configuration turn per ten minutes, matching interview-prep's human-paced bound above for the same reason: a single generation per user-triggered turn. app/api/feed-config/apply/route.js (the sibling write path) reaches no model and deliberately does NOT appear here.",
   },
+  // --- N150 (2026-10-08): the per-term tech-terms DETAIL endpoint. The
+  // repeatable per-click model call -- one detail per buzzword a candidate opens
+  // -- exactly the unbounded-loop shape /expand's limiter guards, so it adopts
+  // the same module-scope 40/10min bound. (Its sibling GENERATION route is a
+  // one-shot and is DEFERRED/unmetered below.)
+  {
+    route: "app/api/copilot/answer/tech-term-detail/route.js",
+    limit: 40,
+    windowMs: 600_000,
+    why: "one detail per buzzword the candidate opens -- the repeatable per-click model call whose unbounded-loop shape /expand's own 40/10min limiter guards; hard-authenticated via getUser(), so identify() keys on the user and the bound is exact",
+  },
 ];
 
 /**
@@ -271,6 +282,10 @@ const DEFERRED = [
   {
     route: "app/api/copilot/answer/project-example/route.js",
     why: "hard-authenticates via getUser() and could be bounded like the routes above, but an owner ruling (N143, 2026-10-08) removed the per-user cap it first shipped with (40 per ten minutes): a cap on one call per drafted question can only ever refuse a real person mid-interview. The route fires only from a signed-in user's own copilot or practice session, after the answer has landed, and nothing unattended reaches it. The anti-stampede protection for this feature sits on the unattended fan-out instead: app/api/application-project-pool/route.js keeps its BOUNDED limiter above, and lib/copilot/projectPoolPrewarm.js is the cost gate in front of it. The module-scope createRateLimiter seam the routes above use is a documented, ready insertion point if the owner sets a number later.",
+  },
+  {
+    route: "app/api/copilot/answer/tech-terms/route.js",
+    why: "N150 (owner ruling, 2026-10-08) -- the tech-buzzwords GENERATION route, a post-answer one-shot (one non-streaming call per drafted question, fired by a signed-in user's own copilot/practice session after the answer has landed, like project-example). Unmetered for the same reason project-example is: a cap on one call per drafted question can only refuse a real person mid-interview, and nothing unattended reaches it. Its repeatable per-click sibling (tech-term-detail) IS bounded above. The module-scope createRateLimiter seam is the ready insertion point if the owner sets a number later.",
   },
 ];
 
@@ -768,5 +783,45 @@ describe("the Row-2 example-project route is deliberately unmetered (N143 owner 
     expect(bounded).toMatch(/createRateLimiter/);
     expect(bounded).toMatch(/status:\s*429/);
     expect(bounded).toMatch(/@\/lib\/rateLimit/);
+  });
+});
+
+describe("N150 — the two tech-terms sub-routes are triaged (gen DEFERRED/unmetered, detail BOUNDED 40/10min)", () => {
+  // RED on HEAD: both routes are unimplemented, so every sourceOf() below throws.
+  // The it.each(BOUNDED/DEFERRED) sweeps above ALSO cover these once the table
+  // rows land; this block is the explicit, named hand-off and the per-route
+  // behavioural shape the implementer must satisfy.
+  const GEN = "app/api/copilot/answer/tech-terms/route.js";
+  const DETAIL = "app/api/copilot/answer/tech-term-detail/route.js";
+
+  it("the GENERATION route is accounted DEFERRED (owner-ruling unmetered), not BOUNDED", () => {
+    expect(DEFERRED_ROUTES.has(GEN)).toBe(true);
+    expect(BOUNDED_ROUTES.has(GEN)).toBe(false);
+    const entry = DEFERRED.find((e) => e.route === GEN);
+    expect(entry.why).toMatch(/owner ruling/i);
+  });
+
+  it("the GENERATION route carries no limiter and still reaches the model", () => {
+    const code = codeOf(GEN);
+    expect(code).not.toMatch(/createRateLimiter/);
+    expect(code).not.toMatch(/status:\s*429/);
+    // A route that stopped importing the Gemini client would not need the
+    // DEFERRED line; this pins the exemption covers a real spender.
+    expect(reachesModel(GEN)).toBe(true);
+  });
+
+  it("the DETAIL route is accounted BOUNDED (40 / 600_000) and builds its limiter at MODULE scope", () => {
+    expect(BOUNDED_ROUTES.has(DETAIL)).toBe(true);
+    expect(DEFERRED_ROUTES.has(DETAIL)).toBe(false);
+    const entry = BOUNDED.find((e) => e.route === DETAIL);
+    expect(entry.limit).toBe(40);
+    expect(entry.windowMs).toBe(600_000);
+    const source = sourceOf(DETAIL);
+    const declaration = /^const \w+ = createRateLimiter\(/m;
+    expect(source).toMatch(declaration);
+    expect(source.search(declaration)).toBeLessThan(firstHandlerAt(source));
+    // and nothing builds a second limiter once the handler opens.
+    expect(source.slice(firstHandlerAt(source))).not.toMatch(/createRateLimiter\(/);
+    expect(reachesModel(DETAIL)).toBe(true);
   });
 });
