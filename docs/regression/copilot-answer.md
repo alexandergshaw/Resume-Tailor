@@ -44,5 +44,5 @@ The cause was structural: `buildPointsPrompt` had **no company source of any kin
 
 **`auth.getUser()` is NOT cached, and that is not an oversight** — its result is what produces the cache key. Keying on the access token instead would be a correctness regression.
 
-**Also here:** `normalizeModelPoints`, `generateIdealProjectExample` and `answerAids` moved out of the route into `lib/copilot/answerAids.js` — the same extraction `answerPrompts.js` already made from the same file, taking it from 804 lines to 663. The proof that it is behaviour-preserving is that the pre-existing route tests pass unchanged on both sides of it.
+**Also here:** `normalizeModelPoints` and `answerAids` moved out of the route into `lib/copilot/answerAids.js` — the same extraction `answerPrompts.js` already made from the same file, taking it from 804 lines to 663. The proof that it is behaviour-preserving is that the pre-existing route tests pass unchanged on both sides of it.
 

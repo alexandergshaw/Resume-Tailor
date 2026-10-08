@@ -113,7 +113,7 @@ The distinction being drawn is deliberate and is the reason the constraint survi
 
 With nothing to build from — no posting selected, no submitted résumé, no prep profile — `buzzwords` is empty and `resumeAnchor` is null, which the UI renders as no subsection at all. This is the load-bearing half of the case: an empty header under a drafted answer reads as a failure, and these are ordinary states, not errors.
 
-**Amended (group L):** `idealProject` now carries a third field, `summary`, alongside `shape` and `metrics`. More importantly, the "degrades to absent" half of this case has a second, much commoner trigger than "nothing to build from": a posting IS selected and its documents ARE loaded, but nothing in it relates to the question being answered, so `buzzwords` is `[]`. That state is now ordinary rather than exceptional, and the route-level case asserts it directly — not only the everything-missing case this was originally written for.
+**Amended (group L):** the "degrades to absent" half of this case has a second, much commoner trigger than "nothing to build from": a posting IS selected and its documents ARE loaded, but nothing in it relates to the question being answered, so `buzzwords` is `[]`. That state is now ordinary rather than exceptional, and the route-level case asserts it directly — not only the everything-missing case this was originally written for.
 
 ### R-130 | area: sample-answer | parallel-safe: yes | automatable: yes
 
@@ -140,7 +140,7 @@ The rendered wording is third person throughout — "Roles like this look for:" 
 **Summary:** Every phrase shown to the candidate is a contiguous fragment of ONE source line — word membership is not enough.
 
 **Steps:**
-1. From `hello-world`, run `npx vitest run lib/copilot/resumeAnchor.test.js lib/copilot/idealProject.test.js`.
+1. From `hello-world`, run `npx vitest run lib/copilot/resumeAnchor.test.js`.
 
 **Expected:** All tests pass. `resumeAnchor`'s `description` is a `string[]`, one independently-shortened phrase per source bullet, and is NEVER joined into a single string anywhere — not in the module, not in `AnswerAids.js`, which renders one element per phrase. `project` and each `description` element are asserted to be contiguous substrings of a single line of the source material, not merely composed of words that appear somewhere in it.
 
@@ -169,5 +169,5 @@ A point that is ONLY its own STAR label (the literal `"Situation:"`) is dropped 
 
 All four surfaces render through one component, `app/copilot/AnswerLines.js`, rather than four hand-rolled copies of the `ul`/`li` markup — the four were verified byte-identical before being replaced, so nothing was silently flattened. The cue (with its label) is in a `<strong>`, semantic emphasis rather than a styled span, and the cue and its sentence stay inside ONE `<li>` in reading order so a screen reader announces them as a single item rather than two unrelated bullets.
 
-**Known limitation, accepted deliberately:** the em dash separating cue from sentence is not spoken at default screen-reader punctuation settings, so the two run together audibly ("Product Curriculum Lead I spent three years as..."). Unlike R-130's chip, no MEANING is carried by the dash here — it separates a summary from its own expansion, both of which are read in full and in the right order — so the cost is a missing pause, not a lost distinction.
+**Known limitation, accepted deliberately:** the em dash separating cue from sentence is not spoken at default screen-reader punctuation settings, so the two run together audibly ("Product Curriculum Lead I spent three years as..."). No MEANING is carried by the dash here — it separates a summary from its own expansion, both of which are read in full and in the right order — so the cost is a missing pause, not a lost distinction.
 
