@@ -71,8 +71,13 @@ function indexAnswers(questions) {
  */
 export function useAnswerExpansions({ questions, request } = {}) {
   // Referentially stable while nothing has been written, which is what
-  // useSyncExternalStore requires and what stops a re-render loop.
-  useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
+  // useSyncExternalStore requires and what stops a re-render loop. The value is
+  // kept (not discarded) because it is also a dependency of the api memo below:
+  // the api's methods read the store at call time, so without a changing
+  // identity a store write would re-render this scope but leave every consumer
+  // reading through context on its last render, with a settled record sitting
+  // in the store and "Finding more detail" still on screen.
+  const storeSnapshot = useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
 
   // OPEN STATE IS PER SURFACE, and content is not. That split is the whole
   // reason collapsing a panel mid-request is legal and is NOT a cancel: the
@@ -138,8 +143,11 @@ export function useAnswerExpansions({ questions, request } = {}) {
         if (!open.has(resolved.key)) start(line);
       },
       retry: (line) => start(line, { retry: true }),
+      // Carried so a store write gives the api (and so the context value) a new
+      // identity; nothing reads it.
+      version: storeSnapshot.version,
     };
-  }, [resolve, open]);
+  }, [resolve, open, storeSnapshot]);
 }
 
 /**

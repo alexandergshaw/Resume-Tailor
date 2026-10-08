@@ -308,6 +308,73 @@ export function literallyMentioned(term, material) {
   return pattern.test(material);
 }
 
+// Capitalized words that are capitalized only because they open a sentence or
+// are ordinary function words -- never the name of a company, product or tool.
+// A word is in here ONLY if admitting a fabricated instance of it is impossible
+// (it is not a real entity name), so this set can never widen the hole. Never
+// add a token that is also a real product, company or tool name: doing so lets
+// a fabricated instance of that name through. Omitting a genuine function word
+// is the safe direction (it only narrows depth, it never lies).
+const COMMON_CAPITALISED = new Set([
+  "I", "A", "An", "The",
+  "And", "But", "Or", "Nor", "So", "Yet", "For",
+  "As", "At", "By", "In", "On", "Of", "To", "Up", "If",
+  "Then", "Than", "That", "This", "These", "Those",
+  "There", "Here", "When", "Where", "While", "Whereas",
+  "After", "Before", "During", "Since", "Until", "Because",
+  "Although", "Though", "However", "Also", "Therefore", "Thus",
+  "My", "Our", "Your", "Their", "His", "Her", "Its",
+  "We", "He", "She", "They", "It", "You", "Me", "Us", "Them",
+  "Each", "Every", "Some", "Any", "All", "Both", "Either", "Neither",
+  "Once", "Now", "Later", "First", "Second", "Third", "Next",
+  "Finally", "Overall", "Instead", "Meanwhile", "Still",
+  "Just", "Only", "Even", "Not", "No", "Yes",
+  "With", "Without", "Within", "From", "Into", "Onto",
+  "Over", "Under", "Through", "Across", "Between", "Among",
+  "One", "Two", "Three", "Four", "Five",
+]);
+
+// The capitalized NAMED-ENTITY tokens in a piece of text: the candidates for a
+// company, product, tool or technology name. Used as a SAFETY gate (the expand
+// route's expansionHonesty.js asks whether each one traces to the cited unit),
+// so it is deliberately a distinct predicate from critiqueLocal.js's private
+// countProperNouns, which is a SCORING signal: that one skips each sentence's
+// first word and matches only /^[A-Z][a-z]+$/, and a safety gate must see a
+// sentence-initial "Rust" and a mixed-case "PostgreSQL". Sentence position is
+// NOT used here. countProperNouns is left as it is.
+//
+// A token (split on anything that is not a letter, digit or apostrophe) is an
+// entity when it matches ANY of:
+//   R1  internal or trailing capitals: PostgreSQL, GitHub, OAuth, iOS, EC2
+//   R2  an all-caps acronym, digits allowed, length >= 2: AWS, SQL, CI, S3, H100
+//   R3  an initial-cap word: Rust, Python, Google, Agile, Stripe
+// A pure numeral ("2043") has no letter and is NOT an entity: figures are the
+// numeral gate's job. C++, C#, lone-letter names and K8s-style tokens match
+// none of the three and are KNOWINGLY not caught here; the model prompt is what
+// refuses those.
+//
+// Case-insensitive de-duplication, first spelling kept, order preserved. Total
+// by construction: never throws, always returns a (possibly empty) string[].
+export function namedEntityTokens(text) {
+  const tokens = String(text || "").split(/[^A-Za-z0-9'’]+/).filter(Boolean);
+  const out = [];
+  const seen = new Set();
+  for (const t of tokens) {
+    if (t === "I") continue;
+    if (COMMON_CAPITALISED.has(t)) continue;
+    const isEntity =
+      /[A-Z]/.test(t.slice(1)) ||
+      (/^[A-Z0-9]+$/.test(t) && /[A-Z]/.test(t) && t.length >= 2) ||
+      /^[A-Z][a-z]/.test(t);
+    if (!isEntity) continue;
+    const key = t.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(t);
+  }
+  return out;
+}
+
 // A line that reads as an application/motivation statement ("I am applying
 // for...", "I'm excited about...") rather than something the candidate
 // actually did. relevantExperienceLine scores purely on keyword overlap

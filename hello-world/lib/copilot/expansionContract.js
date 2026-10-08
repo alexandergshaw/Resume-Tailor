@@ -298,12 +298,25 @@ function describeSources(sources) {
  * punctuation settings, so a caption whose meaning turns on one is not read
  * out at all. (app/copilot/CodeLanguagePicker.test.js states the rule.)
  *
- * Returns "" when there is nothing to describe. An expansion with no
- * sub-bullets makes no provenance claim.
+ * `drewOnGeneralKnowledge` is an EXPLICIT signal from the caller, never
+ * inferred from an empty source list: the model was asked to add general
+ * method and reasoning on top of the candidate's material, and the caption is
+ * honest about that. It defaults to false, so every caller that does not pass
+ * it gets the sentence it always got, and it is never honoured for the
+ * embedded engine, whose deterministic drafter only quotes the candidate's own
+ * lines and adds nothing from general knowledge.
+ *
+ * Returns "" when there is nothing to describe and no general knowledge was
+ * used. An expansion with no sub-bullets makes no provenance claim.
  */
-export function expansionCaption({ isEmbedded, sources } = {}) {
+export function expansionCaption({ isEmbedded, sources, drewOnGeneralKnowledge = false } = {}) {
   const parts = describeSources(sources);
-  if (parts.length === 0) return "";
+  const general = Boolean(drewOnGeneralKnowledge) && !isEmbedded;
+  if (parts.length === 0) {
+    return general
+      ? "Expanded by Google Gemini, drawing on your own materials and general knowledge of this kind of work."
+      : "";
+  }
   const engineText = isEmbedded
     ? "Found on this server with no AI provider"
     : "Found by Google Gemini";
@@ -311,7 +324,7 @@ export function expansionCaption({ isEmbedded, sources } = {}) {
     parts.length === 1
       ? parts[0]
       : `${parts.slice(0, -1).join(", ")}, and ${parts[parts.length - 1]}`;
-  return `${engineText} in ${joined}.`;
+  return general ? `${engineText} in ${joined}, with general background filled in.` : `${engineText} in ${joined}.`;
 }
 
 /**

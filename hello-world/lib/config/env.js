@@ -1,3 +1,5 @@
+import { clampExpansionServerTimeout } from "@/lib/copilot/expansionTimeouts";
+
 const REQUIRED_SERVER_KEYS = ["Gemini_LLM_API_Key"];
 
 export function getServerEnv() {
@@ -78,4 +80,14 @@ export function getElevenLabsApiKey() {
 export function getLlmSearchIntervalMinutes() {
   const n = Number.parseInt(process.env.LLM_SEARCH_INTERVAL_MINUTES, 10);
   return Number.isFinite(n) && n > 0 ? n : 60;
+}
+
+// How long the copilot's "More detail" route waits on its one model call
+// (app/api/copilot/answer/expand/route.js). Read directly, like the getters
+// above, so it needs no Gemini key to be read. Override per deployment with
+// COPILOT_EXPANSION_TIMEOUT_MS. CLAMPED below the browser's own budget
+// (lib/copilot/expansionTimeouts.js), so the server's diagnosis always wins the
+// race whatever this is set to.
+export function getExpansionTimeoutMs() {
+  return clampExpansionServerTimeout(Number.parseInt(process.env.COPILOT_EXPANSION_TIMEOUT_MS, 10));
 }

@@ -15,10 +15,14 @@
 // failure reaches here the raw message does not exist; what carries the
 // diagnosis is the kind.
 
-// Deliberately LONGER than the route's own 4000ms budget for its model call.
-// When both fire, the server's own diagnosis wins the race, so the reader is
-// told "that took too long to look up" rather than "network error".
-const CLIENT_TIMEOUT_MS = 6000;
+import { EXPANSION_CLIENT_TIMEOUT_MS } from "@/lib/copilot/expansionTimeouts";
+
+// The client's budget is deliberately LONGER than the route's own budget for
+// its model call, and that ordering is enforced rather than hoped for: the
+// server's value comes from getExpansionTimeoutMs, which is clamped strictly
+// below EXPANSION_CLIENT_TIMEOUT_MS. When both fire, the server's own diagnosis
+// wins the race, so the reader is told "that took too long to look up" rather
+// than "network error".
 
 function coded(code, message) {
   return Object.assign(new Error(message), { code });
@@ -49,7 +53,7 @@ export async function fetchExpansion(request) {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
-      signal: AbortSignal.timeout(CLIENT_TIMEOUT_MS),
+      signal: AbortSignal.timeout(EXPANSION_CLIENT_TIMEOUT_MS),
     });
   } catch (err) {
     if (err?.name === "TimeoutError" || err?.name === "AbortError") {

@@ -1,4 +1,6 @@
 import { describe, it, expect } from "vitest";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import {
   draftAnswerLocal,
   profileSkills,
@@ -10,6 +12,7 @@ import {
   ACHIEVEMENT_VERBS,
   combineMaterial,
   literallyMentioned,
+  namedEntityTokens,
   isPastWorkLine,
   usableExperienceLine,
   pastWorkExperienceLine,
@@ -467,6 +470,115 @@ describe("literallyMentioned", () => {
 
   it("returns false for an empty term", () => {
     expect(literallyMentioned("", "anything")).toBe(false);
+  });
+});
+
+// The capitalized-named-entity detector the expand route's honesty filter asks
+// "does this trace to the cited unit?" of. A SAFETY gate, so it is judged on
+// what it lets through: a name it fails to see is a name a fabricated sentence
+// can carry onto the screen.
+describe("namedEntityTokens", () => {
+  it("catches internal and trailing capitals (rule R1)", () => {
+    expect(namedEntityTokens("I moved it to PostgreSQL, GitHub and OAuth on iOS and EC2.")).toEqual([
+      "PostgreSQL",
+      "GitHub",
+      "OAuth",
+      "iOS",
+      "EC2",
+    ]);
+  });
+
+  it("catches all-caps acronyms, digit-bearing ones included (rule R2)", () => {
+    expect(namedEntityTokens("I ran it on AWS with SQL, CI, S3, H100 and GPT4.")).toEqual([
+      "AWS",
+      "SQL",
+      "CI",
+      "S3",
+      "H100",
+      "GPT4",
+    ]);
+  });
+
+  it("catches an initial-cap word, including a sentence-initial one (rule R3)", () => {
+    expect(namedEntityTokens("Rust handled it.")).toEqual(["Rust"]);
+    expect(namedEntityTokens("I chose Python over Google's Go tooling at Stripe.")).toEqual([
+      "Python",
+      "Google's",
+      "Go",
+      "Stripe",
+    ]);
+  });
+
+  it("never flags the pronoun I, or a contraction of it", () => {
+    expect(namedEntityTokens("I think I'm ready, and I've done it before.")).toEqual([]);
+  });
+
+  it("never flags a pure numeral or a percentage: figures are the numeral gate's job", () => {
+    expect(namedEntityTokens("I shipped it in 2043 and cut it by 43% across 7 regions.")).toEqual([]);
+  });
+
+  // The exact stopword set, pinned. Every member is a capitalized word that is
+  // never an entity name; the rule that governs the set is that NOTHING may be
+  // added that is also a real product, company or tool name, because that would
+  // let a fabricated instance of it through.
+  const COMMON = [
+    "I", "A", "An", "The",
+    "And", "But", "Or", "Nor", "So", "Yet", "For",
+    "As", "At", "By", "In", "On", "Of", "To", "Up", "If",
+    "Then", "Than", "That", "This", "These", "Those",
+    "There", "Here", "When", "Where", "While", "Whereas",
+    "After", "Before", "During", "Since", "Until", "Because",
+    "Although", "Though", "However", "Also", "Therefore", "Thus",
+    "My", "Our", "Your", "Their", "His", "Her", "Its",
+    "We", "He", "She", "They", "It", "You", "Me", "Us", "Them",
+    "Each", "Every", "Some", "Any", "All", "Both", "Either", "Neither",
+    "Once", "Now", "Later", "First", "Second", "Third", "Next",
+    "Finally", "Overall", "Instead", "Meanwhile", "Still",
+    "Just", "Only", "Even", "Not", "No", "Yes",
+    "With", "Without", "Within", "From", "Into", "Onto",
+    "Over", "Under", "Through", "Across", "Between", "Among",
+    "One", "Two", "Three", "Four", "Five",
+  ];
+
+  it("flags none of the capitalized function words a sentence opens with", () => {
+    for (const word of COMMON) {
+      expect(namedEntityTokens(`${word} the work moved on.`), word).toEqual([]);
+    }
+  });
+
+  it("[control] the stopword check can actually fail: a word outside the set IS flagged", () => {
+    expect(namedEntityTokens("Because the work moved on.")).toEqual([]);
+    expect(namedEntityTokens("Kubernetes the work moved on.")).toEqual(["Kubernetes"]);
+  });
+
+  it("holds exactly that stopword set in the source, so nothing is quietly added", () => {
+    const src = readFileSync(fileURLToPath(new URL("./answerLocal.js", import.meta.url)), "utf8");
+    const block = src.match(/const COMMON_CAPITALISED = new Set\(\[([\s\S]*?)\]\);/);
+    expect(block, "COMMON_CAPITALISED declaration not found").not.toBeNull();
+    const members = [...block[1].matchAll(/"([^"]+)"/g)].map((m) => m[1]);
+    expect([...members].sort()).toEqual([...COMMON].sort());
+  });
+
+  it("KNOWINGLY skips C++, C#, a lone letter and K8s: the model prompt refuses those, not this", () => {
+    // Pinned so that "fixing" one of these is a conscious decision. The + and #
+    // are token delimiters, so C++ is the single capital "C", which matches no
+    // rule; K8s (capital, digit, lowercase) matches none of the three either.
+    expect(namedEntityTokens("I wrote it in C++ and C# and R, then deployed to K8s.")).toEqual([]);
+  });
+
+  it("does not see a lowercase invented tool (prompt-only, out of mechanical scope)", () => {
+    expect(namedEntityTokens("i used redis and kafka for the queue")).toEqual([]);
+  });
+
+  it("de-duplicates case-insensitively, keeping the first spelling and the order seen", () => {
+    expect(namedEntityTokens("Rust beat Python, and RUST beat rust again, so Python won.")).toEqual(["Rust", "Python"]);
+  });
+
+  it("is total: never throws, always returns an array", () => {
+    for (const junk of [undefined, null, 7, {}, [], "", "   ", "!!!"]) {
+      expect(Array.isArray(namedEntityTokens(junk))).toBe(true);
+    }
+    expect(namedEntityTokens(null)).toEqual([]);
   });
 });
 

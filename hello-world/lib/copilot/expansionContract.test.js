@@ -265,6 +265,54 @@ describe("expansionCaption", () => {
   });
 });
 
+// N149: the caption is told EXPLICITLY that the model drew on general
+// knowledge. It is never inferred from an empty source list, because the
+// pin above (sources [] -> "") is the embedded engine's honest-empty state and
+// must not move.
+describe("expansionCaption — drewOnGeneralKnowledge", () => {
+  const page = [{ kind: "page", pageTitle: "Payments migration" }];
+
+  it("says so when there is no source at all, the no-page-matched Gemini case", () => {
+    const caption = expansionCaption({ isEmbedded: false, sources: [], drewOnGeneralKnowledge: true });
+    expect(caption).not.toBe("");
+    expect(caption).toContain("general knowledge");
+    expect(caption).toContain("Gemini");
+  });
+
+  it("still names the page, and says general background was added, when a page matched", () => {
+    const caption = expansionCaption({ isEmbedded: false, sources: page, drewOnGeneralKnowledge: true });
+    expect(caption).toContain("Payments migration");
+    expect(caption).toContain("Gemini");
+    expect(caption).toContain("general background");
+  });
+
+  it("is unchanged without the flag, so no existing caller moves", () => {
+    expect(expansionCaption({ isEmbedded: false, sources: [] })).toBe("");
+    expect(expansionCaption({ isEmbedded: true, sources: [] })).toBe("");
+    expect(expansionCaption({ isEmbedded: false, sources: page })).toBe(
+      "Found by Google Gemini in your Payments migration page.",
+    );
+    expect(expansionCaption({ isEmbedded: false, sources: page, drewOnGeneralKnowledge: false })).toBe(
+      "Found by Google Gemini in your Payments migration page.",
+    );
+  });
+
+  it("is never honoured for the embedded engine, which adds nothing from general knowledge", () => {
+    expect(expansionCaption({ isEmbedded: true, sources: [], drewOnGeneralKnowledge: true })).toBe("");
+    const withPage = expansionCaption({ isEmbedded: true, sources: page, drewOnGeneralKnowledge: true });
+    expect(withPage).toBe("Found on this server with no AI provider in your Payments migration page.");
+    expect(withPage).not.toContain("general");
+  });
+
+  it("contains no em dash and no ellipsis on any general branch", () => {
+    for (const sources of [[], page, [{ kind: "page", pageTitle: "P" }, { kind: "resume" }]]) {
+      const caption = expansionCaption({ isEmbedded: false, sources, drewOnGeneralKnowledge: true });
+      expect(caption).not.toContain("—");
+      expect(caption).not.toContain("…");
+    }
+  });
+});
+
 describe("emptyExpansion", () => {
   it("is the one frozen 'nothing known' record", () => {
     const a = emptyExpansion();

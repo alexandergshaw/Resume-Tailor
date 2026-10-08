@@ -1,5 +1,5 @@
 import { createClient as createSupabaseServerClient } from "@/lib/supabase/server";
-import { getServerEnv } from "@/lib/config/env";
+import { getExpansionTimeoutMs, getServerEnv } from "@/lib/config/env";
 import { getGeminiClient } from "@/lib/llm/geminiClient";
 import { wantsEmbedded } from "@/lib/llm/featureEngine";
 import { parseModelJson } from "@/lib/llm/extractEmployment";
@@ -57,11 +57,6 @@ const MAX_ANSWER_POINTS = 6;
 // size would be up to 7 x 42KB per question, on the one surface whose latency
 // is measured against a live interviewer.
 const MAX_SOURCE_CHARS = 4000;
-
-// Deliberately asymmetric with the client's own 6000ms budget, so that when
-// both fire it is the SERVER's diagnosis that wins the race and the reader is
-// told what actually happened.
-const MODEL_TIMEOUT_MS = 4000;
 
 const DISABLED_MESSAGE =
   "More detail is switched off on this server right now. Nothing was sent and nothing was charged.";
@@ -207,13 +202,28 @@ export async function POST(request) {
       return respond(local.subBullets, local.sources, true, storyPages(context.pages, fields.question));
     }
 
-    // 6b. THE GEMINI PATH. One call, one source.
+    // 6b. THE GEMINI PATH. One call, always. A project page that matches the
+    //     question is the ANCHOR for what the candidate did, not a gate: with no
+    //     match the model still elaborates the bullet from the resume and from
+    //     general knowledge, and the honesty filter below holds the line.
+    //
+    //     `story` MAY BE null (or unmatched), and everything after this block
+    //     reads the guarded locals derived here (`sourceLines`, `unit`,
+    //     `citedPages`, `citedSources`), or touches `story` only behind
+    //     `matched`. A bare `story.bullets` / `story.pageId` / `story.title`
+    //     below is a TypeError on the no-match path, caught by the outer handler
+    //     as a 500.
     const story = selectBestStory(context.pages, { question: fields.question, points: [] });
-    if (!story || story.matched !== true || !Array.isArray(story.bullets) || story.bullets.length === 0) {
-      return respond([], [], false, []);
-    }
+    const matched = Boolean(
+      story && story.matched === true && Array.isArray(story.bullets) && story.bullets.length > 0,
+    );
+    const sourceLines = matched ? story.bullets : [];
+    const unit = matched
+      ? { kind: "page", pageId: story.pageId, pageTitle: story.title, lines: sourceLines }
+      : { kind: "page", pageId: null, pageTitle: null, lines: [] };
+    const citedPages = matched ? [{ id: story.pageId, title: story.title }] : [];
+    const citedSources = matched ? [{ kind: "page", pageId: story.pageId, pageTitle: story.title }] : [];
 
-    const sourceLines = story.bullets;
     const { geminiModel } = getServerEnv();
     const client = getGeminiClient();
     let response;
@@ -228,10 +238,15 @@ export async function POST(request) {
                 text: buildExpansionUserTurn({
                   parentPoint: rawParent,
                   siblingPoints: points.map((p) => stripStarLabel(p)),
-                  source: {
-                    label: `Your ${story.title} page`,
-                    text: sourceLines.join("\n").slice(0, MAX_SOURCE_CHARS),
-                  },
+                  source: matched
+                    ? {
+                        label: `Your ${story.title} page`,
+                        text: sourceLines.join("\n").slice(0, MAX_SOURCE_CHARS),
+                      }
+                    : undefined,
+                  // The resume is the SERVER's own copy (context.resume), never
+                  // a body field. It is bounded and fenced inside the builder.
+                  materialsContext: { label: "Your resume", text: context.resume },
                 }),
               },
             ],
@@ -243,9 +258,10 @@ export async function POST(request) {
           // answer route sets it on its own latency-critical call and nothing
           // else in the app does.
           thinkingConfig: { thinkingBudget: 0 },
-          // Deliberately shorter than the client's own budget, so the server's
-          // diagnosis wins the race and the reader is told what happened.
-          abortSignal: AbortSignal.timeout(MODEL_TIMEOUT_MS),
+          // Strictly shorter than the client's own budget, ENFORCED by the
+          // clamp inside getExpansionTimeoutMs, so the server's diagnosis wins
+          // the race and the reader is told what happened.
+          abortSignal: AbortSignal.timeout(getExpansionTimeoutMs()),
         },
       });
     } catch (err) {
@@ -263,23 +279,20 @@ export async function POST(request) {
 
     const parsed = parseModelJson(typeof response?.text === "string" ? response.text : "");
     const offered = Array.isArray(parsed?.subBullets) ? parsed.subBullets : [];
-    const kept = filterExpansionCandidates(offered, {
-      parentPoint: rawParent,
-      unit: { kind: "page", pageId: story.pageId, pageTitle: story.title, lines: sourceLines },
-    });
+    const kept = filterExpansionCandidates(offered, { parentPoint: rawParent, unit });
 
-    return respond(
-      kept,
-      kept.length ? [{ kind: "page", pageId: story.pageId, pageTitle: story.title }] : [],
-      false,
-      [{ id: story.pageId, title: story.title }],
-    );
+    return respond(kept, kept.length ? citedSources : [], false, citedPages);
 
     function respond(entries, sources, isEmbedded, includedPages) {
       const subBullets = normalizeSubBullets(entries, { parentPoint: rawParent, includedPages });
       return Response.json({
         subBullets,
-        caption: subBullets.length ? expansionCaption({ isEmbedded, sources }) : "",
+        // The explicit general-knowledge signal: true for every Gemini answer
+        // (matched or not), never for the deterministic drafter, which adds
+        // nothing the candidate did not write.
+        caption: subBullets.length
+          ? expansionCaption({ isEmbedded, sources, drewOnGeneralKnowledge: !isEmbedded })
+          : "",
         // AN EMPTY RESULT IS A 200, not a 5xx. Four sites in the answer route
         // return `502 { error: "Could not generate an answer." }` on an empty
         // points array, and on two of them -- the embedded branches -- nothing

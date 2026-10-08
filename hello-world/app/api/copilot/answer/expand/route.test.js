@@ -17,17 +17,22 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 
-vi.mock("@/lib/config/env", () => ({ getServerEnv: vi.fn() }));
+// The route reads TWO getters from this module: getServerEnv and
+// getExpansionTimeoutMs. A factory that exports only the first makes the second
+// undefined, `AbortSignal.timeout(getExpansionTimeoutMs())` throws, and EVERY
+// Gemini case below 500s for a reason that has nothing to do with the case.
+vi.mock("@/lib/config/env", () => ({ getServerEnv: vi.fn(), getExpansionTimeoutMs: vi.fn(() => 8000) }));
 vi.mock("@/lib/llm/geminiClient", () => ({ getGeminiClient: vi.fn() }));
 vi.mock("@/lib/supabase/server", () => ({ createClient: vi.fn() }));
 
 import { POST } from "./route.js";
-import { getServerEnv } from "@/lib/config/env";
+import { getExpansionTimeoutMs, getServerEnv } from "@/lib/config/env";
 import { getGeminiClient } from "@/lib/llm/geminiClient";
 import { createClient } from "@/lib/supabase/server";
 import { answerContextCache } from "@/lib/copilot/answerSessionCache";
 import { MAX_QUESTION_CHARS } from "@/lib/copilot/questionVocabulary";
 import { MAX_PARENT_POINT_CHARS } from "@/lib/copilot/expansionContract";
+import { MAX_CONTEXT_CHARS } from "@/lib/copilot/expansionPrompt";
 
 const ROUTE_SOURCE = readFileSync(
   path.join(process.cwd(), "app/api/copilot/answer/expand/route.js"),
@@ -59,7 +64,11 @@ function jsonRequest(body) {
   return { json: async () => body, headers: new Headers() };
 }
 
-function mockSupabase({ id = "user-1", pages = [PAGE] } = {}) {
+// `resume`, when given, is the text of the submitted resume the route's context
+// loader (fetchApplicationDocs) finds for the application: the application row
+// points at a generated_resumes row, whose `content` is this string. Left out,
+// every lookup comes back empty exactly as it always did here.
+function mockSupabase({ id = "user-1", pages = [PAGE], resume = "" } = {}) {
   const tables = [];
   const from = vi.fn((table) => {
     tables.push(table);
@@ -69,7 +78,14 @@ function mockSupabase({ id = "user-1", pages = [PAGE] } = {}) {
       in: vi.fn(() => chain),
       is: vi.fn(() => chain),
       order: vi.fn(async () => (table === "experience_pages" ? { data: pages, error: null } : { data: null, error: null })),
-      maybeSingle: vi.fn(async () => ({ data: null, error: null })),
+      maybeSingle: vi.fn(async () => {
+        if (!resume) return { data: null, error: null };
+        if (table === "applications") {
+          return { data: { id: "app-1", resume_used_id: "res-1", cover_letter_id: null, positions: null }, error: null };
+        }
+        if (table === "generated_resumes") return { data: { content: resume }, error: null };
+        return { data: null, error: null };
+      }),
     };
     return chain;
   });
@@ -354,13 +370,41 @@ describe("nothing to say is a 200", () => {
     expect(json.error).toBeUndefined();
   });
 
-  it("returns the empty marker when the page did not clear the honesty gate", async () => {
+  it("returns the empty marker when the page did not clear the honesty gate (embedded engine)", async () => {
+    // The embedded drafter only quotes a matching page, so a question no page
+    // matches yields nothing. This is the old coverage, kept on the engine it
+    // always described; the Gemini no-match path is pinned in section E.
     mockSupabase({ id: freshUser() });
     const res = await POST(
       jsonRequest(body({ question: "Tell me about a time you had a difficult problem." })),
     );
     expect(res.status).toBe(200);
     expect((await res.json()).empty).toBe(true);
+  });
+
+  it("[F9 negative] a Gemini no-match response carrying an invented figure and entity is still empty", async () => {
+    // The mechanical backstop must still bite once a no-match question reaches
+    // the model: with no page, the cited unit is empty, so there is nothing a
+    // figure or a capitalized entity could trace to. Each offered line carries
+    // exactly one such fault and nothing else a gate could drop it for.
+    mockSupabase({ id: freshUser(), pages: [] });
+    const generateContent = mockGemini(
+      JSON.stringify({
+        subBullets: [
+          "I cut the replay backlog by 91% in the first sprint.",
+          "I rewrote the replay worker in Kubernetes over a weekend.",
+        ],
+      }),
+    );
+    const res = await POST(jsonRequest(body({ engine: "gemini" })));
+    expect(res.status).toBe(200);
+    // It DID call the model: the story-match early return is gone.
+    expect(generateContent).toHaveBeenCalledTimes(1);
+    const json = await res.json();
+    expect(json.empty).toBe(true);
+    expect(json.subBullets).toEqual([]);
+    expect(json.caption).toBe("");
+    expect(json.error).toBeUndefined();
   });
 });
 
@@ -386,6 +430,65 @@ describe("the Gemini engine", () => {
       "I reconciled every settlement by hand for a week.",
     ]);
     expect(json.caption).toContain("Gemini");
+    // A matched page is still cited, and the caption now also says general
+    // background was added, because the model was asked to add some.
+    expect(json.caption).toContain("Settlement ledger rebuild");
+    expect(json.caption).toContain("general background");
+    expect(json.subBullets[0].pageSource).toEqual({ id: "p1", title: "Settlement ledger rebuild" });
+  });
+
+  it("[matched] sends the cited page AND the resume, each in its own labelled block", async () => {
+    mockSupabase({ id: freshUser(), resume: "Owned the clearing pipeline at Acme Payments." });
+    const generateContent = mockGemini(JSON.stringify({ subBullets: [] }));
+    await POST(jsonRequest(body({ engine: "gemini" })));
+    const turn = generateContent.mock.calls[0][0].contents[0].parts[0].text;
+    expect(turn).toContain("\n<source-material>\n");
+    expect(turn).toContain("I reconciled every settlement by hand for a week.");
+    expect(turn).toContain("\n<candidate-résumé>\n");
+    expect(turn).toContain("Owned the clearing pipeline at Acme Payments.");
+  });
+
+  it("[no match] still elaborates from the resume and general knowledge, and BUILDS SAFELY with no page", async () => {
+    // THE CRASH THIS PINS: with the story-match early return removed, every
+    // later line used to read story.bullets / story.pageId / story.title off a
+    // story that is null when no page matches, which is a TypeError caught by
+    // the outer handler as a 500. A 200 here, with the model actually called,
+    // is the proof the guards are in place.
+    mockSupabase({ id: freshUser(), pages: [], resume: "Owned the clearing pipeline at Acme Payments." });
+    const GENERAL = "I designed the replay so that a retry could never double-post a settlement.";
+    const generateContent = mockGemini(
+      JSON.stringify({ subBullets: [GENERAL, "I cut errors by 73 percent."] }),
+    );
+    const res = await POST(jsonRequest(body({ engine: "gemini" })));
+    expect(res.status).toBe(200);
+    expect(generateContent).toHaveBeenCalledTimes(1);
+    const json = await res.json();
+    expect(json.empty).toBe(false);
+    // The clean general line is kept; the one carrying an invented figure is not.
+    expect(json.subBullets.map((s) => s.text)).toEqual([GENERAL]);
+    // No page matched, so no page is cited: no false "From your ... page".
+    for (const sub of json.subBullets) expect(sub.pageSource).toBeNull();
+    expect(json.caption).toContain("general knowledge");
+    expect(json.caption).toContain("Gemini");
+    // The prompt has NO source block (nothing matched) but does carry the resume.
+    const turn = generateContent.mock.calls[0][0].contents[0].parts[0].text;
+    expect(turn).not.toContain("\n<source-material>\n");
+    expect(turn).not.toContain("undefined");
+    expect(turn).toContain("Owned the clearing pipeline at Acme Payments.");
+  });
+
+  it("[no match, page present] a question no page matches builds the same way", async () => {
+    mockSupabase({ id: freshUser() });
+    const GENERAL = "I weighed retrying against failing fast before settling on the design.";
+    const generateContent = mockGemini(JSON.stringify({ subBullets: [GENERAL] }));
+    const res = await POST(
+      jsonRequest(body({ engine: "gemini", question: "Tell me about a time you had a difficult problem." })),
+    );
+    expect(res.status).toBe(200);
+    expect(generateContent).toHaveBeenCalledTimes(1);
+    const turn = generateContent.mock.calls[0][0].contents[0].parts[0].text;
+    expect(turn).not.toContain("\n<source-material>\n");
+    expect((await res.json()).subBullets.map((s) => s.text)).toEqual([GENERAL]);
   });
 
   it("sends no tools, no thinking budget and a bounded prompt", async () => {
@@ -399,14 +502,31 @@ describe("the Gemini engine", () => {
     expect(JSON.stringify(call)).not.toContain("urlContext");
   });
 
-  it("times the model call out rather than hanging the interviewee", async () => {
-    // 4000ms, deliberately SHORTER than the client's own 6000ms budget, so
-    // that when both fire it is the server's diagnosis that wins the race and
-    // the reader is told what actually happened rather than "network error".
-    // Asserted as constant-plus-use rather than as one literal, so a second
-    // hard-coded timeout somewhere else in the file cannot satisfy it.
-    expect(ROUTE_CODE).toContain("const MODEL_TIMEOUT_MS = 4000;");
-    expect(ROUTE_CODE).toContain("AbortSignal.timeout(MODEL_TIMEOUT_MS)");
+  it("times the model call out with the CLAMPED server budget rather than a literal", async () => {
+    // The server's budget is SHORTER than the client's own, so that when both
+    // fire it is the server's diagnosis that wins the race and the reader is
+    // told what actually happened rather than "network error". That ordering is
+    // enforced by the clamp inside getExpansionTimeoutMs (lib/config/env.js,
+    // pinned in env.test.js), so the route must take its budget from there and
+    // never hard-code one: a literal here would silently bypass the clamp.
+    expect(ROUTE_CODE).toContain("getExpansionTimeoutMs");
+    expect(ROUTE_CODE).toContain("AbortSignal.timeout(getExpansionTimeoutMs())");
+    expect(ROUTE_CODE).not.toContain("MODEL_TIMEOUT_MS");
+    expect(ROUTE_CODE).not.toMatch(/AbortSignal\.timeout\(\s*\d/);
+  });
+
+  it("hands the getter's number to the abort signal, not a number of its own", async () => {
+    mockSupabase({ id: freshUser() });
+    mockGemini(JSON.stringify({ subBullets: [] }));
+    getExpansionTimeoutMs.mockReturnValueOnce(1234);
+    const timeoutSpy = vi.spyOn(AbortSignal, "timeout");
+    try {
+      const res = await POST(jsonRequest(body({ engine: "gemini" })));
+      expect(res.status).toBe(200);
+      expect(timeoutSpy).toHaveBeenCalledWith(1234);
+    } finally {
+      timeoutSpy.mockRestore();
+    }
   });
 
   it("actually hands that signal to the model call", async () => {
@@ -469,6 +589,39 @@ describe("the route's blast radius", () => {
     const sent = JSON.stringify(generateContent.mock.calls[0][0]);
     expect(sent).not.toContain("INJECTED RESUME");
     expect(sent).not.toContain("INJECTED LETTER");
+  });
+
+  it("sends the SERVER's resume to the model, inside the fence, and never the body's", async () => {
+    mockSupabase({ id: freshUser(), resume: "Owned the clearing pipeline at Acme Payments." });
+    const generateContent = mockGemini(JSON.stringify({ subBullets: [] }));
+    await POST(jsonRequest(body({ engine: "gemini", resume: "INJECTED RESUME" })));
+    const call = generateContent.mock.calls[0][0];
+    const turn = call.contents[0].parts[0].text;
+    expect(turn).toContain("Owned the clearing pipeline at Acme Payments.");
+    expect(JSON.stringify(call)).not.toContain("INJECTED RESUME");
+    const at = turn.indexOf("Owned the clearing pipeline at Acme Payments.");
+    expect(at).toBeGreaterThan(turn.indexOf("<untrusted-data"));
+    expect(at).toBeLessThan(turn.lastIndexOf("</untrusted-data>"));
+    // Never in the instruction half: the system instruction is request-free.
+    expect(call.config.systemInstruction).not.toContain("Acme");
+  });
+
+  it("bounds how much of the resume reaches the model", async () => {
+    mockSupabase({ id: freshUser(), resume: "§".repeat(MAX_CONTEXT_CHARS * 3) });
+    const generateContent = mockGemini(JSON.stringify({ subBullets: [] }));
+    await POST(jsonRequest(body({ engine: "gemini" })));
+    const turn = generateContent.mock.calls[0][0].contents[0].parts[0].text;
+    const carried = (turn.match(/§/g) || []).length;
+    expect(carried).toBeGreaterThan(0);
+    expect(carried).toBeLessThanOrEqual(MAX_CONTEXT_CHARS);
+  });
+
+  it("gives the embedded engine no resume and no general-knowledge caption", async () => {
+    mockSupabase({ id: freshUser(), resume: "Owned the clearing pipeline at Acme Payments." });
+    const generateContent = mockGemini("unused");
+    const json = await (await POST(jsonRequest(body({ engine: "embedded" })))).json();
+    expect(generateContent).not.toHaveBeenCalled();
+    expect(json.caption).not.toContain("general");
   });
 
   it("goes through the shared context cache, never a second createTtlCache", () => {

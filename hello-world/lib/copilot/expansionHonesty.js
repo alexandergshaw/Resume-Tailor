@@ -26,11 +26,10 @@
 // joined corpus is precisely how a figure from one project gets transplanted
 // onto another, which is a defect this repo has already shipped once.
 
-import { literallyMentioned, isPastWorkLine, MOTIVATION_LINE_RE } from "./answerLocal.js";
+import { literallyMentioned, namedEntityTokens, MOTIVATION_LINE_RE } from "./answerLocal.js";
 import { materialQuote, materialTokenCount } from "./materialQuote.js";
 import { normalizeForComparison, stripStarLabel } from "./answerPoints.js";
 import { FIRST_PERSON_RE } from "./questionVocabulary.js";
-import { significantTerms } from "./projectStories.js";
 
 // Every numeral-shaped run: a digit, then any digits, commas or stops, then an
 // optional percent sign. Tokenised EXPLICITLY so the rule is testable rather
@@ -94,21 +93,29 @@ function isQuotedWhole(text, lines) {
 }
 
 /**
- * A sentence the model COMPOSED rather than quoted may still be honest, but it
- * has to earn it: every distinctive term it names must literally occur in the
- * named unit, it has to read as past work rather than motivation, and its
- * numerals are scoped by the caller above.
+ * Does every capitalized NAMED ENTITY in `text` (a company, product, tool or
+ * technology name) also occur in the named unit?
  *
+ * This is the backstop that remains once a composed sentence is allowed to
+ * carry general method and reasoning of its own: the model may explain HOW and
+ * WHY from general knowledge, but it may not name a tool or an employer the
+ * cited material never mentions. `namedEntityTokens` finds the candidates;
  * `literallyMentioned` is the repo's own term check and carries the recorded
- * "team" -> "Microsoft Teams" hazard: a bare substring test says the material
- * mentions "team" when all it contains is a product name.
+ * "team" -> "Microsoft Teams" hazard (a bare substring test says the material
+ * mentions "team" when all it contains is a product name).
+ *
+ * With an EMPTY unit (no page matched the question) the allowlist is empty, so
+ * any capitalized entity at all drops the line, and an entity-free line passes:
+ * exactly the honest degrade.
+ *
+ * WHAT THIS DOES NOT CATCH, and the prompt is what refuses it instead: a
+ * lowercase invented tool, C++, C#, K8s, and every fabricated generic
+ * accomplishment, credential, job title or date. There is no deterministic
+ * server check that decides those.
  */
-function composedPasses(text, lines) {
+function entitiesScopedToUnit(text, lines) {
   const material = lines.join("\n");
-  for (const term of significantTerms(text)) {
-    if (!literallyMentioned(term, material)) return false;
-  }
-  return isPastWorkLine(text);
+  return namedEntityTokens(text).every((token) => literallyMentioned(token, material));
 }
 
 function checkContactShapes(text) {
@@ -130,8 +137,10 @@ function checkContactShapes(text) {
  * Total by construction: never throws.
  */
 export function filterExpansionCandidates(candidates, { parentPoint = "", unit } = {}) {
+  // NO early return on an empty unit. With no lines the figure and entity
+  // scopes below have an empty allowlist, so they admit only first-person,
+  // non-motivation prose that carries no figure and no capitalized entity.
   const lines = unitLines(unit);
-  if (lines.length === 0) return [];
 
   const parentKey = normalizeForComparison(stripStarLabel(parentPoint));
   const pageId = unit && typeof unit.pageId === "string" ? unit.pageId : null;
@@ -155,21 +164,24 @@ export function filterExpansionCandidates(candidates, { parentPoint = "", unit }
 
     // 4. It is about work done, not about work wanted.
     //
-    //    UNCONDITIONAL, DELIBERATELY, and NOT scoped to the composed branch
-    //    below. This is a fact about what the sentence IS, not about where it
-    //    came from: a candidate's own page can carry "I want to work on
-    //    settlement systems at a larger scale.", and quoting it whole makes it
-    //    perfectly provenanced and still not further detail about what they
-    //    did. Scoping this to composed output let exactly that through, which
-    //    is how the case was found.
+    //    UNCONDITIONAL, DELIBERATELY, and NOT scoped to the sentences the
+    //    model composed (step 6 below). This is a fact about what the sentence
+    //    IS, not about where it came from: a candidate's own page can carry
+    //    "I want to work on settlement systems at a larger scale.", and quoting
+    //    it whole makes it perfectly provenanced and still not further detail
+    //    about what they did. Scoping this to composed output let exactly that
+    //    through, which is how the case was found.
     if (MOTIVATION_LINE_RE.test(trimmed)) continue;
 
     // 5. Every figure in it is a figure the NAMED unit carries.
     if (!numeralsScopedToUnit(trimmed, lines)) continue;
 
-    // 6. It is either quoted whole out of one line, or composed and earning
-    //    it. Nothing else reaches the screen.
-    if (!isQuotedWhole(trimmed, lines) && !composedPasses(trimmed, lines)) continue;
+    // 6. It is either quoted whole out of one line, or it names no capitalized
+    //    entity the NAMED unit does not. A composed sentence is welcome: the
+    //    model may add general method and reasoning, and the specifics it may
+    //    not invent are held by step 5 (figures) and this step (named
+    //    entities), plus the prompt for what no deterministic check can see.
+    if (!isQuotedWhole(trimmed, lines) && !entitiesScopedToUnit(trimmed, lines)) continue;
 
     kept.push({
       text: trimmed,
