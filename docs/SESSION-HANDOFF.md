@@ -7,10 +7,10 @@ _Last updated: 2026-10-07 by the orchestrator._
 ---
 
 ## 1. In-flight uncommitted work (the dirty tree)
-- None. All work is committed and pushed to main.
+- **N143 build in progress** (big dirty tree): 13 RED acceptance test files are on disk (TDD hand-off, uncommitted — do NOT commit red; green them first). Production code being added wave by wave. All N143 docs (ac r1/r2, design r1/r2, ux r1, plan r1, tests notes) ARE committed+pushed. Nothing is pushed for the CODE until the whole feature is green (single full-suite gate at the end, then one push). If this session dies mid-build: the plan is docs/loop/N143.plan.r1.md (4 waves), the TDD contracts/notes are docs/loop/N143.tests.r1.md.
 
 ## 2. Mid-flight waves / active dispatches
-- None.
+- **N143 Wave A** (base modules: migration, storage lib, selector, generation+prompt) — implementer a6af10ac2a4565283. Then Wave B (prewarm route, cost gate, answer-route Row-1, Row-2 sub-route), Wave C (hook+mounts, client threading+fire helper, UI AnswerAids 4 sites), Wave D (sweep recount + adoption.test.js BOUNDED). Full-suite gate after all waves, then push.
 
 ## 3. Killed / stalled residue
 - None. (N134's first implementer was user-killed mid-work; the partial production edits were valid and were finished by a fresh implementer — N134 shipped.)
