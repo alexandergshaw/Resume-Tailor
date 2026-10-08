@@ -7,10 +7,10 @@ _Last updated: 2026-10-07 by the orchestrator._
 ---
 
 ## 1. In-flight uncommitted work (the dirty tree)
-- **N149 DONE-in-tree + N150 mid-build, both UNPUSHED** (one combined full-suite gate planned, then two separate commits + push). N149 (expand real-LLM-detail: expansionPrompt/Honesty/Contract/Timeouts, answerLocal namedEntityTokens, env getter, expand route, client) is complete+targeted-green (253) with its sweep recount (407->410). N150 (tech-buzzwords row + per-buzzword detail): 13 RED test files on disk (committed? NO — uncommitted red, green before commit); backend waves A+B building, then C (hooks/producers useDraftAnswer/useSampleAnswer/useRoomQuestions), D (AnswerAids + 4 mounts + CopilotClient/PracticeClient scope), E (sweep recount again, from the post-N149 baseline). Docs for N149 (design r2) + N150 (design r2, plan r1, tests r1) are committed+pushed. If this session dies mid-build: N150 plan=docs/loop/N150.plan.r1.md (waves A-E), symbols=docs/loop/N150.tests.r1.md. DO NOT edit answer/route.js for N150 (the F3b emission guard READS its current spreads). N149 + N150 touch DISJOINT files (N149=expansion*, N150=techTerm*/techTerms* + the draft hooks + AnswerAids) — safe to coexist; only the exportReachability sweep is shared and is recounted SEQUENTIALLY (N149 did 407->410, N150's Wave E goes from 410).
+- None. The big copilot+tracking batch (N149 + expansion-panel re-render fix + N150 + N152) is committed + pushed; combined full-suite gate 18968 green.
 
 ## 2. Mid-flight waves / active dispatches
-- **N150 backend A+B** (techTermsGen/Prompt/DetailHonesty/Live/Contract + tech-terms & tech-term-detail routes + client/store + adoption) — implementer adee5c1f52d8134bf. Then N150 C+D+E (frontend). Then ONE full-suite gate covering N149+N150, then commit N149, commit N150, push both.
+- None. NEXT (not started): N151 (template workflow, design+ruled — build after this push, a/b/c slices; touches page.js/materials — watch for collision if other page.js work starts) and N144 (mobile-first copilot overhaul — now unblocked, all new rows exist).
 
 ## 3. Killed / stalled residue
 - None. (N134's first implementer was user-killed mid-work; the partial production edits were valid and were finished by a fresh implementer — N134 shipped.)
