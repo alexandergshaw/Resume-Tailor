@@ -64,8 +64,8 @@ const DISABLED_MESSAGE =
   "The ask box is switched off on this server right now. Nothing was sent and nothing was charged.";
 const RATE_LIMITED_MESSAGE =
   "You have asked a lot of questions in a short window. Wait a moment and ask again.";
-const NOTHING_TO_ANSWER_FROM =
-  "There is nothing to answer from yet: no tracked application is selected, no resume or cover letter was submitted for one, and your experience pages are empty. Pick an application, or add a page, and ask again.";
+const NO_MATERIAL_EMBEDDED =
+  "There is nothing selected here to quote from: no tracked application, no submitted resume or cover letter, and no experience pages. The embedded engine only quotes your own material back to you, so pick an application or add a page to quote from -- or switch to the Gemini engine, which can answer general questions without any of that.";
 const RESIDUE_REFUSAL =
   "The answer came back with links or markup in it that could not be removed safely, so it was discarded rather than shown.";
 
@@ -185,12 +185,21 @@ export async function POST(request) {
       },
     });
 
-    // 6. ZERO CONTEXT REFUSES, before any model client is constructed. A
-    //    non-zero input becoming a zero output is a reportable anomaly, and
-    //    calling the model with an empty context block would spend money to be
-    //    told nothing is there.
-    if (empty) {
-      return Response.json({ answer: NOTHING_TO_ANSWER_FROM, sources, truncated: false, engine: embedded ? "embedded" : "gemini" });
+    // 6. NO CONTEXT. With nothing to ground in, the GEMINI path can still answer
+    //    a GENERAL question from general knowledge (owner 2026-10-08), so it no
+    //    longer refuses here -- it falls through to 7b, where ASK_SYSTEM tells the
+    //    model to answer generally and to say so plainly if the question actually
+    //    needs this application's specifics. The EMBEDDED engine has no general-
+    //    knowledge faculty: it only quotes the candidate's own material, so with
+    //    nothing to quote it returns a stated no-material message and -- as on
+    //    every embedded request -- constructs no model client and makes no call.
+    if (empty && embedded) {
+      return Response.json({
+        answer: NO_MATERIAL_EMBEDDED,
+        sources,
+        truncated: false,
+        engine: "embedded",
+      });
     }
 
     const truncated = !!kb.truncated && sources.pagesInScope > sources.pagesIncluded;

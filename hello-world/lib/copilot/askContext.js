@@ -139,9 +139,12 @@ export function buildAskBlocks({ tracking = null, resume = "", coverLetter = "",
       pagesInScope: inScopeCount,
       pagesIncluded: includedCount,
     },
-    // Nothing at all to answer from. The route turns this into a refusal
-    // BEFORE constructing a model client: calling the model with an empty
-    // context would spend money to be told nothing is there.
+    // Nothing at all to ground in. The route no longer refuses on this for the
+    // Gemini engine -- a general question is still answered from general
+    // knowledge, over an empty fence -- so the source line below says so rather
+    // than claiming nothing was available. Only the embedded engine, which can
+    // do nothing but quote this material, returns a no-material message here,
+    // and it does so before constructing any model client.
     empty: blocks.length === 0,
   };
 }
@@ -169,7 +172,11 @@ export function askSourceLine(sources, { truncated = false } = {}) {
   }
 
   const parts = [];
-  parts.push(had.length > 0 ? `Answered from: ${had.join(", ")}.` : "Answered from: nothing was available.");
+  parts.push(
+    had.length > 0
+      ? `Answered from: ${had.join(", ")}.`
+      : "Answered from general knowledge -- this application had no material to draw on.",
+  );
   if (truncated && sources?.pagesInScope > sources?.pagesIncluded) {
     parts.push(
       `Your knowledge base did not fit: ${sources.pagesIncluded} of your ${sources.pagesInScope} pages were used, ` +
