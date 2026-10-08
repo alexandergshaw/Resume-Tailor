@@ -1,6 +1,6 @@
 "use client";
 
-import { useId, useSyncExternalStore } from "react";
+import { useId } from "react";
 import Box from "@mui/material/Box";
 import Button from "@mui/material/Button";
 import Chip from "@mui/material/Chip";
@@ -9,8 +9,10 @@ import Stack from "@mui/material/Stack";
 import Typography from "@mui/material/Typography";
 
 import { BREAK_LONG_WORDS_SX, TOUCH_TARGET_SX } from "@/app/theme/mobileSx";
+import { normalizeAidChoice } from "../../lib/copilot/aidDisclosure.js";
 import { createChoiceStore } from "../../lib/copilot/choiceStore.js";
 import { PROJECT_PAGE_SOURCE } from "../../lib/copilot/projectStories.js";
+import CollapsibleAid from "./CollapsibleAid";
 import { useTechTermDetailApi } from "./useTechTermDetails";
 
 // AC-K1.2/AC-K1.3: the two groups that sit UNDER a drafted answer's cues —
@@ -28,44 +30,54 @@ import { useTechTermDetailApi } from "./useTechTermDetails";
 // Nothing here fetches, and nothing here decides what a buzzword or an
 // aligned role IS — this only decides how they look.
 //
-// Markup is two description lists rather than headings + paragraphs, on
-// purpose. Each label is a term whose value sits under it, which is what
-// `dl` means; and it avoids inventing a further heading level under
+// The candidate's own role and project is a description list: each label is a
+// term whose value sits under it, which is what `dl` means. Nothing here is a
+// heading, on purpose: it avoids inventing a further heading level under
 // whichever heading already encloses it on each of its three parents —
 // SampleAnswer.js's question card title (`h3`), QuestionFeed.js's "Detected
 // questions" section title (`h3`), and CopilotDashboard.js's
 // `CurrentAnswerPanel` title (`h4`). Adding a heading here would either
 // repeat a level already in use one step up, or push the tree to `h5` — a
 // depth nothing else under `/copilot` needs (R-125) — either of which is
-// how heading order gets broken.
+// how heading order gets broken. The three groups below are disclosures
+// (CollapsibleAid.js), whose header is a button, not a heading, for the same
+// reason.
 //
-// The two `dl`s and the divider between them are grouped by WHOSE material
-// it is, not by data type: the candidate's own role/project first, the
-// posting's vocabulary second. Both `dl`s share one grid style and one row
-// component (`Aid`) below so the two groups cannot visually drift apart
-// from each other.
+// The groups and the dividers between them are grouped by WHOSE material
+// it is, not by data type: the candidate's own role/project first, then the
+// posting's vocabulary. The résumé group is always visible with no header (it
+// is the candidate's own material, and the first thing to glance at). Every
+// group after it is a CollapsibleAid: collapsed by default below 600px and open
+// from 600px up, remembered per section (N144a). A header REPLACES the label
+// that used to be a `dt`, so a single-block group is a header over its body and
+// not a one-row `dl` whose term would repeat the header's words.
 //
-// A THIRD group, always LAST, holds the example projects: two INVENTED
+// The posting's words sit second: one disclosure over the chip list.
+//
+// A THIRD group holds the tech buzzwords, always before the examples:
+// LLM-suggested terms relevant to the question that the candidate may well NOT
+// have in their materials. It is its own provenance (not the candidate's, not
+// the posting's own words, not an invented project), and its lead says plainly
+// that these are suggestions to be aware of rather than anything the candidate
+// has done. Each term is a button that opens a short general explanation inline;
+// the explanation comes from the scope-provided api (useTechTermDetails.js), so
+// this file still fetches nothing. The lead sits in the same body as the chips,
+// so whenever a term is on screen the warning is beside it.
+//
+// A FOURTH group, always LAST, holds the example projects: two INVENTED
 // hypotheticals ("Ready example", picked from a pre-warmed set; "Example for
-// this question", written after the answer lands). They are a third
-// provenance, not the candidate's and not the posting's, so they get their own
-// separator, their own `dl` and a labelled group, never a row inside the
-// résumé group where an invented project would sit beside the real "Project to
-// talk about". Last also means the late arrival of the second row appends below
-// everything already on screen and moves nothing the candidate is reading. The
-// structure (a role="group" named by its header, the lead inside each `dd`, no
-// CSS `order`, the second row appended last) is the stable surface the mobile
-// pass restyles; keep it. Every state the two rows can be in, and the exact
-// strings, are the example-projects UX design's (docs/loop/N143.ux.r1.md).
-//
-// A FOURTH group sits between the posting's words and the example projects: the
-// tech buzzwords, LLM-suggested terms relevant to the question that the candidate
-// may well NOT have in their materials. It is a fourth provenance (not the
-// candidate's, not the posting's own words, not an invented project), so it gets
-// its own `dl`, and its lead says plainly that these are suggestions to be aware
-// of rather than anything the candidate has done. Each term is a button that
-// opens a short general explanation inline; the explanation comes from the
-// scope-provided api (useTechTermDetails.js), so this file still fetches nothing.
+// this question", written after the answer lands). They are another provenance,
+// not the candidate's and not the posting's, so they get their own separator,
+// their own `dl` and a labelled group, never a row inside the résumé group where
+// an invented project would sit beside the real "Project to talk about". Last
+// also means the late arrival of the second row appends below everything
+// already on screen and moves nothing the candidate is reading. The structure (a
+// role="group" named by its header, the lead inside each `dd`, no CSS `order`,
+// the second row appended last) is the stable surface the mobile pass restyles;
+// keep it. Only this group is a role="group": the other bodies are one block,
+// named by their header's aria-controls. Every state the two rows can be in,
+// and the exact strings, are the example-projects UX design's
+// (docs/loop/N143.ux.r1.md).
 
 // Below `md` the grid collapses to one column ordered dt, dd, dt, dd — a
 // single uniform rowGap would put a label exactly as far from its OWN value
@@ -183,6 +195,27 @@ function Aid({ label, children, ddSx, ddProps }) {
   );
 }
 
+// One section's remembered open/closed choice. Each aid group that collapses
+// gets its OWN store under its OWN key, so opening one never moves another; the
+// key literals stay at the call sites below (the example-projects key is pinned
+// by a contract test reading this file's source). The stores are module scope,
+// so every mounted AnswerAids on the page (the current card, expanded history
+// items, feed cards, the sample answer) shares one choice per section. A
+// stored value is the plain string `open` or `closed`; anything else reads as
+// "not chosen" (aidDisclosure.js).
+function createAidCollapseStore(storageKey) {
+  const store = createChoiceStore({
+    storageKey,
+    defaultValue: null,
+    normalize: normalizeAidChoice,
+    crossWindow: true,
+  });
+  store.hydrate();
+  return store;
+}
+
+const postingWordsCollapse = createAidCollapseStore("copilot-posting-words");
+
 // ---------------------------------------------------------------------------
 // The example-projects group. Everything below up to AnswerAids itself is
 // presentation only: a row's state arrives on its prop already decided (Row 1
@@ -214,18 +247,14 @@ const INVENTED_DD_SX = { borderLeft: "2px solid var(--accent)", pl: 1.25 };
 // The group's open/closed choice, remembered across reloads and tabs. ONE
 // choice for the whole group, never per row: two controls for one decision
 // would bury the useful row or double the state. `null` means "the person has
-// not chosen", which renders open -- absence, not "open", is the default, so a
-// later release can pick a different default for a narrow screen without
-// migrating anything already stored. A storage failure falls back to open
-// without throwing (the store is memory-authoritative).
+// not chosen": absence, not "open", is the default, which is what lets the
+// breakpoint decide (collapsed below 600px, open from 600px up; see
+// lib/copilot/aidDisclosure.js) and lets a later release change that without
+// migrating anything already stored. A storage failure falls back to the
+// default without throwing (the store is memory-authoritative). The key keeps
+// the encoding it always had, so a value already stored under it still works.
 const EXAMPLES_COLLAPSE_KEY = "copilot-example-projects";
-const examplesCollapse = createChoiceStore({
-  storageKey: EXAMPLES_COLLAPSE_KEY,
-  defaultValue: null,
-  normalize: (value) => (value === "open" || value === "closed" ? value : null),
-  crossWindow: true,
-});
-examplesCollapse.hydrate();
+const examplesCollapse = createAidCollapseStore(EXAMPLES_COLLAPSE_KEY);
 
 // An example is shown only if it is shaped like one: a title and at least one
 // bullet, every bullet a non-empty string. The server validates on the way in,
@@ -362,53 +391,19 @@ function RowTwo({ view }) {
   );
 }
 
-// The labelled group: a native disclosure button (so it is one tab stop, works
-// with Enter and Space, and its name is its visible text) over the group's own
-// `dl`. Collapsing unmounts the `dl`, so a collapsed group is out of both the
-// accessibility tree and the tab order, and only the header line remains --
+// The labelled group: a CollapsibleAid (a native disclosure button whose name is
+// its visible text) over the group's own `dl`, wrapped in a role="group" named by
+// that header. Collapsing unmounts the `dl`, so a collapsed group is out of both
+// the accessibility tree and the tab order, and only the header line remains --
 // still honest, because "invented" is in its text.
 function ExampleProjectsGroup({ rowOne, rowTwo }) {
-  const headerId = useId();
-  const panelId = useId();
-  const choice = useSyncExternalStore(
-    examplesCollapse.subscribe,
-    examplesCollapse.get,
-    examplesCollapse.getServerSnapshot,
-  );
-  const open = choice !== "closed";
   return (
-    <Box role="group" aria-labelledby={headerId}>
-      <Button
-        id={headerId}
-        variant="text"
-        size="small"
-        onClick={() => examplesCollapse.set(open ? "closed" : "open")}
-        aria-expanded={open}
-        aria-controls={panelId}
-        sx={{
-          justifyContent: "flex-start",
-          minWidth: 0,
-          px: 0,
-          mb: open ? 0.5 : 0,
-          textTransform: "none",
-          textAlign: "left",
-          color: "var(--text-secondary)",
-          fontWeight: 700,
-          ...TOUCH_TARGET_SX,
-        }}
-      >
-        <Box component="span" aria-hidden="true" sx={{ mr: 0.75 }}>
-          {open ? "▾" : "▸"}
-        </Box>
-        {EXAMPLE_GROUP_LABEL}
-      </Button>
-      {open ? (
-        <Box component="dl" id={panelId} sx={AID_GRID_SX}>
-          {rowOne ? <RowOne view={rowOne} /> : null}
-          {rowTwo ? <RowTwo view={rowTwo} /> : null}
-        </Box>
-      ) : null}
-    </Box>
+    <CollapsibleAid label={EXAMPLE_GROUP_LABEL} choiceStore={examplesCollapse} labelledGroup>
+      <Box component="dl" sx={AID_GRID_SX}>
+        {rowOne ? <RowOne view={rowOne} /> : null}
+        {rowTwo ? <RowTwo view={rowTwo} /> : null}
+      </Box>
+    </CollapsibleAid>
   );
 }
 
@@ -433,6 +428,10 @@ const TT_DETAIL_EMPTY = "Nothing useful to add for this one.";
 const TT_DETAIL_ERROR = "Couldn't look that up.";
 const TT_DETAIL_TIMEOUT = "That took too long to look up.";
 const TT_DETAIL_DISABLED = "Term explanations are unavailable on this server right now.";
+
+// Its own remembered choice, separate from the other sections (see
+// createAidCollapseStore above).
+const techTermsCollapse = createAidCollapseStore("copilot-tech-buzzwords");
 
 // What the group shows for one card's `techTerms`. null means the row does not
 // exist for this card (no application, the embedded engine, or the request not
@@ -554,6 +553,14 @@ function TechTermChip({ term, api, regionId }) {
   );
 }
 
+// The group is a CollapsibleAid whose body is everything that used to sit in the
+// row's `dd`: the pending or failed line, or the lead, the chips and the live
+// region. All of it unmounts together while collapsed, so the live region and the
+// chips it belongs to always mount at the same moment; which terms are OPEN lives
+// in the scope (useTechTermDetails), not in the chips, so collapsing and
+// re-expanding keeps an opened term open. `aria-busy` stays on the inner pending
+// line and never on an ancestor of the live region, which would suppress its
+// announcements.
 function TechTermsGroup({ view }) {
   const api = useTechTermDetailApi();
   const regionId = useId();
@@ -561,50 +568,48 @@ function TechTermsGroup({ view }) {
   if (view.kind !== "ready") {
     const pending = view.kind === "pending";
     return (
-      <Box component="dl" sx={AID_GRID_SX}>
-        <Aid label={TECH_TERMS_LABEL} ddProps={pending ? { "aria-busy": "true" } : undefined}>
+      <CollapsibleAid label={TECH_TERMS_LABEL} choiceStore={techTermsCollapse}>
+        <Box aria-busy={pending ? "true" : undefined} sx={BREAK_LONG_WORDS_SX}>
           <QuietLine>{pending ? TT_PENDING : TT_FAILED}</QuietLine>
-        </Aid>
-      </Box>
+        </Box>
+      </CollapsibleAid>
     );
   }
 
   const openTerms = api ? view.terms.filter((term) => api.isOpen(term)) : [];
   return (
-    <Box component="dl" sx={AID_GRID_SX}>
-      <Aid label={TECH_TERMS_LABEL}>
-        <Stack spacing={LINE_GAP}>
-          <Typography variant="body2" sx={{ color: "var(--text-primary)" }}>
-            <Box component="strong" sx={{ fontWeight: 700 }}>
-              {TECH_TERMS_LEAD_BOLD}
-            </Box>
-            {TECH_TERMS_LEAD_REST}
-          </Typography>
-          <Stack
-            component="ul"
-            role="list"
-            direction="row"
-            useFlexGap
-            sx={{ flexWrap: "wrap", gap: 0.75, listStyle: "none", m: 0, p: 0 }}
-          >
-            {view.terms.map((term) => (
-              <TechTermChip key={term} term={term} api={api} regionId={regionId} />
-            ))}
-          </Stack>
-          {/* Mounted whether or not anything is open, so the chips'
-              aria-controls always names a real element and a polite live
-              region exists before its text changes (a region that appears
-              already populated is the case screen readers fail to announce).
-              Deliberately NOT a role="region" landmark: one per card would
-              leave an empty landmark for every answer on the page. */}
-          <Stack id={regionId} aria-live="polite" spacing={LINE_GAP}>
-            {openTerms.map((term) => (
-              <TechTermDetail key={term} term={term} record={api.get(term)} onRetry={() => api.retry(term)} />
-            ))}
-          </Stack>
+    <CollapsibleAid label={TECH_TERMS_LABEL} choiceStore={techTermsCollapse}>
+      <Stack spacing={LINE_GAP} sx={BREAK_LONG_WORDS_SX}>
+        <Typography variant="body2" sx={{ color: "var(--text-primary)" }}>
+          <Box component="strong" sx={{ fontWeight: 700 }}>
+            {TECH_TERMS_LEAD_BOLD}
+          </Box>
+          {TECH_TERMS_LEAD_REST}
+        </Typography>
+        <Stack
+          component="ul"
+          role="list"
+          direction="row"
+          useFlexGap
+          sx={{ flexWrap: "wrap", gap: 0.75, listStyle: "none", m: 0, p: 0 }}
+        >
+          {view.terms.map((term) => (
+            <TechTermChip key={term} term={term} api={api} regionId={regionId} />
+          ))}
         </Stack>
-      </Aid>
-    </Box>
+        {/* Mounted whenever the body is, whether or not anything is open, so
+            the chips' aria-controls always names a real element and a polite
+            live region exists before its text changes (a region that appears
+            already populated is the case screen readers fail to announce).
+            Deliberately NOT a role="region" landmark: one per card would
+            leave an empty landmark for every answer on the page. */}
+        <Stack id={regionId} aria-live="polite" spacing={LINE_GAP}>
+          {openTerms.map((term) => (
+            <TechTermDetail key={term} term={term} record={api.get(term)} onRetry={() => api.retry(term)} />
+          ))}
+        </Stack>
+      </Stack>
+    </CollapsibleAid>
   );
 }
 
@@ -719,60 +724,58 @@ export default function AnswerAids({ buzzwords, anchor, projectExample, projectE
       ) : null}
 
       {hasPostingGroup ? (
-        <Box component="dl" sx={AID_GRID_SX}>
-          {hasWordsRow ? (
-            <Aid label="Words from the posting to work in">
-              <Stack
-                component="ul"
-                // `listStyle: "none"` below strips Safari/VoiceOver's implicit
-                // `list` role along with the bullet glyphs — documented WebKit
-                // behaviour, not a MUI quirk — which is what silently turns
-                // this into loose, uncounted text for a screen reader user:
-                // no "list, N items" announcement, no sense that these chips
-                // form a set. The `Chip`s below already carry `component="li"`
-                // (the matching `listitem` role), so restoring just the `list`
-                // role here is what makes this a list again. Do not delete
-                // this as "redundant with the ul tag" — the redundancy is the
-                // point; `listStyle: none` is exactly what breaks it.
-                role="list"
-                direction="row"
-                // MUI v9's Stack `spacing` prop compiles to a margin on every
-                // child but the first (`useFlexGap` defaults to false), which
-                // is fine unwrapped but breaks under `flexWrap`: the first
-                // chip of each WRAPPED row still inherits that left margin,
-                // indenting every wrapped row by the spacing amount. `gap`
-                // (via `useFlexGap`) applies evenly in both directions
-                // instead, which is also why `rowGap` alone was already
-                // needed here for the vertical axis.
-                useFlexGap
-                sx={{ flexWrap: "wrap", gap: 0.75, listStyle: "none", m: 0, p: 0 }}
-              >
-                {terms.map((term) => (
-                  <Chip
-                    key={term}
-                    component="li"
-                    size="small"
-                    label={term}
-                    sx={{
-                      height: "auto",
-                      fontSize: 12,
-                      color: "var(--text-primary)",
-                      background: "var(--bg-surface)",
-                      border: "1px solid var(--text-muted)",
-                      "& .MuiChip-label": {
-                        overflow: "visible",
-                        whiteSpace: "normal",
-                        textOverflow: "clip",
-                        py: 0.5,
-                        ...BREAK_LONG_WORDS_SX,
-                      },
-                    }}
-                  />
-                ))}
-              </Stack>
-            </Aid>
-          ) : null}
-        </Box>
+        // The header IS the label that used to be a `dt` here, so the body is
+        // the chip list alone.
+        <CollapsibleAid label="Words from the posting to work in" choiceStore={postingWordsCollapse}>
+          <Stack
+            component="ul"
+            // `listStyle: "none"` below strips Safari/VoiceOver's implicit
+            // `list` role along with the bullet glyphs — documented WebKit
+            // behaviour, not a MUI quirk — which is what silently turns
+            // this into loose, uncounted text for a screen reader user:
+            // no "list, N items" announcement, no sense that these chips
+            // form a set. The `Chip`s below already carry `component="li"`
+            // (the matching `listitem` role), so restoring just the `list`
+            // role here is what makes this a list again. Do not delete
+            // this as "redundant with the ul tag" — the redundancy is the
+            // point; `listStyle: none` is exactly what breaks it.
+            role="list"
+            direction="row"
+            // MUI v9's Stack `spacing` prop compiles to a margin on every
+            // child but the first (`useFlexGap` defaults to false), which
+            // is fine unwrapped but breaks under `flexWrap`: the first
+            // chip of each WRAPPED row still inherits that left margin,
+            // indenting every wrapped row by the spacing amount. `gap`
+            // (via `useFlexGap`) applies evenly in both directions
+            // instead, which is also why `rowGap` alone was already
+            // needed here for the vertical axis.
+            useFlexGap
+            sx={{ flexWrap: "wrap", gap: 0.75, listStyle: "none", m: 0, p: 0, ...BREAK_LONG_WORDS_SX }}
+          >
+            {terms.map((term) => (
+              <Chip
+                key={term}
+                component="li"
+                size="small"
+                label={term}
+                sx={{
+                  height: "auto",
+                  fontSize: 12,
+                  color: "var(--text-primary)",
+                  background: "var(--bg-surface)",
+                  border: "1px solid var(--text-muted)",
+                  "& .MuiChip-label": {
+                    overflow: "visible",
+                    whiteSpace: "normal",
+                    textOverflow: "clip",
+                    py: 0.5,
+                    ...BREAK_LONG_WORDS_SX,
+                  },
+                }}
+              />
+            ))}
+          </Stack>
+        </CollapsibleAid>
       ) : null}
 
       {hasTechTermsGroup && (hasResumeGroup || hasPostingGroup) ? (
