@@ -5,7 +5,9 @@ import {
   getSttProvider,
   getElevenLabsApiKey,
   getLlmSearchIntervalMinutes,
+  getExpansionTimeoutMs,
 } from "./env.js";
+import { EXPANSION_CLIENT_TIMEOUT_MS } from "../copilot/expansionTimeouts.js";
 
 const ORIGINAL_ENV = { ...process.env };
 
@@ -106,6 +108,48 @@ describe("getLlmSearchIntervalMinutes", () => {
   it("falls back to 60 for a negative value", () => {
     vi.stubEnv("LLM_SEARCH_INTERVAL_MINUTES", "-10");
     expect(getLlmSearchIntervalMinutes()).toBe(60);
+  });
+});
+
+describe("getExpansionTimeoutMs", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it("defaults to 8000 when COPILOT_EXPANSION_TIMEOUT_MS is unset", () => {
+    vi.stubEnv("COPILOT_EXPANSION_TIMEOUT_MS", undefined);
+    expect(getExpansionTimeoutMs()).toBe(8000);
+  });
+
+  it("honours a valid override below the client budget", () => {
+    vi.stubEnv("COPILOT_EXPANSION_TIMEOUT_MS", "5000");
+    expect(getExpansionTimeoutMs()).toBe(5000);
+  });
+
+  it("falls back to 8000 for a non-numeric value", () => {
+    vi.stubEnv("COPILOT_EXPANSION_TIMEOUT_MS", "soon");
+    expect(getExpansionTimeoutMs()).toBe(8000);
+  });
+
+  it("falls back to 8000 for a zero value", () => {
+    vi.stubEnv("COPILOT_EXPANSION_TIMEOUT_MS", "0");
+    expect(getExpansionTimeoutMs()).toBe(8000);
+  });
+
+  it("falls back to 8000 for a negative value", () => {
+    vi.stubEnv("COPILOT_EXPANSION_TIMEOUT_MS", "-10");
+    expect(getExpansionTimeoutMs()).toBe(8000);
+  });
+
+  it("CLAMPS a value at or above the client budget to one millisecond under it", () => {
+    // The ordering is enforced here, not hoped for: an operator who sets the
+    // server budget past the browser's would otherwise see the browser's generic
+    // abort win the race instead of the server's diagnosis.
+    for (const raw of [String(EXPANSION_CLIENT_TIMEOUT_MS), "10001", "30000", "999999999"]) {
+      vi.stubEnv("COPILOT_EXPANSION_TIMEOUT_MS", raw);
+      expect(getExpansionTimeoutMs(), raw).toBe(EXPANSION_CLIENT_TIMEOUT_MS - 1);
+      expect(getExpansionTimeoutMs(), raw).toBeLessThan(EXPANSION_CLIENT_TIMEOUT_MS);
+    }
   });
 });
 
