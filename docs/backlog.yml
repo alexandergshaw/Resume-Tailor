@@ -1680,6 +1680,30 @@
   verify_proof: null
   blocked_by: []
 
+- id: "N143"
+  state: "actionable"
+  title: "**OWNER 2026-10-07: add TWO new project-example rows to the interview copilot answer aids (a deliberate, better-architected re-introduction of what N141 removed — must be QUESTION-RELEVANT this time, never a generic process/ops template, or it gets deleted again). ROW 1 = PRE-WARMED pool: when the user tailors/first-engages a posting, generate (model) a small POOL of hypothetical benchmark projects spanning the role's key competencies, STORE keyed to the application; at each question, INSTANTLY select + show the pool project that best corresponds to the question (owner decision: pool, matched per question). ROW 2 = ON-THE-SPOT: a fully idealized hypothetical project generated live per question, async/non-blocking (second, streamed in). Both are HYPOTHETICAL (not the candidate's real projects) and sit beside the existing 'Project to talk about' row in AnswerAids.js (shared across live+history+practice). GROUND MAP (Explore 2026-10-07): no single 'apply' server hook — mirror the application_digests lazy-prewarm+cache idiom; new join table application_project_pool(application_id pk -> applications.id on delete cascade, user_id, projects jsonb, status, engine, timestamps) modeled on 20260817000000_application_digests.sql; prewarm trigger TBD by design (tailor-flow hook vs digest-style lazy on first tracking/copilot load); per-question SELECTION stays fresh (never cache the ranked pick — mirror selectBestStory/buildKnowledgeBaseBlock at answer/route.js:480/:529); on-the-spot gen belongs in the ANSWER route (has applicationId), NOT the question route. QUALITY is the crux (why v1 died): examples must fit the QUESTION's domain/competency (a teaching/curriculum project for a teaching Q, not an ops-metrics story); final content quality is owner/Gemini-env (apply the N135 probe rule). Feature-log per the standing feature-logs rule. Mobile presentation deferred to the N144 overhaul (rows first per owner).**"
+  owed_by: "AC -> architect(1b: table+trigger+selection seam+generation contract)+UX(1c rows) -> check -> plan -> TDD -> implement (migration, prewarm generator+storage, pool fetch+selection, on-the-spot gen, 2 AnswerAids rows, feature log) -> full-suite gate; content quality owner/Gemini-env"
+  evidence: ["Owner 2026-10-07: two rows — pre-warmed-at-apply pool matched per question + on-the-spot idealized; done right (question-relevant)", "Explore 2026-10-07 ground map: application_digests is the persistence template; AnswerAids.js:229 'Project to talk about' is the row precedent; answer/route.js has applicationId + selectBestStory/kb ranking seam"]
+  blocked_reason: null
+  instrument: null
+  owns: null
+  verify: null
+  verify_proof: null
+  blocked_by: []
+
+- id: "N144"
+  state: "actionable"
+  title: "**OWNER 2026-10-07: visual + UX overhaul of the interview copilot page — MINIMIZE clicks, click distance, scroll distance; MOBILE-FIRST (prioritize mobile mode). Scope (owner decision): LIVE copilot + PRACTICE + DASHBOARD. Runs AFTER N143 (rows first) so the overhaul incorporates the two new project rows. GROUND MAP (Explore 2026-10-07): responsive is MUI sx {xs,sm,md} + one JS media query (CopilotClient.js:51 isRailBelowMd); NO mobileSx.js. The structural trap: the bounded live wrapper (CopilotClient.js:709-717) locks the column to a measured viewport height on sm+ during a live session with the dashboard scrolling INSIDE its own overflow:auto container (:873) and a second scroll container for the rail (:904); xs/phone already falls back to normal page scroll (the 'just scroll' escape hatch). Sticky strips (StickyQuestionStrip :690, LiveHearingStrip :674) are hoisted above the wrapper deliberately. Measurement is browser-only (jsdom has no layout — see measurement-instruments); needs the browser pane / owner eyes at phone widths. Click-heavy stacked controls on mobile: SessionSetup/SessionControls/SpeakerBar/ManualQuestion (:733-843). Per minimize-clicks + copilot-mobile standing rules.**"
+  owed_by: "AC -> UX(1c, mobile-first)+architect(1b, the height-lock/scroll-container rework) -> check -> plan -> TDD(declared-value + behavioral; geometry is browser-measured) -> implement -> full-suite gate + browser-pane/owner mobile verification"
+  evidence: ["Owner 2026-10-07: overhaul copilot page, minimize clicks/distance/scroll, mobile-first; live+practice+dashboard", "Explore 2026-10-07: CopilotClient.js:709 height-lock + nested scroll containers is the trap; no mobileSx.js; geometry browser-only"]
+  blocked_reason: null
+  instrument: null
+  owns: null
+  verify: null
+  verify_proof: null
+  blocked_by: ["N143"]
+
 # VERIFICATION (1)
 - id: "V1"
   state: "verification"
