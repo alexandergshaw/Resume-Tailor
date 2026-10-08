@@ -8,6 +8,7 @@ import Button from "@mui/material/Button";
 import Slider from "@mui/material/Slider";
 import TabHeader from "./TabHeader";
 
+import { isDocxResume } from "../../lib/document/docx";
 import { createClient } from "../../lib/supabase/client";
 import styles from "../page.module.css";
 import ProfileListSection from "./applying/ProfileListSection";
@@ -53,10 +54,12 @@ export default function ApplyingControls({
   materials = [],
   materialsBusy,
   materialsError,
+  materialsNotice = "",
   uploadMaterials,
   downloadMaterialFile,
   removeMaterialFile,
   askAiAboutMaterial,
+  markMaterialAsTemplate,
   currentUserPresent,
 }) {
   // The sixth (Ideal) stop appears only while the Ideal-level gate is on.
@@ -348,6 +351,9 @@ export default function ApplyingControls({
         {materialsError ? (
           <Box sx={{ fontSize: "0.78rem", color: "var(--danger)" }}>{materialsError}</Box>
         ) : null}
+        {materialsNotice ? (
+          <Box role="status" sx={{ fontSize: "0.78rem", color: "var(--text-secondary)" }}>{materialsNotice}</Box>
+        ) : null}
         {materials.length > 0 ? (
           <Box sx={{ display: "flex", flexDirection: "column", gap: 0.75 }}>
             {materials.map((item, idx) => (
@@ -382,6 +388,16 @@ export default function ApplyingControls({
                       sx={{ textTransform: "none", fontSize: "0.72rem", minWidth: 0 }}
                     >
                       Ask AI
+                    </Button>
+                  ) : null}
+                  {markMaterialAsTemplate && currentUser && isDocxResume(item) ? (
+                    <Button
+                      size="small"
+                      variant="outlined"
+                      onClick={() => markMaterialAsTemplate(item)}
+                      sx={{ textTransform: "none", fontSize: "0.72rem", minWidth: 0 }}
+                    >
+                      Add to template library
                     </Button>
                   ) : null}
                   <Button

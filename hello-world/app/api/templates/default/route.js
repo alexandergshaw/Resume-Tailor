@@ -6,7 +6,9 @@
 // storage and validates a multipart file, neither of which that helper does.
 //
 // GET  ?kind=resume|cover            -> { hasDefault, updatedAt? }
-// GET  ?kind=resume|cover&bytes=1    -> the stored .docx bytes (or 404) --
+// GET  ?kind=resume|cover&bytes=1    -> the ACTIVE template's .docx bytes (or
+//   404): the caller's selected library template, else their reserved
+//   default (lib/document/templateSelectionStore.js getActiveTemplateBytes) --
 //   the Step-3 client resolver's read path (lib/document/defaultTemplateClient.js),
 //   routed through the server so it reuses this route's auth + RLS-scoped
 //   client rather than a second, separately-authorized storage call.
@@ -21,9 +23,9 @@ import { DOCX_MIME } from "@/lib/drive/driveMime";
 import {
   saveDefaultTemplate,
   getDefaultTemplate,
-  getDefaultTemplateBytes,
   clearDefaultTemplate,
 } from "@/lib/document/defaultTemplateStore.js";
+import { getActiveTemplateBytes } from "@/lib/document/templateSelectionStore.js";
 
 export const runtime = "nodejs";
 
@@ -44,7 +46,7 @@ export async function GET(request) {
 
   if (url.searchParams.get("bytes") === "1") {
     if (!VALID_KINDS.includes(kind)) return new Response(null, { status: 404 });
-    const found = await getDefaultTemplateBytes(supabase, { userId: user.id, kind });
+    const found = await getActiveTemplateBytes(supabase, { userId: user.id, kind });
     if (!found) return new Response(null, { status: 404 });
     return new Response(found.bytes, { status: 200, headers: { "Content-Type": DOCX_MIME } });
   }

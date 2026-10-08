@@ -979,10 +979,12 @@ export default function Home() {
     materials,
     materialsBusy,
     materialsError,
+    materialsNotice,
     uploadMaterials,
     downloadMaterialFile,
     removeMaterialFile,
     askAiAboutMaterial,
+    markMaterialAsTemplate,
   } = useMaterialsLocker({ currentUser, chat });
 
   // Per-field copy helper for references / education TextFields.
@@ -2650,10 +2652,12 @@ export default function Home() {
           materials={materials}
           materialsBusy={materialsBusy}
           materialsError={materialsError}
+          materialsNotice={materialsNotice}
           uploadMaterials={uploadMaterials}
           downloadMaterialFile={downloadMaterialFile}
           removeMaterialFile={removeMaterialFile}
           askAiAboutMaterial={askAiAboutMaterial}
+          markMaterialAsTemplate={markMaterialAsTemplate}
           currentUserPresent={!!currentUser}
           renderCopyButton={renderCopyButton}
         />

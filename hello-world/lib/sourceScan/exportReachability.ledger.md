@@ -21,12 +21,12 @@ Current pinned values, as of the last entry in each section:
 | `ALLOWED_UNREACHABLE_MODULES.length`        | 14     |
 | `UNWIRED_MODULES` (exact list of 5 files)   | 5      |
 | `ORPHAN_EXPORTS.length`                     | 65     |
-| `TEST_REFERENCED.length` (rule TR-1)        | 422    |
-| `UNUSED_IN_SHIPPING_MODULES.length`         | 487    |
+| `TEST_REFERENCED.length` (rule TR-1)        | 423    |
+| `UNUSED_IN_SHIPPING_MODULES.length`         | 488    |
 
 The identity that ties the last three together, and that the test asserts
 directly, is `UNUSED_IN_SHIPPING_MODULES = TEST_REFERENCED + ORPHANS`
-(422 + 65 = 487).
+(423 + 65 = 488).
 
 ---
 
@@ -182,7 +182,7 @@ it.
 
 ---
 
-## 4. TEST_REFERENCED, rule TR-1 (pinned at 422)
+## 4. TEST_REFERENCED, rule TR-1 (pinned at 423)
 
 Exports unused by shipping code that at least one `.test.js` imports BY NAME.
 A raise is a review event: check the new export is a helper being pinned, not
@@ -635,11 +635,27 @@ the sweep's own scan (exportReachability.scan.js) over the post-wire tree and
 classifying every export of the ten new modules (seven under lib/copilot, the two
 routes, useTechTermDetails.js) and the files the feature edited; the twelve names above
 are the complete symmetric difference against the N149 baseline.
+
+N151a: 422 -> 423 (+1, -0): the template library store and the mark-from-materials
+control. IN (+1), by name: lib/document/templateSelectionStore.js#getSelection, the
+read of a user's (user_id, kind) selection row. It is called only from inside its own
+module in production (getActiveTemplateBytes resolves the selection through it) and
+is pinned by name by templateSelectionStore.test.js; the library GET route does not
+read it yet -- the N151b switcher is its first shipping consumer, so it is a widened
+surface awaiting that chunk, not a dead one. Every other export the chunk added has a
+shipping importer and is in neither bucket: setSelection (library route), and
+getActiveTemplateBytes (default route), listTemplates / registerTemplate /
+deleteTemplate (library route), registerTemplateFromBytes (useMaterialsLocker.js), and
+the new routes' GET / POST / DELETE (Next.js entries). No new module is unreachable:
+ALLOWED_UNREACHABLE_MODULES and UNWIRED_MODULES unmoved at 14 and 5. ORPHAN_EXPORTS
+unmoved at 65. Measured by running the sweep's own scan (exportReachability.scan.js)
+over the post-change tree and listing every export of the three new lib modules; the
+one name above is the complete symmetric difference against the N150 baseline.
 ```
 
 ---
 
-## 5. UNUSED_IN_SHIPPING_MODULES total (pinned at 487)
+## 5. UNUSED_IN_SHIPPING_MODULES total (pinned at 488)
 
 The sum of the two halves above (`TEST_REFERENCED + ORPHANS`); the test also
 asserts that identity directly, so the split is pinned and not only the total.
@@ -806,4 +822,9 @@ techTermDetailHonesty.js x2, techTermDetailStore.js x2, techTermsLive.js x2;
 ORPHAN_EXPORTS unmoved at 65). The total moving by exactly the TR-1 half's +12 with the
 orphan half frozen is what says this was a widened export surface for unit suites and
 not a feature built and never wired. TEST_REFERENCED 422 + ORPHANS 65.
+N151a: 487 -> 488 (TEST_REFERENCED's +1, templateSelectionStore.js#getSelection, named at
+section 4; ORPHAN_EXPORTS unmoved at 65). The total moving by exactly the TR-1 half's +1
+with the orphan half frozen is what says this was a widened export surface for a unit
+suite (its N151b consumer is the switcher) and not a feature built and never wired.
+TEST_REFERENCED 423 + ORPHANS 65.
 ```

@@ -1,7 +1,8 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { triggerBlobDownload } from "../../lib/document/docx";
+import { useEffect, useRef, useState } from "react";
+import { isDocxResume, triggerBlobDownload } from "../../lib/document/docx";
+import { registerTemplateFromBytes } from "../../lib/document/templateLibraryClient";
 import { createClient } from "../../lib/supabase/client";
 import {
   listMaterials,
@@ -30,6 +31,10 @@ export function useMaterialsLocker({ currentUser, chat }) {
   const [materials, setMaterials] = useState([]);
   const [materialsBusy, setMaterialsBusy] = useState(false);
   const [materialsError, setMaterialsError] = useState("");
+  // A short-lived success line for "Add to template library" (the only locker
+  // action whose success has no other visible effect).
+  const [materialsNotice, setMaterialsNotice] = useState("");
+  const markingTemplate = useRef(false);
 
   // ── Supplementary materials locker ────────────────────────────────────────
   // Load the user's stored materials on sign-in.
@@ -134,13 +139,59 @@ export function useMaterialsLocker({ currentUser, chat }) {
     }
   }
 
+  // Add a .docx material to the template library and make it the active
+  // template for résumés (N151a): the copy, the .docx validation and the
+  // activation all happen in one request to /api/templates/library, so this is
+  // one click. A non-.docx item is a no-op (the control is absent for it too).
+  // The template is named after the file, minus ".docx".
+  async function markMaterialAsTemplate(item) {
+    if (!item || !isDocxResume(item) || markingTemplate.current) return;
+    setMaterialsError("");
+    setMaterialsNotice("");
+    if (!currentUser) {
+      setMaterialsError("Sign in to save templates.");
+      return;
+    }
+    markingTemplate.current = true;
+    try {
+      let blob = item.source === "local" && item.file ? item.file : null;
+      if (!blob) {
+        const supabase = createClient();
+        const fetched = await downloadMaterialBlob(supabase, currentUser.id, item.name);
+        if (fetched.error || !fetched.blob || fetched.blob.size === 0) {
+          setMaterialsError(fetched.error || "Could not load that file.");
+          return;
+        }
+        blob = fetched.blob;
+      }
+      const name = item.name.replace(/\.docx$/i, "");
+      const outcome = await registerTemplateFromBytes({ kind: "resume", name, blob });
+      if (!outcome.ok) {
+        setMaterialsError(outcome.error);
+        return;
+      }
+      setMaterialsNotice(
+        outcome.selected
+          ? `Added "${name}" to your template library. New résumés will use it.`
+          : `Added "${name}" to your template library, but it couldn't be set as your active template.`,
+      );
+      setTimeout(() => setMaterialsNotice(""), 6000);
+    } catch (err) {
+      setMaterialsError(err?.message || "Could not add that file to your template library.");
+    } finally {
+      markingTemplate.current = false;
+    }
+  }
+
   return {
     materials,
     materialsBusy,
     materialsError,
+    materialsNotice,
     uploadMaterials,
     downloadMaterialFile,
     removeMaterialFile,
     askAiAboutMaterial,
+    markMaterialAsTemplate,
   };
 }
