@@ -444,7 +444,10 @@ describe("the whole tree really is tokenisable -- the header's claim, as a gate"
       }
     }
     expect(refused, "tokenizeSource refused a real file -- teach it the shape or fix the file").toEqual([]);
-  });
+    // Whole-tree scan over every app/ and lib/ .js file; the tree grew enough
+    // this cycle (copilot rows, templates, tracking split) that 5s is too tight
+    // under full-suite load. Behavior unchanged — only the per-test budget.
+  }, 30000);
 
   it("keeps both views byte-aligned with the source for every file", () => {
     const bad = [];
@@ -456,7 +459,8 @@ describe("the whole tree really is tokenisable -- the header's claim, as a gate"
       }
     }
     expect(bad).toEqual([]);
-  });
+    // Same whole-tree scan; same reason for the raised per-test budget.
+  }, 30000);
 
   it("leaves no file whose nested templates hide its own exports", () => {
     // The generalised form of the docx.js defect: for every PRODUCTION file,
