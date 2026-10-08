@@ -16,6 +16,10 @@
 
 `FILLER_RATE_CLEAN_MAX` (1) and `FILLER_RATE_HEAVY_MIN` (5) are inclusive at both ends, deliberately unlike `paceLabelFor`'s strict `<`/`>` — the names say so, and a comment says not to "fix" the inconsistency. They are deliberately NOT `critiqueLocal.js`'s `FILLER_RATE_GOOD_PCT`/`FILLER_RATE_BAD_PCT`: those two are endpoints of a continuous score ramp, these two are boundaries of a label a person reads, and merging them would force one pair of numbers to do two jobs.
 
+**Amendment to R-139 — practice mode was never wired to the filler reading.** `PracticeClient` destructured `pace` but not `fillers` and passed no `fillers` prop, so `DeliveryPanel` rendered "filler: not measured yet" permanently in the mode where a candidate actually rehearses delivery — contradicting the shared-panel guarantee `CopilotDashboard.js`'s own header states. Both clients now pass it.
+
+**Amendment to R-139 — `computeLiveFillers` could report `NaN` as a measured reading.** Summing a sample whose `fillers` is not finite produced `{ fillerCount: NaN, fillerRate: NaN, fillerLabel: "noticeable", measured: true }`, because `fillerLabelFor(NaN)` falls through both comparisons — the UI would render "NaN% filler" beside "Some filler". Unreachable today (`appendSpeechSample` always sets the field), but the module's stated posture is that a signal it cannot measure is reported as unmeasured and never as a plausible number, so a non-finite sample now contributes nothing.
+
 ### R-142 | area: copilot-live | parallel-safe: no | automatable: no
 
 **Summary:** Live mode fits a half-width window without scrolling the page, and its height is measured rather than predicted.
@@ -39,6 +43,8 @@ The pre-session setup block is extracted into `app/copilot/SessionSetup.js` — 
 Every prior behaviour is preserved: the consent alert stays dismissible, the posting-grounding notice stays ungated by it (BUG-H4), the audio-source and microphone pickers keep their disabled-while-live rule (AC-I1.7), and the question feed still exists (AC-I5.30).
 
 **Known follow-up, not yet done:** practice mode must get the identical shell. Both clients are already decomposed along the same seams (`SessionSetup`/`PracticeSetup`, and the two controls rows), so the layout itself should be extracted into one shared component with slots rather than built twice — `AnswerAids.js`'s own header records what happens otherwise, and `cleanAnswerPoints` was extracted only after its two copies had already diverged. `CopilotClient.js` is at 990 lines against the 1000 gate and `PracticeClient.js` at 954; that extraction is also what brings both back down.
+
+**Amendment to R-142 — the measured height was viewport-relative.** `getBoundingClientRect().top` is measured from the viewport, so the `calc` was only correct at `scrollY === 0`, and the `ResizeObserver` on `document.body` can fire at ANY scroll position — an alert appearing, the history disclosure expanding. At a non-zero scroll the column was sized taller than the viewport, reintroducing exactly the page scrolling this layout removes, and with no scroll listener the wrong value persisted until the next resize. It now measures `rect.top + window.scrollY`, the wrapper's document-relative offset, which does not change with scroll — so no scroll listener is warranted, and adding one would be pure cost.
 
 ### R-216 | area: copilot-live | parallel-safe: yes | automatable: partly
 

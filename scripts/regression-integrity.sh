@@ -38,7 +38,7 @@ S=34000                        # split threshold: a maintenance trigger, not a f
 GRANDFATHERED_BASELINE=25      # partly cases with no per-step manual marker - must not increase
 YES_MANUAL_SMELL_BASELINE=13   # automatable:yes, no marker, steps smell of a browser/app/devtools - must not increase
 YES_WITH_MARKER_BASELINE=1     # automatable:yes cases that self-contradict with a manual marker (R-220) - must not increase
-GAP_IDS="103 104 105 112 115 166"   # retired IDs that must stay gaps forever
+GAP_IDS="103 104 105 112 115 130 135 137 138 140 143 166"   # retired IDs that must stay gaps forever
 
 fail=0
 

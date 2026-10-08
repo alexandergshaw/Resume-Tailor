@@ -32,19 +32,6 @@ Fixing it needs deterministic topical relatedness, and the two obvious sources d
 
 `gateHeaderPair` is exported alongside `resumeAnchor` for one specific reason: `parseHeader` splits every segment on `,\s+`, so a comma-bearing company like "Acme, Inc." can never reach `resumeAnchor`'s output as one string and no résumé fixture can route it through. Asserting the gate's own verdict on that literal is the only way to pin that a real comma-bearing employer is not rejected.
 
-### R-135 | area: sample-answer | parallel-safe: yes | automatable: yes
-
-**Summary:** The benchmark names a kind of project in a sentence, and never quotes a figure out of the posting.
-
-**Steps:**
-1. From `hello-world`, run `npx vitest run lib/copilot/idealProjectMetrics.test.js lib/copilot/idealProject.test.js`.
-
-**Expected:** All tests pass. **Every entry in `metrics` is asserted to contain no digit at all** — not "no fabricated digit", no digit. A posting stating "Salary range: $78,496.00 - $105,974.00" (and restating it as "$78,496 - $105,974") produces metric categories only; the salary, the "5+ years" experience floor and the "12 campuses" headcount are all absent, in every form. `MAX_METRICS` is 3 and entries never repeat.
-
-The reasoning matters more than the assertion, because the deleted code was defensible and still wrong. `POSTING_NUMBER_RE` was built so that every number shown was structurally guaranteed to be the posting's own — never fabricated — which is the same discipline that keeps `project` honest. But grounding a number does not make it a METRIC: a posting's digits are its compensation, its experience floor and its headcount, and it essentially never states a metric from a project a candidate should describe, so there is nothing there to mine and no regex that could tell the difference if there were. Mining is deleted rather than filtered, and the module now never reads a number out of the posting at all.
-
-`summary` is one advisory sentence built from the same shape terms — "They want a project built around X, Y and Z, owned end to end, with a measurable outcome." — joined as ordinary prose rather than as a second rendering of the comma-separated `shape`. It is asserted to carry no first-person pronoun, for the same reason the rest of this block is third person: it describes work the candidate did NOT do, sitting next to a real quote from their own résumé. The `null` contract is unchanged — blank/non-string description, taxonomy failure, or zero surviving shape terms means no block at all.
-
 ### R-136 | area: sample-answer | parallel-safe: yes | automatable: no
 
 **Summary:** The reading aids under a drafted answer read as one organised thing, in two groups, with the candidate's own material first.
@@ -66,19 +53,4 @@ The buzzword `ul` carries an explicit `role="list"`. This is NOT redundant and m
 The group divider carries `role="separator"` and is **decorative reinforcement only — it does not carry the grouping.** Measured contrast against `--bg-soft` is 1.28:1 in both themes, and `--border-strong` only reaches 1.76:1, so it cannot meet WCAG 1.4.11's 3:1 floor and must never be treated as a meaningful graphical object. The grouping is carried by the row labels, each of which already names whose material it is ("Closest role on your resume", "Words from the posting to work in"). Do not "fix" the divider's colour under the impression it is load-bearing; if the grouping ever needs to be programmatic, give the lists accessible names instead.
 
 **Known limitation, accepted deliberately:** `display: grid` on a `<dl>` can drop the description-list role in WebKit, and this component IS reachable in Safari via practice mode — the earlier justification that only Chrome and Edge matter was simply wrong, since that constraint belongs to live mode's `getDisplayMedia` capture, not to this component. The limitation is benign: no text depends on the role, labels remain visible text immediately before their values in DOM order, and the content is complete and correctly ordered either way. Moving the grid off the `dl` would require wrapping each pair in a `div`, which breaks column alignment across rows.
-
-### R-137 | area: sample-answer | parallel-safe: yes | automatable: yes
-
-**Summary:** The metric categories offered for a posting come from the bucket that best fits it, not the first one that matches a single word.
-
-**Steps:**
-1. From `hello-world`, run `npx vitest run lib/copilot/idealProject.test.js lib/copilot/idealProjectMetrics.test.js`.
-
-**Expected:** All tests pass. A "Senior Product Manager, Education Technology" posting returns product metrics (`adoption rate`, `user satisfaction / NPS`, `time-to-ship`) and NOT `latency reduction %`. An infrastructure-heavy posting still returns the infrastructure metrics — the fix must not simply invert the bug — and a posting matching no bucket still falls through to `GENERIC_METRICS`.
-
-`categoryMetrics` used to walk `METRIC_BUCKETS` in DECLARATION ORDER and return as soon as it filled its quota. The infrastructure bucket is declared first and its pattern matches the single word "platform", so the posting above — which says "product manager" twice plus "product experience", "classroom" and "student", against exactly one incidental "platform" — was told to have latency and uptime figures ready. A candidate who prepares those for that interview has prepared the wrong thing. First-match-wins was silently doing the job a fit comparison should do.
-
-Buckets are now scored by HOW MANY distinct matches their pattern finds in the posting, so one incidental word loses to five real ones; zero-scoring buckets are still skipped, ties break on declaration order so output stays deterministic, and `GENERIC_METRICS` still only tops up a short list. Which words each bucket recognises is unchanged. The R-135 contract is untouched and still asserted alongside this: no metric contains a digit, and nothing is read out of the posting's own numbers.
-
-This is the third distinct way this one block has produced unhelpful output — the salary band (R-135), the term-list echo (R-130), and now the wrong domain entirely. The pattern worth carrying forward: a block that assembles advice from a taxonomy needs a test with a REALISTIC posting for a NON-default domain, because every failure here looked correct against the infrastructure-flavoured fixtures the module was originally written with.
 

@@ -183,9 +183,9 @@ below records, for every file, which area it holds and which case IDs are in it.
 | preview-concurrency | `docs/regression/preview-concurrency.md` | 5 | R-011-014, R-027 |
 | regression-process | `docs/regression/regression-process.md` | 3 | R-260, R-381, R-383 |
 | responsive-contract | `docs/regression/responsive-contract.md` | 3 | R-299-301 |
-| sample-answer | `docs/regression/sample-answer.md` | 13 | R-082-083, R-087-089, R-097, R-117-120, R-130-132 |
-| sample-answer | `docs/regression/sample-answer-2.md` | 5 | R-133-137 |
-| sample-answer | `docs/regression/sample-answer-3.md` | 4 | R-138, R-140, R-143, R-298 |
+| sample-answer | `docs/regression/sample-answer.md` | 12 | R-082-083, R-087-089, R-097, R-117-120, R-131-132 |
+| sample-answer | `docs/regression/sample-answer-2.md` | 3 | R-133-134, R-136 |
+| sample-answer | `docs/regression/sample-answer-3.md` | 1 | R-298 |
 | shared-text | `docs/regression/shared-text.md` | 1 | R-251 |
 | sticky-question-strip | `docs/regression/sticky-question-strip.md` | 3 | R-313-314, R-320 |
 | sticky-stats-row | `docs/regression/sticky-stats-row.md` | 6 | R-315-319, R-321 |

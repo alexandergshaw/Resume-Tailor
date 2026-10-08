@@ -115,26 +115,6 @@ With nothing to build from — no posting selected, no submitted résumé, no pr
 
 **Amended (group L):** the "degrades to absent" half of this case has a second, much commoner trigger than "nothing to build from": a posting IS selected and its documents ARE loaded, but nothing in it relates to the question being answered, so `buzzwords` is `[]`. That state is now ordinary rather than exceptional, and the route-level case asserts it directly — not only the everything-missing case this was originally written for.
 
-### R-130 | area: sample-answer | parallel-safe: yes | automatable: yes
-
-**Summary:** The ideal-project benchmark can never be lifted into an answer as a claim, and never states a number the posting did not.
-
-**Steps:**
-1. From `hello-world`, run `npx vitest run lib/copilot/idealProject.test.js app/api/copilot/answer/route.test.js`.
-2. Read the ideal-project block in `hello-world/app/copilot/AnswerAids.js`.
-
-**Expected:** All tests pass. This block describes work the candidate did NOT do — that is its purpose, and it is the only part of the sample-answer panel with that property. Everything about it exists to stop a candidate reading it under interview pressure and claiming it out loud, which is the failure R-087 exists to prevent, arriving from a new direction.
-
-`idealProject` emits no digit sequence that is not literally present in the posting: the numbers it shows ("5+ years", "2M requests") are the posting's own, and everything else is a metric CATEGORY ("latency reduction %", "uptime / reliability %") — a kind of number to have ready, never a fabricated figure. Terms in `shape` survive the same `literallyMentioned` filter `postingBuzzwords` uses, so a taxonomy inference the posting never wrote can never appear. Blank, missing or non-string input returns `null`, so no posting selected renders no block at all rather than an empty header. Output is deterministic.
-
-The rendered wording is third person throughout — "Roles like this look for:" and "Metrics to have ready:" — and is asserted to contain no first-person pronoun. It carries the accent treatment `PredictionPanel` uses (`var(--accent)` border, `var(--accent-soft)` background) plus a "Benchmark, not from your resume" chip, NOT the plain description-list styling the résumé-derived rows use. That visual separation is load-bearing, not decoration: it sits directly beside "Project to talk about", which is quoted from the candidate's real résumé, and a user glancing mid-interview must never mistake one for the other (the same argument as AC-I3.20). The chip deliberately carries no em dash — an em dash is not spoken at default screen-reader punctuation, so the contrast it was carrying would be lost.
-
-**Amended (group L) — two of the three claims above no longer hold, and one is now stronger.**
-
-1. **Posting numbers are gone entirely.** "The numbers it shows ('5+ years', '2M requests') are the posting's own" was the bug, not the safeguard. A user's posting stated "Salary range:78,496.00 -105,974.00" twice in two formats, and the block rendered `Metrics to have ready:78,496, $105,974, $78,496.00, $105,974.00` — the SALARY BAND, four times over (the dedupe key was the exact string), consuming the whole `MAX_METRICS` budget so the real categories were never reached. The grounding argument was sound and the conclusion was still wrong: a posting's digits are its salary, its years-of-experience floor and its headcount, and no regex separates those from a project metric because postings do not state project metrics. `POSTING_NUMBER_RE` and `postingNumbers` are deleted; `metrics` is now category phrases only and is asserted to contain **no digit at all**. `MAX_METRICS` is 3. See R-135.
-2. **The accent box and the chip are gone.** The visual-separation ARGUMENT is unchanged and still load-bearing; what changed is where the disclosure lives. It moved into the row's own `dt`, which now reads "Ideal project — not from your resume". That is strictly stronger than the chip it replaces: it is permanent, it cannot be scrolled past as decoration, and a screen reader announces it as the TERM the value belongs to rather than as a stray label inside the value. The row keeps a single `2px` left rule in `var(--accent)`, and colour still never carries the meaning alone (WCAG 1.4.1) — the label text does. The accent-tinted box was one of four competing visual languages in a component the user described as "all over the place"; see R-136.
-3. **`shape` is joined by a new `summary` sentence.** `shape` alone restated the buzzword chips two rows above it, which is why the user's verdict on this block was "there's no substance to the project section". The advisory sentence is still third person and still asserted to carry no first-person pronoun.
-
 ### R-131 | area: sample-answer | parallel-safe: yes | automatable: yes
 
 **Summary:** Every phrase shown to the candidate is a contiguous fragment of ONE source line — word membership is not enough.
