@@ -1,11 +1,11 @@
 "use client";
 
+import { useCallback, useMemo } from "react";
 import Alert from "@mui/material/Alert";
 import Box from "@mui/material/Box";
 import Button from "@mui/material/Button";
 import IconButton from "@mui/material/IconButton";
 import TextField from "@mui/material/TextField";
-import Chip from "@mui/material/Chip";
 import Tooltip from "@mui/material/Tooltip";
 import CircularProgress from "@mui/material/CircularProgress";
 import TableContainer from "@mui/material/TableContainer";
@@ -18,18 +18,15 @@ import TableSortLabel from "@mui/material/TableSortLabel";
 import Typography from "@mui/material/Typography";
 import { resolveDocumentBlob } from "../../lib/document/docx";
 import { digestSummaryLine } from "../../lib/tracking/applicationDigest";
-import { hasPreviewableDocs } from "../../lib/tracking/applicationPreviewEntry";
+import { indexApplicationsById } from "../../lib/tracking/trackingRows";
 import DescriptionIcon from "@mui/icons-material/Description";
 import TabHeader from "./TabHeader";
 import EmptyState from "./EmptyState";
 import styles from "../page.module.css";
 import { useIsTablet } from "../hooks/useResponsive";
+import { useStableHandlers } from "../hooks/useStableHandlers";
 import { TOUCH_ICON_SX, TOUCH_FIELD_SX, TOUCH_NATIVE_SELECT_SX, TOUCH_TARGET_SX } from "@/app/theme/mobileSx";
-import {
-  STAGE_TYPE_LABELS,
-  createStageDialogState,
-  formatDateTimeLocalInputValue,
-} from "../../lib/tracking/stages";
+import { createStageDialogState, formatDateTimeLocalInputValue } from "../../lib/tracking/stages";
 import StageDialog from "./StageDialog";
 import CommunicationsDialog from "./CommunicationsDialog";
 import AddCommunicationDialog from "./AddCommunicationDialog";
@@ -37,8 +34,8 @@ import EditAppDialog from "./EditAppDialog";
 import AddAppDialog from "./AddAppDialog";
 import AppViewDialog from "./AppViewDialog";
 import ApplicationCard from "./tracking/ApplicationCard";
+import ApplicationRow from "./tracking/ApplicationRow";
 import GmailConnectionNotice from "./tracking/GmailConnectionNotice";
-import { safeExternalHref } from "@/lib/url/safeExternalHref";
 
 // AC-K4: options for the compact (<900px) card layout's sort control, which
 // covers the same four fields as the desktop table's TableSortLabels plus
@@ -55,6 +52,53 @@ const SORT_FIELD_OPTIONS = [
   { value: "applied_at:asc", label: "Applied (oldest first)" },
   { value: "applied_at:desc", label: "Applied (newest first)" },
 ];
+
+// Fixed-identity defaults for the optional props. A `= {}` in the signature
+// is a NEW object on every render the prop is omitted, which would change
+// `renderDigestCell`'s identity (it depends on digestsById) and with it every
+// memoized row and card's props.
+const NO_DIGESTS = {};
+const NO_CLASSIFICATIONS = {};
+
+// The event handlers the memoized rows and cards call. app/page.js recreates
+// most of these on every render (inline closures, and hooks that return fresh
+// functions), so they are not passed down as-is: useStableHandlers hands the
+// rows one fixed-identity forwarder per name, each calling the latest
+// function. EVENT-TIME handlers only -- anything a row calls while RENDERING
+// (isDocxResume) is passed straight through; see useStableHandlers.
+const STABLE_HANDLER_NAMES = [
+  "setAppDialog",
+  "setStageError",
+  "setStageDialog",
+  "openCommsInAppDialog",
+  "openAddCommunicationDialog",
+  "askAiAbout",
+  "buildApplicationContextString",
+  "buildStageContextString",
+  "openEditApplicationDialog",
+  "openApplicationPreview",
+  "handleDeleteApplication",
+  "downloadDocxFiles",
+  "getDownloadFileNameForTitle",
+  "researchOne",
+];
+
+// The digest cell's button sx, fixed so a cell render does not rebuild them.
+const RESEARCHING_BUTTON_SX = { ...TOUCH_TARGET_SX, p: 0, minWidth: 0, fontSize: 11, opacity: 0.6, cursor: "default" };
+const RETRY_BUTTON_SX = { ...TOUCH_TARGET_SX, p: 0, minWidth: 0, fontSize: 11 };
+const RESEARCH_BUTTON_SX = { ...TOUCH_TARGET_SX, fontSize: 11 };
+const DIGEST_SUMMARY_SX = {
+  ...TOUCH_TARGET_SX,
+  p: 0,
+  minWidth: 0,
+  fontSize: 12,
+  textAlign: "left",
+  textTransform: "none",
+  display: "-webkit-box",
+  WebkitLineClamp: 2,
+  WebkitBoxOrient: "vertical",
+  overflow: "hidden",
+};
 
 export default function TrackingTab({
   currentUser,
@@ -119,18 +163,70 @@ export default function TrackingTab({
   appDialog,
   loadCommunicationsForApp,
   highlightedAppId,
-  emailClassificationsByAppId = {},
+  emailClassificationsByAppId = NO_CLASSIFICATIONS,
   // Gmail connection state for the applications surface - see
   // app/hooks/useGmailMessages.js. null = connected/ok/not-yet-checked.
   gmailConnection = null,
   // Company & role research column - see app/hooks/useApplicationDigests.js.
-  digestsById = {},
+  digestsById = NO_DIGESTS,
   researchingIds,
   researchOne,
 }) {
   // Below the `md` breakpoint the dense data table is unusable, so the rows are
   // rendered as stacked cards instead (set in Phase 3 of the responsive work).
   const isCompact = useIsTablet();
+
+  // Fixed-identity forwarders for the handlers the memoized rows and cards
+  // call (see STABLE_HANDLER_NAMES): a page re-render that changes none of a
+  // row's data no longer re-renders the row.
+  const h = useStableHandlers(
+    {
+      setAppDialog,
+      setStageError,
+      setStageDialog,
+      openCommsInAppDialog,
+      openAddCommunicationDialog,
+      askAiAbout,
+      buildApplicationContextString,
+      buildStageContextString,
+      openEditApplicationDialog,
+      openApplicationPreview,
+      handleDeleteApplication,
+      downloadDocxFiles,
+      getDownloadFileNameForTitle,
+      researchOne,
+    },
+    STABLE_HANDLER_NAMES,
+  );
+  // View/Edit exists only where the caller wired the opener (a caller that
+  // does not gets no control rather than one that throws on click), so the
+  // forwarder is passed down only when there is something to forward to.
+  const previewOpener = typeof openApplicationPreview === "function" ? h.openApplicationPreview : undefined;
+
+  // application id -> its index in applicationData, built once per data change
+  // instead of a findIndex scan per visible row (that scan was O(n^2) a render).
+  const indexById = useMemo(() => indexApplicationsById(applicationData), [applicationData]);
+
+  // A desktop row's stage chip: open the stage dialog on that stage. Lives here
+  // rather than in ApplicationRow.js so the row stays a pure view of its props
+  // and this file keeps owning the dialog it feeds. A useCallback of fixed
+  // identity (its only dependency is the stable bundle) so passing it to a
+  // memoized row costs nothing.
+  const openStageDialog = useCallback((app, stage) => {
+    h.setStageError("");
+    h.setStageDialog(createStageDialogState({
+      open: true,
+      applicationId: app.id,
+      stageId: stage.id,
+      stageName: stage.stage_name || "",
+      stageType: stage.stage_type || "phone_screen",
+      scheduledAt: formatDateTimeLocalInputValue(stage.scheduled_at),
+      durationMinutes: stage.duration_minutes ? String(stage.duration_minutes) : "",
+      outcome: stage.outcome || "pending",
+      interviewerNames: (stage.interviewer_names || []).join(", "),
+      notes: stage.notes || "",
+    }));
+  }, [h]);
 
   // The single decision tree for the digest cell, shared by the desktop
   // table cell and the phone card block below - two render call sites for
@@ -139,7 +235,12 @@ export default function TrackingTab({
   // with an onClick: the row itself has an onClick that opens the edit
   // dialog, guarded on `e.target.closest("a, button, ...")`, so anything
   // that renders as something else gets swallowed by the row click.
-  function renderDigestCell(app, idx) {
+  //
+  // A useCallback, not a per-render function: it is handed to every memoized
+  // row and card, so a new identity each render would re-render them all. It
+  // changes exactly when a digest or the researching set does, which is when
+  // a cell's output can change.
+  const renderDigestCell = useCallback((app, idx) => {
     const digest = digestsById[app.id];
     const researching = !!researchingIds?.has?.(app.id);
     const captionId = `digest-caption-${app.id}`;
@@ -152,7 +253,7 @@ export default function TrackingTab({
             aria-disabled="true"
             aria-describedby={captionId}
             onClick={() => {}}
-            sx={{ ...TOUCH_TARGET_SX, p: 0, minWidth: 0, fontSize: 11, opacity: 0.6, cursor: "default" }}
+            sx={RESEARCHING_BUTTON_SX}
           >
             Researching…
           </Button>
@@ -177,19 +278,8 @@ export default function TrackingTab({
           {stale ? (
             <Button
               size="small"
-              onClick={() => setAppDialog({ open: true, rowIndex: idx, kind: "digest" })}
-              sx={{
-                ...TOUCH_TARGET_SX,
-                p: 0,
-                minWidth: 0,
-                fontSize: 12,
-                textAlign: "left",
-                textTransform: "none",
-                display: "-webkit-box",
-                WebkitLineClamp: 2,
-                WebkitBoxOrient: "vertical",
-                overflow: "hidden",
-              }}
+              onClick={() => h.setAppDialog({ open: true, rowIndex: idx, kind: "digest" })}
+              sx={DIGEST_SUMMARY_SX}
             >
               {stale}
             </Button>
@@ -203,7 +293,7 @@ export default function TrackingTab({
           {/* researchOne is always passed by app/page.js (see useApplicationDigests) —
               call it directly so a future wiring regression throws instead of
               silently no-opping the button. */}
-          <Button size="small" sx={{ ...TOUCH_TARGET_SX, p: 0, minWidth: 0, fontSize: 11 }} onClick={() => researchOne(app.id)}>
+          <Button size="small" sx={RETRY_BUTTON_SX} onClick={() => h.researchOne(app.id)}>
             Retry
           </Button>
         </Box>
@@ -215,19 +305,8 @@ export default function TrackingTab({
       return (
         <Button
           size="small"
-          onClick={() => setAppDialog({ open: true, rowIndex: idx, kind: "digest" })}
-          sx={{
-            ...TOUCH_TARGET_SX,
-            p: 0,
-            minWidth: 0,
-            fontSize: 12,
-            textAlign: "left",
-            textTransform: "none",
-            display: "-webkit-box",
-            WebkitLineClamp: 2,
-            WebkitBoxOrient: "vertical",
-            overflow: "hidden",
-          }}
+          onClick={() => h.setAppDialog({ open: true, rowIndex: idx, kind: "digest" })}
+          sx={DIGEST_SUMMARY_SX}
         >
           {summary}
         </Button>
@@ -238,11 +317,11 @@ export default function TrackingTab({
       // researchOne is always passed by app/page.js (see useApplicationDigests) —
       // call it directly so a future wiring regression throws instead of
       // silently no-opping the button.
-      <Button size="small" variant="outlined" sx={{ ...TOUCH_TARGET_SX, fontSize: 11 }} onClick={() => researchOne(app.id)}>
+      <Button size="small" variant="outlined" sx={RESEARCH_BUTTON_SX} onClick={() => h.researchOne(app.id)}>
         Research
       </Button>
     );
-  }
+  }, [digestsById, researchingIds, h]);
 
   // AC-K2: the desktop-only (>=900px) download affordance for a row's
   // tailored resume. Used to be a hand-rolled `<span role="button" tabIndex
@@ -263,7 +342,10 @@ export default function TrackingTab({
   // carry both fine. The <900px card branch (renderDigestCell's caller
   // above) already renders a real `<Button>Download</Button>` and is
   // untouched by this.
-  function renderDownloadControl(pos, resume) {
+  //
+  // A useCallback for the same reason as renderDigestCell: the desktop rows
+  // take it as a prop, so it changes identity only when the resume file does.
+  const renderDownloadControl = useCallback((pos, resume) => {
     const downloadUnavailable = !resumeFile || !isDocxResume(resumeFile);
     const downloadTitle = !resumeFile
       ? "Upload your source resume (.docx) to enable downloads."
@@ -292,7 +374,7 @@ export default function TrackingTab({
                   uploadedTemplate: resumeFile,
                 });
                 if (!blob) return;
-                const file = new File([blob], getDownloadFileNameForTitle(pos?.title, pos?.company), { type: "application/vnd.openxmlformats-officedocument.wordprocessingml.document" });
+                const file = new File([blob], h.getDownloadFileNameForTitle(pos?.title, pos?.company), { type: "application/vnd.openxmlformats-officedocument.wordprocessingml.document" });
                 e.dataTransfer.clearData();
                 e.dataTransfer.effectAllowed = "copy";
                 e.dataTransfer.setData("application/vnd.openxmlformats-officedocument.wordprocessingml.document", "");
@@ -301,7 +383,7 @@ export default function TrackingTab({
             }}
             onClick={async () => {
               if (downloadUnavailable) return;
-              const err = await downloadDocxFiles({
+              const err = await h.downloadDocxFiles({
                 jobTitle: pos?.title || "resume",
                 company: pos?.company,
                 result: resume.content,
@@ -324,7 +406,7 @@ export default function TrackingTab({
         </span>
       </Tooltip>
     );
-  }
+  }, [resumeFile, isDocxResume, h]);
 
   return (
     <section className={styles.tabPanel}>
@@ -419,37 +501,37 @@ export default function TrackingTab({
                   <option key={opt.value} value={opt.value}>{opt.label}</option>
                 ))}
               </TextField>
-              {visibleApplicationData.map((app) => {
-                const idx = applicationData.findIndex((candidate) => candidate.id === app.id);
+              {visibleApplicationData.map((app) => (
                 // The row body itself (touch targets, wrapping, stage chip,
                 // eight actions) lives in ApplicationCard.js -- extracted so
                 // this file stays under its 1000-line cap. See that
                 // component's own header comment for why the extraction is
-                // invisible to this file's tests.
-                return (
-                  <ApplicationCard
-                    key={app.id}
-                    app={app}
-                    idx={idx}
-                    applicationStages={applicationStages}
-                    emailClassificationsByAppId={emailClassificationsByAppId}
-                    resumeFile={resumeFile}
-                    isDocxResume={isDocxResume}
-                    highlightedAppId={highlightedAppId}
-                    renderDigestCell={renderDigestCell}
-                    setAppDialog={setAppDialog}
-                    setStageError={setStageError}
-                    setStageDialog={setStageDialog}
-                    openCommsInAppDialog={openCommsInAppDialog}
-                    askAiAbout={askAiAbout}
-                    buildApplicationContextString={buildApplicationContextString}
-                    openEditApplicationDialog={openEditApplicationDialog}
-                    openApplicationPreview={openApplicationPreview}
-                    handleDeleteApplication={handleDeleteApplication}
-                    downloadDocxFiles={downloadDocxFiles}
-                  />
-                );
-              })}
+                // invisible to this file's tests. Every prop here is stable
+                // across a re-render that changes nothing about THIS app (the
+                // handlers are fixed-identity forwarders), which is what lets
+                // the card's React.memo skip it.
+                <ApplicationCard
+                  key={app.id}
+                  app={app}
+                  idx={indexById.get(app.id) ?? -1}
+                  applicationStages={applicationStages}
+                  emailClassificationsByAppId={emailClassificationsByAppId}
+                  resumeFile={resumeFile}
+                  isDocxResume={isDocxResume}
+                  highlightedAppId={highlightedAppId}
+                  renderDigestCell={renderDigestCell}
+                  setAppDialog={h.setAppDialog}
+                  setStageError={h.setStageError}
+                  setStageDialog={h.setStageDialog}
+                  openCommsInAppDialog={h.openCommsInAppDialog}
+                  askAiAbout={h.askAiAbout}
+                  buildApplicationContextString={h.buildApplicationContextString}
+                  openEditApplicationDialog={h.openEditApplicationDialog}
+                  openApplicationPreview={previewOpener}
+                  handleDeleteApplication={h.handleDeleteApplication}
+                  downloadDocxFiles={h.downloadDocxFiles}
+                />
+              ))}
             </Box>
           ) : (
           <TableContainer sx={{ maxHeight: "calc(100vh - 280px)" }}>
@@ -568,251 +650,28 @@ export default function TrackingTab({
                 </TableRow>
               </TableHead>
               <TableBody>
-                {visibleApplicationData.map((app) => {
-                  const idx = applicationData.findIndex((candidate) => candidate.id === app.id);
-                  const pos = app.positions;
-                  // Same shared-catalogue hazard as the compact card layout
-                  // above: gate before it can become an href.
-                  const postingHref = safeExternalHref(app.application_url || pos?.url);
-                  const resume = app.generated_resumes;
-                  // N132: View/Edit needs the opener AND stored documents.
-                  const canPreview = !!openApplicationPreview && hasPreviewableDocs(app);
-                  const stages = applicationStages[app.id] || [];
-                  const emailClassification = emailClassificationsByAppId[app.id] ?? null;
-                  const EMAIL_CHIP_STYLES = {
-                    confirmation: { label: "Applied", color: "var(--accent-hover)", bg: "var(--accent-soft)" },
-                    interview:    { label: "Interview", color: "var(--success)", bg: "var(--success-soft)" },
-                    rejection:    { label: "Rejected", color: "var(--danger-hover)", bg: "var(--danger-soft)" },
-                  };
-                  const emailChip = emailClassification ? EMAIL_CHIP_STYLES[emailClassification] : null;
-
-                  return (
-                    <TableRow
-                      key={app.id}
-                      data-app-id={app.id}
-                      hover
-                      onClick={(e) => {
-                        if (e.target.closest("a, button, input, textarea, select, [role='button']")) {
-                          return;
-                        }
-                        openEditApplicationDialog(app);
-                      }}
-                      sx={{
-                        cursor: "pointer",
-                        ...(highlightedAppId === app.id && {
-                          outline: "2px solid var(--accent)",
-                          outlineOffset: "-2px",
-                          backgroundColor: "var(--accent-soft) !important",
-                        }),
-                      }}
-                    >
-                      <TableCell
-                        sx={{
-                          fontWeight: 600,
-                          whiteSpace: "nowrap",
-                          overflow: "hidden",
-                          textOverflow: "ellipsis",
-                          position: "sticky",
-                          left: 0,
-                          width: companyColWidth,
-                          minWidth: companyColWidth,
-                          maxWidth: companyColWidth,
-                          zIndex: 2,
-                          backgroundColor: "var(--bg-surface)",
-                          boxShadow: "1px 0 0 var(--border)",
-                        }}
-                      >
-                        {pos?.company || "\u2014"}
-                        {pos?.posted_at && (
-                          <Box sx={{ fontSize: "0.68rem", color: "var(--text-secondary)", fontWeight: 400, mt: 0.25 }}>
-                            Posted {new Date(pos.posted_at).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" })}
-                          </Box>
-                        )}
-                      </TableCell>
-                      <TableCell
-                        sx={{
-                          whiteSpace: "nowrap",
-                          overflow: "hidden",
-                          textOverflow: "ellipsis",
-                          position: "sticky",
-                          left: companyColWidth,
-                          width: roleColWidth,
-                          minWidth: roleColWidth,
-                          maxWidth: roleColWidth,
-                          zIndex: 2,
-                          backgroundColor: "var(--bg-surface)",
-                          boxShadow: "1px 0 0 var(--border)",
-                        }}
-                      >
-                        {pos?.title || "\u2014"}
-                      </TableCell>
-                      <TableCell>
-                        <Box sx={{ display: "flex", flexDirection: "column", alignItems: "flex-start", gap: 0.75 }}>
-                          <Box sx={{ display: "flex", alignItems: "center", gap: 0.75, flexWrap: "wrap" }}>
-                            {emailChip && (
-                              <Box sx={{ fontSize: "0.72rem", fontWeight: 700, color: emailChip.color, bgcolor: emailChip.bg, px: 0.75, py: 0.25, borderRadius: 1, flexShrink: 0, letterSpacing: "0.03em" }}>
-                                {emailChip.label}
-                              </Box>
-                            )}
-                          </Box>
-                          {stages.length > 0 ? (
-                            <Box sx={{ display: "flex", alignItems: "center", gap: 0.5, flexWrap: "wrap" }}>
-                              {stages.slice(0, 2).map((stage) => {
-                                const stageLabel = `${stage.stage_name || STAGE_TYPE_LABELS[stage.stage_type] || stage.stage_type}${stage.outcome && stage.outcome !== "pending" ? ` · ${stage.outcome}` : ""}`;
-                                return (
-                                  <Chip
-                                    key={stage.id}
-                                    label={stageLabel}
-                                    size="small"
-                                    variant="outlined"
-                                    onClick={() => {
-                                      setStageError("");
-                                      setStageDialog(createStageDialogState({
-                                        open: true,
-                                        applicationId: app.id,
-                                        stageId: stage.id,
-                                        stageName: stage.stage_name || "",
-                                        stageType: stage.stage_type || "phone_screen",
-                                        scheduledAt: formatDateTimeLocalInputValue(stage.scheduled_at),
-                                        durationMinutes: stage.duration_minutes ? String(stage.duration_minutes) : "",
-                                        outcome: stage.outcome || "pending",
-                                        interviewerNames: (stage.interviewer_names || []).join(", "),
-                                        notes: stage.notes || "",
-                                      }));
-                                    }}
-                                    onDelete={() => askAiAbout({
-                                      label: `${pos?.company || "Application"} · ${stageLabel}`,
-                                      content: buildStageContextString(app, stage),
-                                      prompt: `Help me prepare for my "${stage.stage_name || stage.stage_type || "interview"}" at ${pos?.company || "this company"}: `,
-                                    })}
-                                    deleteIcon={<span style={{ fontSize: 11, padding: "0 4px", color: "var(--accent)" }} title="Ask AI">AI</span>}
-                                  />
-                                );
-                              })}
-                              {stages.length > 2 ? (
-                                <Box component="span" sx={{ fontSize: 12, color: "var(--text-secondary)" }}>
-                                  +{stages.length - 2} more
-                                </Box>
-                              ) : null}
-                            </Box>
-                          ) : null}
-                        </Box>
-                      </TableCell>
-                      <TableCell sx={{ whiteSpace: "nowrap" }}>
-                        {app.applied_at
-                          ? new Date(app.applied_at).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" })
-                          : "—"}
-                      </TableCell>
-                      <TableCell sx={{ whiteSpace: "nowrap" }}>
-                        <Box sx={{ display: "flex", flexDirection: "column", alignItems: "flex-start", gap: 0.2 }}>
-                          <Button
-                            size="small"
-                            sx={{ minWidth: 0, p: 0, fontSize: 11 }}
-                            onClick={() => openCommsInAppDialog(app, idx)}
-                          >
-                            View
-                          </Button>
-                          <Button
-                            size="small"
-                            sx={{ minWidth: 0, p: 0, fontSize: 11 }}
-                            onClick={() => openAddCommunicationDialog(app)}
-                          >
-                            Add
-                          </Button>
-                        </Box>
-                      </TableCell>
-                      <TableCell sx={{ maxWidth: 220 }}>
-                        {renderDigestCell(app, idx)}
-                      </TableCell>
-                      <TableCell sx={{ whiteSpace: "nowrap" }}>
-                        {/* Same door as the phone card's "Prep" button
-                            (ApplicationCard.js) -- unconditional, no
-                            per-row prefetch of pack existence, honest
-                            absent-state copy lives inside the dialog once
-                            opened. */}
-                        <Button size="small" sx={{ p: 0, minWidth: 0, fontSize: 11 }} onClick={() => setAppDialog({ open: true, rowIndex: idx, kind: "prep" })}>
-                          View prep
-                        </Button>
-                      </TableCell>
-                      <TableCell sx={{ maxWidth: 220 }}>
-                        {pos?.description ? (
-                          <Box sx={{ display: "flex", alignItems: "flex-start", gap: 0.5, flexDirection: "column" }}>
-                            <span style={{ fontSize: 12, color: "var(--text-secondary)", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" }}>
-                              {pos.description}
-                            </span>
-                            <Button size="small" sx={{ p: 0, minWidth: 0, fontSize: 11 }} onClick={() => setAppDialog({ open: true, rowIndex: idx, kind: "jd" })}>
-                              View full
-                            </Button>
-                          </Box>
-                        ) : "—"}
-                      </TableCell>
-                      <TableCell sx={{ maxWidth: 200 }}>
-                        {/* N132: a cover-only row has no resume text but still
-                            has documents to open, so the cell renders on
-                            either (not just `resume?.content`) and the
-                            View/Edit control is gated on stored documents. */}
-                        {resume?.content || canPreview ? (
-                          <Box sx={{ display: "flex", alignItems: "flex-start", gap: 0.5, flexDirection: "column" }}>
-                            {resume?.content && (
-                              <span style={{ fontSize: 12, color: "var(--text-secondary)", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" }}>
-                                {resume.content}
-                              </span>
-                            )}
-                            <Box sx={{ display: "flex", gap: 1, flexWrap: "wrap" }}>
-                              {resume?.content && (
-                                <Button size="small" sx={{ p: 0, minWidth: 0, fontSize: 11 }} onClick={() => setAppDialog({ open: true, rowIndex: idx, kind: "resume" })}>
-                                  View full
-                                </Button>
-                              )}
-                              {resume?.content && renderDownloadControl(pos, resume)}
-                              {canPreview && (
-                                <Button size="small" sx={{ p: 0, minWidth: 0, fontSize: 11 }} onClick={() => openApplicationPreview(app)}>
-                                  View/Edit
-                                </Button>
-                              )}
-                            </Box>
-                          </Box>
-                        ) : "—"}
-                      </TableCell>
-                      <TableCell>
-                        {postingHref && (
-                          <Button size="small" href={postingHref} target="_blank" rel="noopener noreferrer" sx={{ whiteSpace: "nowrap" }}>
-                            Posting ↗
-                          </Button>
-                        )}
-                      </TableCell>
-                      <TableCell sx={{ whiteSpace: "nowrap" }}>
-                        <Box sx={{ display: "flex", gap: 0.5 }}>
-                          <Button
-                            size="small"
-                            sx={{ minWidth: 0, p: 0.25, fontSize: 11 }}
-                            onClick={() => askAiAbout({
-                              label: `${pos?.company || "Application"}${pos?.title ? ` — ${pos.title}` : ""}`,
-                              content: buildApplicationContextString(app),
-                            })}
-                          >
-                            Ask AI
-                          </Button>
-                          <Button
-                            size="small"
-                            sx={{ minWidth: 0, p: 0.25, fontSize: 11 }}
-                            onClick={() => openEditApplicationDialog(app)}
-                          >
-                            Edit
-                          </Button>
-                          <Button
-                            size="small"
-                            color="error"
-                            sx={{ minWidth: 0, p: 0.25, fontSize: 11 }}
-                            onClick={() => handleDeleteApplication(app)}
-                          >
-                            Delete
-                          </Button>
-                        </Box>
-                      </TableCell>
-                    </TableRow>
-                  );
-                })}
+                {/* The row body lives in ApplicationRow.js (the desktop twin of
+                    ApplicationCard) as a React.memo component. Its stages /
+                    email-classification / highlight props are THIS row's own
+                    slice of each map, so a change to another row does not
+                    re-render it. */}
+                {visibleApplicationData.map((app) => (
+                  <ApplicationRow
+                    key={app.id}
+                    app={app}
+                    idx={indexById.get(app.id) ?? -1}
+                    stages={applicationStages[app.id]}
+                    emailClassification={emailClassificationsByAppId[app.id] ?? null}
+                    highlighted={highlightedAppId === app.id}
+                    companyColWidth={companyColWidth}
+                    roleColWidth={roleColWidth}
+                    renderDigestCell={renderDigestCell}
+                    renderDownloadControl={renderDownloadControl}
+                    openStageDialog={openStageDialog}
+                    openApplicationPreview={previewOpener}
+                    handlers={h}
+                  />
+                ))}
               </TableBody>
             </Table>
           </TableContainer>

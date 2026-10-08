@@ -1,5 +1,6 @@
 "use client";
 
+import { memo } from "react";
 import Box from "@mui/material/Box";
 import Button from "@mui/material/Button";
 import Chip from "@mui/material/Chip";
@@ -27,6 +28,13 @@ import { TOUCH_TARGET_SX, BREAK_LONG_WORDS_SX } from "@/app/theme/mobileSx";
 // is passed in rather than duplicated here because it is ALSO called from
 // the desktop table cell in TrackingTab.js -- one decision tree, two render
 // call sites, per that function's own comment.
+//
+// The default export is wrapped in React.memo (tracking-surface performance
+// pass): without it every re-render of the page -- any button click -- rebuilt
+// every card. It only skips if its props are stable, which is why TrackingTab.js
+// hands it fixed-identity handlers (useStableHandlers) and a memoized
+// `renderDigestCell`. The inline onClick closures below are fine: they are
+// rebuilt only when THIS card re-renders.
 
 // The email-classification pill's colours. A fixed lookup, not row data, so
 // it lives at module scope rather than being rebuilt on every render or
@@ -38,7 +46,24 @@ const EMAIL_CHIP_STYLES = {
   rejection: { label: "Rejected", color: "var(--danger-hover)", bg: "var(--danger-soft)" },
 };
 
-export default function ApplicationCard({
+// The card's own sx, fixed per highlight state so neither is rebuilt per render.
+const CARD_SX = {
+  border: "1px solid var(--border)",
+  borderRadius: 2,
+  p: 1.75,
+  backgroundColor: "var(--bg-surface)",
+  display: "flex",
+  flexDirection: "column",
+  gap: 1.25,
+};
+const CARD_HIGHLIGHTED_SX = {
+  ...CARD_SX,
+  outline: "2px solid var(--accent)",
+  outlineOffset: "-2px",
+  backgroundColor: "var(--accent-soft)",
+};
+
+function ApplicationCard({
   app,
   idx,
   applicationStages,
@@ -73,20 +98,7 @@ export default function ApplicationCard({
   return (
     <Box
       data-app-id={app.id}
-      sx={{
-        border: "1px solid var(--border)",
-        borderRadius: 2,
-        p: 1.75,
-        backgroundColor: "var(--bg-surface)",
-        display: "flex",
-        flexDirection: "column",
-        gap: 1.25,
-        ...(highlightedAppId === app.id && {
-          outline: "2px solid var(--accent)",
-          outlineOffset: "-2px",
-          backgroundColor: "var(--accent-soft)",
-        }),
-      }}
+      sx={highlightedAppId === app.id ? CARD_HIGHLIGHTED_SX : CARD_SX}
     >
       <Box sx={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 1 }}>
         <Box sx={{ minWidth: 0 }}>
@@ -244,3 +256,5 @@ export default function ApplicationCard({
     </Box>
   );
 }
+
+export default memo(ApplicationCard);

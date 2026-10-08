@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useRef, useMemo } from "react";
+import { memo, useState, useEffect, useRef, useMemo } from "react";
 import styles from "./page.module.css";
 import JobDescriptionTab from "./components/JobDescriptionTab";
 import PostingUrlTab from "./components/PostingUrlTab";
@@ -92,7 +92,7 @@ import { startPositionGlossary } from "../lib/copilot/glossaryTrigger";
 import { startInterviewPrepResearch } from "../lib/interviewPrep/prepTrigger";
 import { selectAppliedToggleAction } from "../lib/applications/applicationDecisions";
 import { persistGeneratedDocuments } from "../lib/supabase/persistGeneration";
-import { normalizeInterviewValue } from "../lib/tracking/stages";
+import { selectVisibleApplications, classificationsByAppId } from "../lib/tracking/trackingRows";
 import { rehydratedEntryFromApp } from "../lib/tracking/applicationPreviewEntry";
 import {
   fetchFullPostingDescription,
@@ -125,6 +125,18 @@ function withEditedScope(entry, scope, value) {
 function withClearedEditedScopes(entry, scopes) {
   return scopes.reduce((edited, scope) => withEditedScope({ edited }, scope, false), entry?.edited);
 }
+
+// Mounts the example-project prewarm (app/hooks/useApplicationProjectPool.js)
+// for the tracking table's rows. The hook's return is not read here, but its
+// settle-time state (which pools are ready, which applications are warming)
+// changes as each pool lands -- called from Home that re-rendered this whole
+// component, and the tracking list with it, once per settled pool. In a leaf of
+// its own, that state churn re-renders this null-rendering component only.
+// Mount it unconditionally, as the hook call it replaces was.
+const ProjectPoolPrewarm = memo(function ProjectPoolPrewarm({ applicationData }) {
+  useApplicationProjectPool({ applications: applicationData });
+  return null;
+});
 
 export default function Home() {
   const [resumeFile, setResumeFile] = useState(null);
@@ -290,7 +302,8 @@ export default function Home() {
   // app/hooks/useApplicationDigests.js for the fetch/auto-populate/Research
   // logic this only instantiates and hands down to <TrackingTab>.
   const applicationDigests = useApplicationDigests(applicationData);
-  useApplicationProjectPool({ applications: applicationData });
+  // The example-project prewarm is mounted as <ProjectPoolPrewarm> in the
+  // returned tree, not called here: see that component's comment.
 
   // Refs for targeted re-fetches when individual controls change
   const hasFetchedRef = useRef(false);
@@ -1310,45 +1323,20 @@ export default function Home() {
     });
   }, [applicationData, trackedJobs]);
 
-  const visibleApplicationData = [...applicationData]
-    .filter((app) => {
-      const query = normalizeInterviewValue(interviewSearch);
-      if (!query) return true;
-      const company = normalizeInterviewValue(app.positions?.company);
-      const role = normalizeInterviewValue(app.positions?.title);
-      return company.includes(query) || role.includes(query);
-    })
-    .sort((a, b) => {
-      if (!interviewSort.field) return 0;
-      const field = interviewSort.field;
-      let av;
-      let bv;
-      if (field === "company" || field === "title") {
-        av = (a.positions?.[field] || "").toString().toLowerCase();
-        bv = (b.positions?.[field] || "").toString().toLowerCase();
-      } else if (field === "status") {
-        av = (a.status || "").toString().toLowerCase();
-        bv = (b.status || "").toString().toLowerCase();
-      } else if (field === "applied_at") {
-        // Date sort: empty dates always sort to the bottom.
-        av = a.applied_at ? new Date(a.applied_at).getTime() : NaN;
-        bv = b.applied_at ? new Date(b.applied_at).getTime() : NaN;
-        const aMissing = Number.isNaN(av);
-        const bMissing = Number.isNaN(bv);
-        if (aMissing && !bMissing) return 1;
-        if (!aMissing && bMissing) return -1;
-        if (aMissing && bMissing) return 0;
-        return interviewSort.dir === "asc" ? av - bv : bv - av;
-      } else {
-        return 0;
-      }
-      // Empty string values sort to the end regardless of direction.
-      if (!av && bv) return 1;
-      if (av && !bv) return -1;
-      if (!av && !bv) return 0;
-      const cmp = av.localeCompare(bv);
-      return interviewSort.dir === "asc" ? cmp : -cmp;
-    });
+  // The tracking list's rows (search filter + sort; lib/tracking/trackingRows.js).
+  // Memoized on exactly what it reads: rebuilt on every render it was a fresh
+  // array each time, which re-rendered the whole list for any unrelated click.
+  const visibleApplicationData = useMemo(
+    () => selectVisibleApplications(applicationData, interviewSearch, interviewSort),
+    [applicationData, interviewSearch, interviewSort],
+  );
+
+  // application id -> its strongest matched-email classification, for the
+  // tracking rows' status pill. Memoized on the messages for the same reason.
+  const emailClassificationsByAppId = useMemo(
+    () => classificationsByAppId(gmailMessages),
+    [gmailMessages],
+  );
 
   // The dock's untrack, for every route into it. `handleUntrackJob` used to
   // live here and bail out early whenever the DELETE was refused — which is
@@ -2813,19 +2801,7 @@ export default function Home() {
             digestsById={applicationDigests.digestsById}
             researchingIds={applicationDigests.researchingIds}
             researchOne={applicationDigests.researchOne}
-            emailClassificationsByAppId={Object.fromEntries(
-              Object.entries(
-                gmailMessages.reduce((acc, { application, classification }) => {
-                  if (!application?.id || !classification) return acc;
-                  const priority = { rejection: 3, interview: 2, confirmation: 1 };
-                  const existing = acc[application.id];
-                  if (!existing || priority[classification] > priority[existing]) {
-                    acc[application.id] = classification;
-                  }
-                  return acc;
-                }, {})
-              )
-            )}
+            emailClassificationsByAppId={emailClassificationsByAppId}
           />
         )}
 
@@ -2848,6 +2824,8 @@ export default function Home() {
         {mainTab === "experience" && (
           <ExperienceTab askAiAbout={chat.askAiAbout} addChatAttachments={chat.addChatAttachments} />
         )}
+
+        <ProjectPoolPrewarm applicationData={applicationData} />
 
         {/* Always-mounted dialogs (not gated by active main tab). */}
         <BatchTailorDialog
