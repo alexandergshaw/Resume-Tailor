@@ -50,7 +50,6 @@ function entry(id, question, points) {
     cues: [],
     buzzwords: [],
     anchor: null,
-    idealProject: null,
     pageSources: [],
     error: "",
   };

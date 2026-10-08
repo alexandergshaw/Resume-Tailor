@@ -39,7 +39,6 @@ const DRAFT_RESPONSE = {
   cues: ["Led migration"],
   buzzwords: [],
   resumeAnchor: null,
-  idealProject: null,
   type: "behavioral",
 };
 

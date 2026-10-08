@@ -161,9 +161,8 @@ export function useDraftAnswer({
                     cues: cached.cues || [],
                     buzzwords: cached.buzzwords || [],
                     anchor: cached.anchor || null,
-                    idealProject: cached.idealProject || null,
                     // ARCH §4f/§6.8: the cache round-trip `cues`/
-                    // `buzzwords`/`anchor`/`idealProject` already get,
+                    // `buzzwords`/`anchor` already get,
                     // extended to `pageSources` — a cache hit that dropped
                     // it would render as an answer that had its citations
                     // when freshly drafted and lost them the second time
@@ -224,7 +223,7 @@ export function useDraftAnswer({
         );
       };
       try {
-        const { points, type, cues, buzzwords, resumeAnchor, idealProject, pageSources } = await fetchAnswer(
+        const { points, type, cues, buzzwords, resumeAnchor, pageSources } = await fetchAnswer(
           {
             question,
             context: buildContext(),
@@ -281,7 +280,6 @@ export function useDraftAnswer({
           cues: Array.isArray(cues) ? cues : [],
           buzzwords: Array.isArray(buzzwords) ? buzzwords : [],
           anchor: resumeAnchor || null,
-          idealProject: idealProject || null,
           // ARCH §4e: rides the terminal `done` frame only — fetchAnswer's
           // streaming path (draftAnswerStreaming) resolves with exactly that
           // frame's payload, so `pageSources` here is never a mid-stream

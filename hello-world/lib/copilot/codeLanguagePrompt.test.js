@@ -247,7 +247,7 @@ describe("codeLanguagePrompt.js is also client-reachable, and carries the instru
   it("restates the posting cap locally rather than importing it (AC-C28b)", () => {
     // The real definition (`answerContext.js:46`) is unexported, so it is
     // unimportable anyway; what the criterion wants is the constant stated
-    // here with its reason, exactly as `idealProjectPrompt.js:36-41` does.
+    // here with its reason.
     expect(SOURCE).toContain("20000");
     expect(SOURCE).not.toMatch(/from\s*["'][^"']*answerContext/);
   });
@@ -334,10 +334,10 @@ describe("buildCodeLanguagePrompt — no question, structurally (AC-C6b)", () =>
     );
   });
 
-  it("restates rule 4 in the PROMPT BODY as well (A20, following the precedent's actual practice)", () => {
-    // `idealProjectPrompt.js:50` carries the safety rule in the system
-    // instruction and `:89` restates it in the body. The precedent duplicates
-    // deliberately; removing this line as redundant is the defect A20 predicts.
+  it("restates rule 4 in the PROMPT BODY as well (A20)", () => {
+    // The safety rule is carried in the system instruction and restated in
+    // the body. The duplication is deliberate; removing this line as
+    // redundant is the defect A20 predicts.
     const prompt = buildCodeLanguagePrompt({ description: DESCRIPTION_MULTI });
     expect(prompt).toContain(RULE_4_PROMPT_RESTATEMENT);
   });

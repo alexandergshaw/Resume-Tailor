@@ -9,7 +9,6 @@ import { buildPrivacyNotice } from "@/lib/copilot/practiceNotices";
 import { useEngine } from "@/app/settings/engine";
 import { ExpansionScope } from "../useAnswerExpansions";
 import { GlossaryProvider } from "../GlossaryProvider";
-import { IdealProjectScope } from "../IdealAnswerAids";
 import { useIsTablet } from "@/app/hooks/useResponsive";
 import TranscriptView from "../TranscriptView";
 import QuestionFeed from "../QuestionFeed";
@@ -337,10 +336,6 @@ export default function PracticeClient({
         cues: sampleAnswer.cues,
         buzzwords: sampleAnswer.buzzwords,
         anchor: sampleAnswer.anchor,
-        // N125: deliberately NO `idealProject` here. The panel renders the
-        // worked example from useIdealProject (IdealAnswerAids), asked for the
-        // question above; carrying the sample answer's own frozen copy on this
-        // entry too would put a second example beside it.
         pageSources: sampleAnswer.pageSources,
         error: sampleAnswer.error,
       },
@@ -596,10 +591,6 @@ export default function PracticeClient({
     // question and the RAW points array the answer on screen came from.
     // GLOSSARY TERMS -- see CopilotClient.js's note above its own provider.
     <GlossaryProvider applicationId={posting?.id || ""}>
-    {/* N125: the selected posting's id for every IdealAnswerAids beneath it
-        (the dashboard's answer panel, QuestionCard's SampleAnswer, the room
-        questions' QuestionFeed) — see IdealAnswerAids.js. */}
-    <IdealProjectScope applicationId={posting?.id || ""}>
     <ExpansionScope
       questions={dashboardQuestions}
       request={{ applicationId: posting?.id || "", profile, interviewType, codeLanguage, engine }}
@@ -893,8 +884,8 @@ export default function PracticeClient({
           (see useRoomQuestions.js's own doc for why the entries it's fed
           already match that component's contract field for field), so a
           room question's drafted answer looks exactly like every other
-          drafted answer in this app — same cues, same buzzwords/resume/
-          ideal-project aids, same accessible status region. */}
+          drafted answer in this app — same cues, same buzzwords/resume
+          aids, same accessible status region. */}
       <Box sx={{ mt: 2 }}>
         <QuestionFeed questions={roomQuestions.questions} onDraft={roomQuestions.onDraft} />
       </Box>
@@ -904,7 +895,6 @@ export default function PracticeClient({
       </Box>
     </Box>
     </ExpansionScope>
-    </IdealProjectScope>
     </GlossaryProvider>
   );
 }

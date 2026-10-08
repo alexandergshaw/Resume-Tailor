@@ -110,7 +110,7 @@ export function useRoomQuestions({ applicationId, profile, myTag, collecting }) 
   // branch (app/api/copilot/answer/route.js) rather than practice mode's
   // OWN "answer" mode (the same shape useSampleAnswer.js's own queue/reveal
   // requests use). That response carries every field live mode's card
-  // renders — points, type, cues, buzzwords, resumeAnchor, idealProject —
+  // renders — points, type, cues, buzzwords, resumeAnchor —
   // which is what lets this reuse QuestionFeed/AnswerLines/AnswerAids
   // unmodified (PracticeClient.js).
   //
@@ -160,7 +160,7 @@ export function useRoomQuestions({ applicationId, profile, myTag, collecting }) 
       prev.map((q) => (q.id === id ? { ...q, status: "loading", error: "", draftToken: token } : q)),
     );
     try {
-      const { points, type, cues, buzzwords, resumeAnchor, idealProject, pageSources } = await draftAnswer({
+      const { points, type, cues, buzzwords, resumeAnchor, pageSources } = await draftAnswer({
         question,
         context: "",
         profile: profileRef.current,
@@ -182,7 +182,6 @@ export function useRoomQuestions({ applicationId, profile, myTag, collecting }) 
                 cues: Array.isArray(cues) ? cues : [],
                 buzzwords: Array.isArray(buzzwords) ? buzzwords : [],
                 anchor: resumeAnchor || null,
-                idealProject: idealProject || null,
                 // ARCH §3.5/§4e: same defensive normalization as its
                 // siblings above — which knowledge-base page (if any) each
                 // point came from, rendered by AnswerLines via QuestionFeed.
@@ -232,7 +231,6 @@ export function useRoomQuestions({ applicationId, profile, myTag, collecting }) 
           cues: [],
           buzzwords: [],
           anchor: null,
-          idealProject: null,
           // ARCH §3.5/§4e: seeded empty alongside the other reading aids —
           // runDraft above is the sole writer of a real value.
           pageSources: [],
@@ -413,7 +411,6 @@ export function useRoomQuestions({ applicationId, profile, myTag, collecting }) 
         cues: [],
         buzzwords: [],
         anchor: null,
-        idealProject: null,
         pageSources: [],
         draftToken: null,
       })),

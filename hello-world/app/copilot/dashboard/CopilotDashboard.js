@@ -12,7 +12,7 @@ import { answerLines } from "@/lib/copilot/answerPoints";
 import { answerStatusMessage, visuallyHidden } from "@/lib/copilot/answerStatus";
 import { pinnedQuestionEntry } from "@/lib/copilot/currentQuestion";
 import { dashboardCopy, PACE_LABEL_TEXT, FILLER_LABEL_TEXT } from "@/lib/copilot/dashboardCopy";
-import IdealAnswerAids from "../IdealAnswerAids";
+import AnswerAids from "../AnswerAids";
 import AnswerLines from "../AnswerLines";
 import { RealPanel } from "./panelShells";
 import { BREAK_LONG_WORDS_SX, TOUCH_TARGET_SX, WRAP_ROW_SX } from "@/app/theme/mobileSx";
@@ -444,15 +444,12 @@ function CurrentAnswerPanel({
               <AnswerLines lines={lines} />
               {/* AC-K1.2/AC-K1.3: the same subsections the question card
                   shows, in the panel a candidate is actually looking at
-                  mid-interview — including the ideal-project benchmark.
-                  Renders nothing at all when the draft carries none of them
-                  (no posting selected, no submitted resume). Reading these
-                  aloud too — via the same focus move, without any separate
-                  wiring — is F9's free coverage for this panel. N125: the
-                  ideal-project benchmark is read from useIdealProject (via
-                  IdealAnswerAids), never from `current.idealProject` —
-                  rendering both would show two examples. */}
-              <IdealAnswerAids buzzwords={current.buzzwords} anchor={current.anchor} question={current.question} />
+                  mid-interview. Renders nothing at all when the draft
+                  carries none of them (no posting selected, no submitted
+                  resume). Reading these aloud too — via the same focus
+                  move, without any separate wiring — is F9's free coverage
+                  for this panel. */}
+              <AnswerAids buzzwords={current.buzzwords} anchor={current.anchor} />
             </>
           ) : (
             // WCAG 1.4.3: --text-secondary, not --text-muted — see the
@@ -742,7 +739,7 @@ function HistoryItem({ entry, copy }) {
           {lines.length ? (
             <>
               <AnswerLines lines={lines} />
-              <IdealAnswerAids buzzwords={entry.buzzwords} anchor={entry.anchor} question={entry.question} />
+              <AnswerAids buzzwords={entry.buzzwords} anchor={entry.anchor} />
             </>
           ) : (
             <Typography variant="body2" sx={{ color: "var(--text-secondary)" }}>

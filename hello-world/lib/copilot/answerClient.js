@@ -9,12 +9,8 @@ import { splitFrames } from "./answerStream.js";
 // of calling Gemini.
 //
 // AC-K1: both modes return `cues` (one short prompt per point — what the UI
-// renders), `buzzwords` (terms from the posting to work in), `resumeAnchor`
-// ({ title, company, matched, project, description } or null) and
-// `idealProject` ({ shape, summary, metrics, project } or null — the
-// ideal-project benchmark, lib/copilot/idealProject.js; AC-M1 added
-// `project`, the worked-example write-up built by
-// lib/copilot/idealProjectNarrative.js).
+// renders), `buzzwords` (terms from the posting to work in) and
+// `resumeAnchor` ({ title, company, matched, project, description } or null).
 //
 // AC-6.2: both modes also return `pageSources` — one entry per point, in the
 // same order, each `{ id, title }` for the candidate's own project page that

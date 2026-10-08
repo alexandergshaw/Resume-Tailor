@@ -43,7 +43,6 @@ const DRAFT_RESPONSE = {
   cues: ["Led migration", "Latency down"],
   buzzwords: [],
   resumeAnchor: null,
-  idealProject: null,
   type: "behavioral",
 };
 

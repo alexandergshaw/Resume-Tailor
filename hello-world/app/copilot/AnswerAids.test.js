@@ -131,7 +131,7 @@ describe("attribution when the source is unknown", () => {
 
 describe("what must not change", () => {
   it("renders nothing at all when there is nothing to show", async () => {
-    const text = await render({ anchor: null, buzzwords: [], idealProject: null });
+    const text = await render({ anchor: null, buzzwords: [] });
     expect(text.trim()).toBe("");
   });
 

@@ -344,7 +344,6 @@ describe("cachedSampleAnswerFor", () => {
       cues: [],
       buzzwords: [],
       anchor: null,
-      idealProject: null,
       // ARCH §4f: an entry cached before `pageSources` existed resolves the
       // same way every other reading aid above does — the empty shape, not
       // `undefined`.
@@ -363,7 +362,6 @@ describe("cachedSampleAnswerFor", () => {
       cues: ["Situation: Checkout redesign"],
       buzzwords: ["Kubernetes"],
       anchor: { title: "Senior Engineer", company: "Quantum Robotics", matched: true, project: "Checkout redesign" },
-      idealProject: { shape: "Distributed Systems", metrics: ["5+ years", "cost saved"] },
     });
     const result = cachedSampleAnswerFor(
       entry,
@@ -381,7 +379,6 @@ describe("cachedSampleAnswerFor", () => {
       matched: true,
       project: "Checkout redesign",
     });
-    expect(result.idealProject).toEqual({ shape: "Distributed Systems", metrics: ["5+ years", "cost saved"] });
   });
 
   // BUG-J6: cachedSampleAnswerFor only filters a COPY of `entry.points` to

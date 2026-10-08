@@ -87,7 +87,7 @@ function jsonRequest(body) {
 
 // Answers listPages against `experience_pages`; no application, no submitted
 // documents, no posting — so `generateContent.mock.calls[0]` stays the answer
-// call (there is no second, ideal-project call to select a posting for).
+// call (there is no second call to select a posting for).
 function mockSupabase({ id = "user-1", pages = [] } = {}) {
   const from = vi.fn((table) => {
     const chain = {
@@ -130,7 +130,7 @@ function mockGeminiStream(payload) {
       yield { text: JSON.stringify(payload) };
     })(),
   );
-  // The worked-example call — never awaited on the critical path (see
+  // Any non-streaming model call — never awaited on the critical path (see
   // streaming.test.js's own comment); a promise that never settles proves
   // that and keeps this file's cases from depending on it resolving.
   getGeminiClient.mockReturnValue({
@@ -420,7 +420,6 @@ describe("roleTermsUnbacked — the Gemini path", () => {
     expect(Object.keys(data).sort()).toEqual([
       "buzzwords",
       "cues",
-      "idealProject",
       "pageSources",
       "points",
       "resumeAnchor",

@@ -56,11 +56,9 @@ const DEFAULT_CONCURRENCY = 3;
 // NEVER REJECTS. Every failure mode — no company at all, no Gemini client
 // configured, a network error, unparseable model output, zero grounding
 // metadata, a grounding-resolution failure, or every candidate claim failing
-// corroboration — resolves to `[]`, exactly the contract
-// lib/copilot/answerAids.js's generateIdealProjectExample already keeps for
-// the identical reason: this rides ALONGSIDE an answer the candidate is
-// waiting on mid-question, and it must never be able to fail the request it
-// rides beside.
+// corroboration — resolves to `[]`: this rides ALONGSIDE an answer the
+// candidate is waiting on mid-question, and it must never be able to fail the
+// request it rides beside.
 export async function buildCompanyFacts(company, deps) {
   const {
     client,

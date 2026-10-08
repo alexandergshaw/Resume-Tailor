@@ -27,7 +27,6 @@ const DRAFT_RESPONSE = {
   cues: ["Constraint", "Tradeoff"],
   buzzwords: ["latency"],
   resumeAnchor: { role: "Staff Engineer" },
-  idealProject: { title: "Platform consolidation" },
   // Deliberately NOT what classifyQuestionType returns for the question used
   // below ("How would you scale this?" classifies as "technical"). The two
   // have to differ, or the type assertion cannot tell "the drafted answer's
@@ -98,7 +97,6 @@ describe("useRoomQuestions — manually typed questions (AC-O3)", () => {
     expect(entry.cues).toEqual(DRAFT_RESPONSE.cues);
     expect(entry.buzzwords).toEqual(DRAFT_RESPONSE.buzzwords);
     expect(entry.anchor).toEqual(DRAFT_RESPONSE.resumeAnchor);
-    expect(entry.idealProject).toEqual(DRAFT_RESPONSE.idealProject);
     // See DRAFT_RESPONSE's own note: the drafted classification must win.
     expect(entry.type).toBe("behavioral");
     expect(draftAnswer).toHaveBeenCalledTimes(1);

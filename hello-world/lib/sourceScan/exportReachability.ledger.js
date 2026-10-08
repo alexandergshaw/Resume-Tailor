@@ -228,11 +228,6 @@ export const ORPHAN_EXPORTS = [
     why: "same shape as MIN_FACE_SAMPLES: an internal coverage threshold exported for symmetry with its neighbours and read by nothing outside",
   },
   {
-    file: "lib/copilot/idealProject.js",
-    name: "MAX_SHAPE_TERMS",
-    why: "an internal cap on extracted shape terms, applied once in this module; exported alongside MAX_METRICS, which a test does import",
-  },
-  {
     file: "lib/copilot/projectStories.js",
     name: "UNTITLED_PROJECT_TITLE",
     why: "the fallback title this module substitutes; a component rendering that fallback would want to import it rather than re-spell it, and none does",

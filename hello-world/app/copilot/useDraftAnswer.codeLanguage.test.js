@@ -71,7 +71,6 @@ function frame(label) {
     cues: [label],
     buzzwords: [],
     resumeAnchor: null,
-    idealProject: null,
     pageSources: [],
     type: "technical",
   };
@@ -89,7 +88,6 @@ function seedQuestion(id, question) {
     cues: [],
     buzzwords: [],
     anchor: null,
-    idealProject: null,
     pageSources: [],
     type: null,
     error: "",

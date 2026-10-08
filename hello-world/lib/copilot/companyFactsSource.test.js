@@ -149,8 +149,7 @@ describe("buildCompanyFacts — every failure degrades to no facts (AC-V4.7)", (
 
   it("returns no facts, and does not reject, when the model call throws", async () => {
     // This rides beside an answer the candidate is waiting on mid-question.
-    // It must never be able to fail the request it rides beside — the same
-    // contract generateIdealProjectExample already keeps.
+    // It must never be able to fail the request it rides beside.
     const client = { models: { generateContent: vi.fn(async () => { throw new Error("503"); }) } };
     await expect(buildCompanyFacts(COMPANY, deps({ client }))).resolves.toEqual([]);
   });

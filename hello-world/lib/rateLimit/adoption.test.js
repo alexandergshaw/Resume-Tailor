@@ -72,12 +72,6 @@ const BOUNDED = [
     why: "one drafted question per practice turn, with a human answering between turns",
   },
   {
-    route: "app/api/copilot/ideal-project/route.js",
-    limit: 40,
-    windowMs: 600_000,
-    why: "N126 -- the worked-example endpoint fires a READY cache peek and then a TAILORED per-question Gemini call for every question shown (app/copilot/useIdealProject.js), plus re-fired and aborted requests when the question, posting or engine changes, so 40 in ten minutes is twenty questions' worth of READY+TAILORED pairs while a scripted loop of distinct questions stops at 40 instead of none. It hard-authenticates (auth.getUser, 401 without a user id), so the bound keys on the user id and is exact",
-  },
-  {
     route: "app/api/copilot/role-response/route.js",
     limit: 30,
     windowMs: 600_000,

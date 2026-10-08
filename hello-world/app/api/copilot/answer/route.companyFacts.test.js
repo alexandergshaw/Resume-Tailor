@@ -1,8 +1,8 @@
 // Two bands of app/api/copilot/answer/route.test.js's own cases, split out
 // here to keep that file under this project's hard 1000-line limit:
 //
-//   1. AC-K1 — the three reading aids (cues/buzzwords/resumeAnchor/
-//      idealProject) that sit beside a drafted answer.
+//   1. AC-K1 — the three reading aids (cues/buzzwords/resumeAnchor) that
+//      sit beside a drafted answer.
 //   2. AC-V4 — verified company facts: the company-facts search, its
 //      corroboration, the company-directed gate, and factIds/factSources.
 //
@@ -259,38 +259,9 @@ describe("POST /api/copilot/answer (reading aids, AC-K1)", () => {
     expect(data.buzzwords).toContain("Kubernetes");
     expect(data.buzzwords).toContain("Terraform");
 
-    // idealProject present in answer mode too, mined from the SAME posting
-    // description. `shape` is still grounded — every term literally occurs
-    // in the posting. `metrics` is NOT: mining the posting's own numbers into
-    // metrics is exactly the bug this module now permanently forbids (see
-    // idealProject.js's header comment on the reported "Metrics to have
-    // ready: $78,496, $105,974..." failure — the posting's SALARY BAND,
-    // rendered back as if it were a project metric). What used to be
-    // `metrics).toContain("5+ years")` pinned the old, now-impossible
-    // behaviour; the contract worth pinning now is that NO metric ever
-    // carries a digit, and none of the posting's own stated figures
-    // (including its "5+ years" experience floor) ever resurface as one.
-    expect(data.idealProject).not.toBeNull();
-    for (const metric of data.idealProject.metrics) {
-      expect(metric).not.toMatch(/\d/);
-    }
-    expect(data.idealProject.metrics.join(" | ")).not.toContain("5+ years");
-    for (const term of data.idealProject.shape.split(", ")) {
-      expect(POSTING_DESC.toLowerCase()).toContain(term.toLowerCase());
-    }
-    // `summary` is the new advisory sentence alongside shape/metrics — always
-    // third person, never first, so a candidate under interview pressure
-    // reading it next to a real quote from their own résumé cannot mistake
-    // it for something to claim (R-087, idealProject.js header comment).
-    expect(data.idealProject.summary).toMatch(/^They want a project built around/);
-    for (const term of data.idealProject.shape.split(", ")) {
-      expect(data.idealProject.summary).toContain(term);
-    }
-
     // AC-H7.27 is unchanged: the description grounds NOTHING. It is fetched
-    // through its own call and handed only to the buzzword/idealProject
-    // miners, so no wording from it can leak into the answer the model
-    // writes.
+    // through its own call and handed only to the buzzword miner, so no
+    // wording from it can leak into the answer the model writes.
     const client = getGeminiClient();
     const promptText = client.models.generateContent.mock.calls[0][0].contents[0].parts[0].text;
     expect(promptText).not.toContain("Senior Platform Engineer");
@@ -300,12 +271,10 @@ describe("POST /api/copilot/answer (reading aids, AC-K1)", () => {
   // AC-K1.2 headline case: the user-reported bug itself. A posting WITH a
   // description, but a question that shares none of the posting's
   // vocabulary, must come back with buzzwords: [] — not the old fixed list
-  // padded out regardless of relevance. The other aids are independent of
-  // buzzwords being empty: idealProject only RANKS on question relevance (it
-  // never filters shapeTerms out for being off-topic — see idealProject.js),
-  // and resumeAnchor reads the candidate's own résumé, not the posting, so
-  // neither degrades just because this question has nothing to do with
-  // Kubernetes/Terraform/Python.
+  // padded out regardless of relevance. The other aid is independent of
+  // buzzwords being empty: resumeAnchor reads the candidate's own résumé, not
+  // the posting, so it does not degrade just because this question has
+  // nothing to do with Kubernetes/Terraform/Python.
   it("returns buzzwords: [] for a posting with a description when the question shares none of its vocabulary", async () => {
     mockUserWithApplicationDocs({
       application: APPLICATION_WITH_POSTING,
@@ -322,7 +291,6 @@ describe("POST /api/copilot/answer (reading aids, AC-K1)", () => {
     );
     const data = await res.json();
     expect(data.buzzwords).toEqual([]);
-    expect(data.idealProject).not.toBeNull();
     expect(data.resumeAnchor).not.toBeNull();
     expect(data.points.length).toBeGreaterThan(0);
   });
@@ -346,10 +314,6 @@ describe("POST /api/copilot/answer (reading aids, AC-K1)", () => {
     );
     const data = await res.json();
     expect(data.buzzwords.length).toBeGreaterThan(0);
-    // idealProject present in points mode too — the same aid, the same
-    // posting-description-only input, on the mode that has no `answer` field
-    // at all.
-    expect(data.idealProject).not.toBeNull();
 
     const client = getGeminiClient();
     const promptText = client.models.generateContent.mock.calls[0][0].contents[0].parts[0].text;
@@ -363,7 +327,6 @@ describe("POST /api/copilot/answer (reading aids, AC-K1)", () => {
     const data = await res.json();
     expect(data.buzzwords).toEqual([]);
     expect(data.resumeAnchor).toBeNull();
-    expect(data.idealProject).toBeNull();
     expect(data.cues).toEqual(["A generic point"]);
   });
 });
@@ -399,12 +362,9 @@ describe("POST /api/copilot/answer (reading aids, AC-K1)", () => {
 // `tools` at the top level never reaches the wire (see lib/copilot/
 // companyFactsSource.wire.test.js). This discriminator has to read the
 // position the module actually uses, or every request below takes the DRAFT
-// branch for its facts search and these cases silently stop testing AC-V4. None of
-// these requests set a posting `description`, so generateIdealProjectExample
-// (lib/copilot/answerAids.js) always returns null without its own
-// generateContent call — see that function's own "no posting to build a
-// prompt from" contract — which is what keeps each request's call count to
-// exactly the facts search plus the draft, no third call to account for.
+// branch for its facts search and these cases silently stop testing AC-V4.
+// Each request's call count is exactly the facts search plus the draft — no
+// third generateContent call to account for.
 function mockGeminiWithFacts({ draft, facts = [], groundedUris = [] }) {
   getServerEnv.mockReturnValue({ geminiModel: "gemini-2.5-flash" });
   const generateContent = vi.fn(async (args) => {
@@ -506,8 +466,7 @@ describe("POST /api/copilot/answer (AC-V4: verified company facts)", () => {
     expect(res.status).toBe(200);
     const data = await res.json();
     expect(data).not.toHaveProperty("factSources");
-    // Exactly one generateContent call — the draft. No facts search, no
-    // ideal-project call (no posting description on this request).
+    // Exactly one generateContent call — the draft. No facts search.
     const client = getGeminiClient();
     expect(client.models.generateContent).toHaveBeenCalledTimes(1);
   });

@@ -30,7 +30,6 @@ const DRAFT_RESPONSE = {
   cues: ["Led migration", "Latency down"],
   buzzwords: ["migration"],
   resumeAnchor: { role: "Staff Engineer" },
-  idealProject: { title: "Platform consolidation" },
   // Deliberately NOT what classifyQuestionType would return for the
   // behavioral-sounding question used below ("Tell me about a time you
   // handled conflict." classifies as "behavioral"). The two have to differ,
@@ -192,7 +191,6 @@ describe("useLiveSession — manually typed questions (AC-O2)", () => {
     expect(entry.cues).toEqual(DRAFT_RESPONSE.cues);
     expect(entry.buzzwords).toEqual(DRAFT_RESPONSE.buzzwords);
     expect(entry.anchor).toEqual(DRAFT_RESPONSE.resumeAnchor);
-    expect(entry.idealProject).toEqual(DRAFT_RESPONSE.idealProject);
     // See DRAFT_RESPONSE's own note: "technical" is the DRAFTED answer's
     // classification, and it must win. classifyQuestionType would call this
     // same question "behavioral", so this assertion fails the moment manual

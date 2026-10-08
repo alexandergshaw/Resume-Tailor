@@ -29,7 +29,6 @@ function question(id, text, overrides = {}) {
     cues: [],
     buzzwords: [],
     anchor: null,
-    idealProject: null,
     type: null,
     error: "",
     speakerTag: null,

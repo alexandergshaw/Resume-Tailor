@@ -74,7 +74,7 @@
 // enforce; the table at the top of ./exportReachability.ledger.md is the
 // single place to read them if this prose has fallen behind.)
 //
-//   RULE TR-1 (396 symbols)  the export is unused by shipping code, but at
+//   RULE TR-1 (391 symbols)  the export is unused by shipping code, but at
 //       least one `.test.js` imports it BY NAME. This repo's dominant
 //       convention is to widen a module's export surface so a unit test can
 //       pin an internal helper or a threshold constant directly instead of
@@ -84,7 +84,7 @@
 //       of boilerplate is how the orphans below would get lost. Raising that
 //       count is a review event: see the assertion's own comment.
 //
-//   ORPHAN_EXPORTS (66 symbols)  unused by shipping code AND imported by no
+//   ORPHAN_EXPORTS (65 symbols)  unused by shipping code AND imported by no
 //       test anywhere. Nothing in this repository reads these. Each carries
 //       its own line and its own stated reason. This is where `summaryViewFor`
 //       lands. NOTE the boundary this bucket does NOT police: "unused" here
@@ -307,9 +307,9 @@ describe("every export of a shipping module is asked for, or is on a ledger with
     for (const entry of ORPHAN_EXPORTS) {
       expect(entry.why.length, `${keyOf(entry)} is on the ledger with no real reason`).toBeGreaterThan(60);
     }
-    // Pinned at 66. The same total has hidden opposite movements before, so every
-    // delta (56 -> 66) is stated by name in exportReachability.ledger.md, section 3.
-    expect(ORPHAN_EXPORTS).toHaveLength(66);
+    // Pinned at 65. The same total has hidden opposite movements before, so every
+    // delta (56 -> 65) is stated by name in exportReachability.ledger.md, section 3.
+    expect(ORPHAN_EXPORTS).toHaveLength(65);
   });
 
   it("[RULE TR-1] counts the exports whose only consumer is a test, exactly", () => {
@@ -321,15 +321,15 @@ describe("every export of a shipping module is asked for, or is on a ledger with
     // check the new export is a helper being pinned, not a feature that was
     // built and never connected, then update the number.
     //
-    // Pinned at 396. Every movement (299 -> 396) is stated by name in
+    // Pinned at 391. Every movement (299 -> 391) is stated by name in
     // exportReachability.ledger.md, section 4; append the new delta there.
-    expect(TEST_REFERENCED.length).toBe(396);
+    expect(TEST_REFERENCED.length).toBe(391);
     // A classifier that swept everything into this bucket would make the
     // orphan ledger vacuous, so pin the split rather than only the total.
     expect(UNUSED_IN_SHIPPING_MODULES.length).toBe(TEST_REFERENCED.length + ORPHANS.length);
-    // Pinned at 462 = 396 + 66. Every movement (356 -> 462), with which half
+    // Pinned at 456 = 391 + 65. Every movement (356 -> 456), with which half
     // moved, is stated in exportReachability.ledger.md, section 5.
-    expect(UNUSED_IN_SHIPPING_MODULES.length).toBe(462);
+    expect(UNUSED_IN_SHIPPING_MODULES.length).toBe(456);
   });
 
   it("still reports the two symbol-level cases this sweep was built for", () => {

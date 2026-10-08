@@ -37,7 +37,6 @@ function entry(overrides = {}) {
     cues: ["Cue one", "Cue two"],
     buzzwords: [],
     anchor: null,
-    idealProject: null,
     error: "",
     ...overrides,
   };

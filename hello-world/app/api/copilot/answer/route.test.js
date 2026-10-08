@@ -164,7 +164,7 @@ describe("POST /api/copilot/answer (points mode is unmoved by the answer-mode ch
     const data = await res.json();
     // AC-K1/AC-6.2: points mode gained the reading aids — the list has grown
     // again since this assertion was first written (cues, buzzwords,
-    // resumeAnchor, idealProject, and now pageSources, each added the same
+    // resumeAnchor, and now pageSources, each added the same
     // way). The rule this exact-key-set form protects was never "the list
     // stays this length" — it is that `answer` and `grounding` stay answer
     // mode's alone, which is what the two `not.toHaveProperty` checks right
@@ -172,7 +172,6 @@ describe("POST /api/copilot/answer (points mode is unmoved by the answer-mode ch
     expect(Object.keys(data).sort()).toEqual([
       "buzzwords",
       "cues",
-      "idealProject",
       "pageSources",
       "points",
       "resumeAnchor",
@@ -200,7 +199,6 @@ describe("POST /api/copilot/answer (points mode is unmoved by the answer-mode ch
       // never to an empty header.
       buzzwords: [],
       resumeAnchor: null,
-      idealProject: null,
       // No pages on file (mockUser() alone), so no `pageIds` request was
       // even made of the model — [] rather than an array of nulls, same
       // "nothing to cite" degrade as route.knowledgeBase.test.js pins.
@@ -348,9 +346,6 @@ describe("POST /api/copilot/answer (answer mode)", () => {
         // labeled "resume".
         source: "resume",
       },
-      // No applicationId on this request -> no posting description -> no
-      // benchmark to mine (same "nothing selected" degrade as buzzwords).
-      idealProject: null,
       // AC-6.3: no eligible project pages on this request (no `pages` was
       // passed to mockUserWithApplicationDocs), so there was no page to cite
       // — [], not an array of nulls, mirroring
@@ -453,7 +448,6 @@ describe("POST /api/copilot/answer (points mode grounding, AC-H4)", () => {
     expect(Object.keys(data).sort()).toEqual([
       "buzzwords",
       "cues",
-      "idealProject",
       "pageSources",
       "points",
       "resumeAnchor",
@@ -486,7 +480,7 @@ describe("POST /api/copilot/answer (points mode grounding, AC-H4)", () => {
   });
 });
 
-// AC-K1's "reading aids" cases (cues/buzzwords/resumeAnchor/idealProject)
+// AC-K1's "reading aids" cases (cues/buzzwords/resumeAnchor)
 // moved to route.companyFacts.test.js — this file was over the 1000-line
 // cap and that band needed nothing beyond the fixtures already shared with
 // the AC-V4 cases also living there. See that file's own header.

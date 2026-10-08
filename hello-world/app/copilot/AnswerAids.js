@@ -10,20 +10,18 @@ import { PROJECT_PAGE_SOURCE } from "../../lib/copilot/projectStories.js";
 
 // AC-K1.2/AC-K1.3: the two groups that sit UNDER a drafted answer's cues —
 // what the candidate actually has (the role and project their answer came
-// from), then what the posting wants (its vocabulary, and a benchmark
-// project). One component, rendered by all three surfaces that show a
-// drafted answer: practice mode's SampleAnswer.js, live mode's
-// QuestionFeed.js card, and the shared dashboard's CurrentAnswerPanel.
-// Three copies of this markup is exactly how live and practice drift into
-// showing different things for the same answer — the same reasoning that
-// pulled cleanAnswerPoints out into lib/copilot/answerPoints.js after its
-// two copies had already diverged.
+// from), then what the posting wants (its vocabulary). One component,
+// rendered by all three surfaces that show a drafted answer: practice
+// mode's SampleAnswer.js, live mode's QuestionFeed.js card, and the shared
+// dashboard's CurrentAnswerPanel. Three copies of this markup is exactly
+// how live and practice drift into showing different things for the same
+// answer — the same reasoning that pulled cleanAnswerPoints out into
+// lib/copilot/answerPoints.js after its two copies had already diverged.
 //
 // Purely presentational: every value arrives as a prop, computed server-side
-// by lib/copilot/postingBuzzwords.js, lib/copilot/resumeAnchor.js and
-// lib/copilot/idealProject.js. Nothing here fetches, and nothing here
-// decides what a buzzword or an aligned role IS — this only decides how
-// they look.
+// by lib/copilot/postingBuzzwords.js and lib/copilot/resumeAnchor.js.
+// Nothing here fetches, and nothing here decides what a buzzword or an
+// aligned role IS — this only decides how they look.
 //
 // Markup is two description lists rather than headings + paragraphs, on
 // purpose. Each label is a term whose value sits under it, which is what
@@ -38,9 +36,9 @@ import { PROJECT_PAGE_SOURCE } from "../../lib/copilot/projectStories.js";
 //
 // The two `dl`s and the divider between them are grouped by WHOSE material
 // it is, not by data type: the candidate's own role/project first, the
-// posting's vocabulary and benchmark project second. Both `dl`s share one
-// grid style and one row component (`Aid`) below so the two groups cannot
-// visually drift apart from each other.
+// posting's vocabulary second. Both `dl`s share one grid style and one row
+// component (`Aid`) below so the two groups cannot visually drift apart
+// from each other.
 
 // Below `md` the grid collapses to one column ordered dt, dd, dt, dd — a
 // single uniform rowGap would put a label exactly as far from its OWN value
@@ -69,8 +67,8 @@ const AID_GRID_SX = {
 };
 
 // The single margin used to separate stacked lines inside any one `dd` —
-// a role line above its description phrases, or a benchmark summary above
-// its metrics line. One constant so no row invents its own spacing.
+// a role line above its description phrases. One constant so no row invents
+// its own spacing.
 const LINE_GAP = 0.5;
 
 // WHERE a piece of material came from, in words — the single source of
@@ -126,10 +124,8 @@ function roleText(anchor) {
   return title || company;
 }
 
-// The one row shape both `dl`s are built from. `ddSx` is an escape hatch
-// for the single row that needs an extra visual marker (the benchmark
-// project's accent rule) — every other row leaves it unset.
-function Aid({ label, children, ddSx }) {
+// The one row shape both `dl`s are built from.
+function Aid({ label, children }) {
   return (
     <>
       <Typography
@@ -151,124 +147,14 @@ function Aid({ label, children, ddSx }) {
       >
         {label}
       </Typography>
-      <Box component="dd" sx={{ m: 0, ...BREAK_LONG_WORDS_SX, ...ddSx }}>
+      <Box component="dd" sx={{ m: 0, ...BREAK_LONG_WORDS_SX }}>
         {children}
       </Box>
     </>
   );
 }
 
-// AC-M2: the worked example. `idealProject.project` is the only place a
-// fabricated FIGURE is ever allowed to appear (lib/copilot/idealProject.js
-// / idealProjectNarrative.js) — `shape`, `summary` and `metrics` are exactly
-// as figure-free as they always were, unchanged. Every piece is normalized
-// independently before use, the same defensive shape the `idealMetrics`
-// filter in AnswerAids below uses (Array.isArray guard, then a non-empty-
-// string filter): a `project` that is missing, null, or carrying a non-array
-// `sections`/`outcomes` must degrade to rendering nothing — never throw,
-// never render an empty label.
-//
-// `hasExample` is gated on BOTH sections and outcomes surviving
-// normalization, not either alone: the contract only ever produces them
-// together (a `project` is either absent or carries exactly 4 sections and
-// exactly 3 outcomes), so treating one as sufficient would let a malformed
-// payload render the invented-numbers disclosure over an empty sections
-// list, or a figure list with no problem/built/ran/landed narrative above it
-// to anchor it. Either normalization coming up short falls all the way back
-// to exactly today's rendering — the first line, then the `metrics` line —
-// never a half-built block.
-//
-// N125: shared by the READY example and the TAILORED one, so both blocks
-// normalize the same way and `IdealExample` below renders the same markup for
-// either.
-function normalizeIdealExample(aid) {
-  const title = (aid?.project?.title || "").trim();
-  const sections = (Array.isArray(aid?.project?.sections) ? aid.project.sections : []).filter(
-    (s) => s && typeof s.label === "string" && s.label.trim() && typeof s.body === "string" && s.body.trim(),
-  );
-  const outcomes = (Array.isArray(aid?.project?.outcomes) ? aid.project.outcomes : []).filter(
-    (o) => o && typeof o.metric === "string" && o.metric.trim() && typeof o.figure === "string" && o.figure.trim(),
-  );
-  return { title, sections, outcomes, hasExample: sections.length > 0 && outcomes.length > 0 };
-}
-
-// The accent rule both example rows carry: the one benchmark device in the
-// component, never relying on colour alone (WCAG 1.4.1) — the disclosure text
-// carries the same warning the rule does.
-const IDEAL_DD_SX = { borderLeft: "2px solid var(--accent)", pl: 1.25 };
-
-// One sentence for the invented-numbers disclosure both example blocks open
-// with — one constant, so the two rows can never word it differently.
-const EXAMPLE_DISCLOSURE = " The example below and its numbers are invented. Replace them with your own.";
-
-// The title, the four-section list and the three-outcome list of one worked
-// example, rendered identically for the READY block and the TAILORED one.
-// Returns a fragment so its children sit directly in the caller's `Stack` and
-// keep that Stack's spacing. Callers render it only when `hasExample` is true.
-function IdealExample({ title, sections, outcomes }) {
-  return (
-    <>
-      {title ? (
-        <Typography variant="body2" sx={{ color: "var(--text-primary)", fontWeight: 600 }}>
-          {title}
-        </Typography>
-      ) : null}
-      {/* A real `<ul>`/`<li>` list, not four stacked paragraphs
-          — bullets are literally what "make it ... bulleted"
-          asked for. Same list styling the outcomes list just
-          below uses, and for the identical reason: markers are
-          left INTACT (no `listStyle: "none"`). Unlike the
-          buzzword `Stack` in AnswerAids — which isn't a `ul` to
-          begin with, so it can strip its markers and put the
-          `list` role back explicitly via `role="list"` — this
-          element IS a real `ul`; if its markers were stripped
-          there would be nothing here to restore the role WITH
-          (R-136). `pl: 2.5`, matching the outcomes list below,
-          so both lists' markers clear this row's own accent
-          rule at the same depth instead of one sitting at the
-          browser default `padding-inline-start` (~40px). Bold
-          (not colour) still distinguishes each label from its
-          body — WCAG 1.4.1 — and a colon, not an em dash,
-          follows it: a colon is spoken as a pause, an em dash is
-          not, the same reason every other label/body pair on
-          this row uses one. */}
-      <Box component="ul" sx={{ m: 0, pl: 2.5 }}>
-        {sections.map((section, i) => (
-          <Typography key={i} component="li" variant="body2" sx={{ color: "var(--text-primary)" }}>
-            <strong>{section.label}:</strong> {section.body}
-          </Typography>
-        ))}
-      </Box>
-      {/* A real `<ul>`/`<li>` list — markers left INTACT, unlike
-          the buzzword `Stack` in AnswerAids, which strips its markers
-          with `listStyle: "none"` and puts the `list` role back
-          explicitly because MUI's `Stack` isn't a `ul` to begin
-          with. This IS one already, so doing the same thing here
-          would remove the only signal telling a screen reader
-          it's a list, with nothing here to restore the role
-          (R-136). `pl: 2.5`, not the browser default
-          `padding-inline-start` (~40px), so the markers clear
-          this row's own accent rule instead of shoving every
-          line in the row well to the right of its neighbours. */}
-      <Box component="ul" sx={{ m: 0, pl: 2.5 }}>
-        {outcomes.map((outcome, i) => (
-          <Typography key={i} component="li" variant="body2" sx={{ color: "var(--text-primary)" }}>
-            <strong>{outcome.metric}</strong>: {outcome.figure}
-          </Typography>
-        ))}
-      </Box>
-    </>
-  );
-}
-
-// `idealProject` is the READY example (`{ shape, summary, metrics, project? }`);
-// `idealProjectTailored` is the same shape, generated for this exact question,
-// and arrives LATER — it is added below READY, never swapped for it
-// (N125). `tailoredStatus` ("idle" | "loading" | "done" | "failed") only
-// drives the pending cue: "loading" shows "Tailoring to this question…" beside
-// READY, and every other value shows nothing, because a failed or timed-out
-// tailoring is not something to tell a candidate who is mid-question.
-export default function AnswerAids({ buzzwords, anchor, idealProject, idealProjectTailored, tailoredStatus }) {
+export default function AnswerAids({ buzzwords, anchor }) {
   const terms = (Array.isArray(buzzwords) ? buzzwords : []).filter((t) => typeof t === "string" && t.trim());
 
   // A plausibility gate upstream (lib/copilot/resumeAnchor.js) can suppress
@@ -293,48 +179,12 @@ export default function AnswerAids({ buzzwords, anchor, idealProject, idealProje
     (d) => typeof d === "string" && d.trim(),
   );
 
-  // The kind of project a recruiter for THIS posting would consider ideal,
-  // and the metric categories they'd want to hear about — a BENCHMARK,
-  // never something the candidate did. `idealProject` is
-  // `{ shape, summary, metrics, project? } | null`
-  // (lib/copilot/idealProject.js); an entry cached before `summary` existed
-  // carries `shape` but no `summary`, so the advisory line falls back to a
-  // shape-derived sentence, and an entry cached before AC-M2 carries no
-  // `project` at all, so the worked example below (normalized separately,
-  // just underneath) simply doesn't appear. `metrics` is category names
-  // only ("adoption rate"), never figures.
-  const idealSummary = (idealProject?.summary || "").trim();
-  const idealShape = (idealProject?.shape || "").trim();
-  const idealMetrics = (Array.isArray(idealProject?.metrics) ? idealProject.metrics : []).filter(
-    (m) => typeof m === "string" && m.trim(),
-  );
-  const idealLine = idealSummary || (idealShape ? `Roles like this look for: ${idealShape}.` : "");
-
-  // AC-M2: the worked example, normalized by `normalizeIdealExample` above —
-  // the SAME function for the READY example and the TAILORED one, so the two
-  // blocks can never disagree about what a complete example is. Named
-  // `idealProject*` rather than `project*` on purpose: `project` above is the
-  // candidate's OWN résumé project string ("Project to talk about") and is a
-  // completely different thing.
-  const {
-    title: idealProjectTitle,
-    sections: idealProjectSections,
-    outcomes: idealProjectOutcomes,
-    hasExample: hasIdealProjectExample,
-  } = normalizeIdealExample(idealProject);
-  // N125: the second, per-question example. Absent (null) until it resolves,
-  // and a payload that is not a COMPLETE example renders nothing at all — the
-  // READY block above it is never replaced, moved or cleared either way.
-  const tailoredExample = normalizeIdealExample(idealProjectTailored);
-
   const hasRoleRow = !!role || description.length > 0;
   const hasProjectRow = !!project;
   const hasResumeGroup = hasRoleRow || hasProjectRow;
 
   const hasWordsRow = terms.length > 0;
-  const hasIdealRow = !!idealLine || idealMetrics.length > 0 || hasIdealProjectExample;
-  const hasTailoredRow = tailoredExample.hasExample;
-  const hasPostingGroup = hasWordsRow || hasIdealRow || hasTailoredRow;
+  const hasPostingGroup = hasWordsRow;
 
   // Nothing to show is nothing rendered — never a header with an empty
   // group under it. No posting selected means no posting group; no
@@ -453,132 +303,6 @@ export default function AnswerAids({ buzzwords, anchor, idealProject, idealProje
                     }}
                   />
                 ))}
-              </Stack>
-            </Aid>
-          ) : null}
-
-          {/* The one benchmark row in the component — describes work the
-              candidate did NOT do, so the disclosure has to survive contact
-              with a screen reader no matter what. It can't live in the `dt`
-              alone: both `<dl>`s above use `display: grid` (AID_GRID_SX),
-              which drops the `<dl>`'s description-list role in WebKit, and
-              on that engine an orphaned `dt` is just a bare text run with no
-              programmatic tie to the value it's warning about. That isn't a
-              theoretical gap — practice mode renders this exact component on
-              SampleAnswer.js and CurrentAnswerPanel (via PracticeClient.js)
-              and captures with `getUserMedia`, which Safari supports fully,
-              so Safari/VoiceOver is a supported route here, not just live
-              mode's Chrome/Edge-only `getDisplayMedia` path. So the
-              disclosure is duplicated in the `dd` itself, where it needs no
-              list semantics to reach the value it governs — the `dt` below
-              is now a plain label ("A ready example", or "Ideal project for
-              this posting" while there is no worked example; no em
-              dash: an em dash is not spoken at default screen-reader
-              punctuation, so it would run the label's two halves together
-              and lose the contrast the punctuation was carrying — the
-              period ending the disclosure sentence below IS spoken as a
-              pause). This is the only accent device in the component, and it
-              never relies on colour alone (WCAG 1.4.1): the text carries the
-              same warning the rule does. */}
-          {hasIdealRow ? (
-            <Aid
-              label={hasIdealProjectExample ? "A ready example" : "Ideal project for this posting"}
-              ddSx={IDEAL_DD_SX}
-            >
-              <Stack spacing={LINE_GAP}>
-                {/* Two things changed here, both from the same piece of
-                    user feedback: "way too fucking verbose ... keep the
-                    core with the project details and numbers, just make it
-                    much shorter and bulleted".
-
-                    First, this used to be TWO separate lines — "Not from
-                    your resume." with its own sentence, then, only when a
-                    worked example exists, a SECOND paragraph disclosing
-                    that ITS numbers are invented too. Both said the same
-                    thing from two angles, so they're now one line: `Not
-                    from your resume.` still opens it, still `<strong>`,
-                    and — per the comment above this row — the whole line
-                    still lives in the `dd` ahead of every figure, because
-                    this component's `<dl>`s are `display: grid` and an
-                    orphaned `dt` is unattached text on WebKit. Sentences
-                    inside the line are separated by periods, never an em
-                    dash, for the same spoken-punctuation reason as
-                    everywhere else on this row (R-136).
-
-                    Second, the `idealLine` advisory sentence (`summary`,
-                    added by R-130's amendment 3 because the block once had
-                    "no substance") is dropped whenever a worked example
-                    exists: it restates in prose what the title and the
-                    sections/outcomes below it already show concretely, and
-                    it was the single longest line in the block. `idealLine`
-                    keeps its exact original job, and its exact original
-                    rendering, for the one case that still has no concrete
-                    example to lose it to — an `idealProject` cached before
-                    AC-M2, which carries `summary`/`shape` but no `project`.
-                    That branch (the `else` below) is byte-identical to
-                    before this change. */}
-                <Typography variant="body2" sx={{ color: "var(--text-primary)" }}>
-                  <strong>Not from your resume.</strong>
-                  {hasIdealProjectExample ? EXAMPLE_DISCLOSURE : idealLine ? ` ${idealLine}` : ""}
-                </Typography>
-                {hasIdealProjectExample ? (
-                  <IdealExample
-                    title={idealProjectTitle}
-                    sections={idealProjectSections}
-                    outcomes={idealProjectOutcomes}
-                  />
-                ) : null}
-                {!hasIdealProjectExample && idealMetrics.length ? (
-                  // R-130's term-list echo: once the outcomes list above
-                  // renders, it already gives every one of these same
-                  // category names a worked figure, two lines closer to the
-                  // reader — so this line renders ONLY when there is no
-                  // worked example to say it better (no `project` on the
-                  // payload, or a malformed one), which is exactly today's
-                  // behaviour for an entry cached before AC-M2.
-                  <Typography variant="body2" sx={{ color: "var(--text-secondary)" }}>
-                    Metrics to have ready: {idealMetrics.join(", ")}.
-                  </Typography>
-                ) : null}
-                {/* N125: the pending cue, INSIDE the READY row so it sits
-                    beside the example it is about and moves with it. Plain
-                    text, deliberately not a spinner over the content and
-                    never an error node (no role="alert", no Alert): a
-                    tailoring that has not landed — or never will, on a
-                    timeout or an embedded engine, where this status is never
-                    "loading" at all — is not a failure the candidate should
-                    be told about mid-question. `--text-secondary`, not
-                    `--text-muted`, for the same contrast reason as the rest
-                    of this component. */}
-                {tailoredStatus === "loading" ? (
-                  <Typography variant="caption" sx={{ color: "var(--text-secondary)" }}>
-                    Tailoring to this question…
-                  </Typography>
-                ) : null}
-              </Stack>
-            </Aid>
-          ) : null}
-
-          {/* N125: the TAILORED example, a second row BELOW the READY one and
-              under the same accent rule. Added when it resolves, never swapped
-              for READY: the instant content above it stays put under the
-              reader's eye. Opens with the same disclosure line as READY, since
-              its numbers are every bit as invented. Gated on a COMPLETE
-              example (`hasTailoredRow`), so a malformed payload renders
-              nothing here rather than a half block. The label has no em dash,
-              for the spoken-punctuation reason given above (R-136). */}
-          {hasTailoredRow ? (
-            <Aid label="Tailored to this question" ddSx={IDEAL_DD_SX}>
-              <Stack spacing={LINE_GAP}>
-                <Typography variant="body2" sx={{ color: "var(--text-primary)" }}>
-                  <strong>Not from your resume.</strong>
-                  {EXAMPLE_DISCLOSURE}
-                </Typography>
-                <IdealExample
-                  title={tailoredExample.title}
-                  sections={tailoredExample.sections}
-                  outcomes={tailoredExample.outcomes}
-                />
               </Stack>
             </Aid>
           ) : null}

@@ -480,10 +480,10 @@ describe("the route's blast radius", () => {
     expect(ROUTE_CODE).toContain("answerContextKey");
   });
 
-  it("touches neither the ideal-project benchmark nor company facts", () => {
+  it("touches neither the reading aids nor company facts", () => {
     // Neither is the candidate's own experience, so neither may become
     // "further detail" about something they did.
-    for (const forbidden of ["idealProject", "answerCompanyFacts", "answerAids", "startCompanyFacts"]) {
+    for (const forbidden of ["answerCompanyFacts", "answerAids", "startCompanyFacts"]) {
       expect(ROUTE_CODE).not.toContain(forbidden);
     }
   });

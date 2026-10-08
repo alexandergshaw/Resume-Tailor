@@ -56,7 +56,6 @@ const DRAFT_RESPONSE = {
   cues: ["Constraint", "Tradeoff"],
   buzzwords: ["latency"],
   resumeAnchor: { role: "Staff Engineer" },
-  idealProject: { title: "Platform consolidation" },
   pageSources: [{ id: "p1", title: "Payments migration" }],
   type: "behavioral",
 };
@@ -192,7 +191,6 @@ describe("invalidateDrafts keeps the QUESTIONS and clears the DRAFTS (AC-A21b)",
     expect(entry.cues).toEqual([]);
     expect(entry.buzzwords).toEqual([]);
     expect(entry.anchor).toBe(null);
-    expect(entry.idealProject).toBe(null);
     expect(entry.pageSources).toEqual([]);
   });
 

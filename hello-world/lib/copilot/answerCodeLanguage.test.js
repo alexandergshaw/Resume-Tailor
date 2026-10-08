@@ -98,8 +98,8 @@ const BASE = {
 
 const json = (value) => JSON.stringify(value);
 
-// A client shaped exactly like the one `generateIdealProjectExample` is handed
-// (`answerAids.js:104-108`): `client.models.generateContent(...)`.
+// A client shaped like the real Gemini client generateCodeLanguage is handed:
+// `client.models.generateContent(...)`.
 function clientReturning(text) {
   return { models: { generateContent: vi.fn(async () => ({ text })) } };
 }
@@ -204,7 +204,7 @@ describe("generateCodeLanguage — AC-C8d2's mapping table, model mocked (AC-C8e
   });
 
   it("resolves to none — never rejects, never returns null — on a THROWN client", async () => {
-    // BL-2's other half. `answerAids.js:111-113` states this contract
+    // BL-2's other half. `generateCodeLanguage` states this contract
     // unconditionally, and AC-C8e's cost argument depends on it:
     // `createTtlCache` NEVER caches a rejection (`answerSessionCache.js:106-112`),
     // so a rejecting loader means a fresh Gemini call on EVERY code-bearing

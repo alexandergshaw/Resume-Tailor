@@ -86,7 +86,6 @@ describe("draftAnswerStreaming (AC-P2.6)", () => {
       type: "behavioral",
       buzzwords: ["kubernetes"],
       resumeAnchor: { title: "Engineer", company: "Acme" },
-      idealProject: { shape: "platform" },
       grounding: { resume: true, coverLetter: false },
     };
     globalThis.fetch = vi.fn().mockResolvedValue(streamingResponse([frame(done)]));
@@ -96,7 +95,6 @@ describe("draftAnswerStreaming (AC-P2.6)", () => {
     expect(result.type).toBe("behavioral");
     expect(result.buzzwords).toEqual(done.buzzwords);
     expect(result.resumeAnchor).toEqual(done.resumeAnchor);
-    expect(result.idealProject).toEqual(done.idealProject);
     expect(result.grounding).toEqual(done.grounding);
   });
 

@@ -82,7 +82,6 @@ function frame(label) {
     cues: [label],
     buzzwords: [],
     resumeAnchor: null,
-    idealProject: null,
     pageSources: [],
     type: "behavioral",
   };
@@ -111,7 +110,6 @@ function seedQuestion(id, question) {
     cues: [],
     buzzwords: [],
     anchor: null,
-    idealProject: null,
     pageSources: [],
     type: null,
     error: "",

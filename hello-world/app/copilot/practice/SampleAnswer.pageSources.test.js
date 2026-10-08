@@ -40,7 +40,6 @@ async function render(props) {
         cues: ["The migration"],
         buzzwords: [],
         anchor: null,
-        idealProject: null,
         pageSources: [],
         grounding: null,
         error: "",

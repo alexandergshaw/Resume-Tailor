@@ -1,7 +1,7 @@
-import { describe, it, expect, vi } from "vitest";
-import { normalizeModelPoints, generateIdealProjectExample, answerAids } from "./answerAids";
+import { describe, it, expect } from "vitest";
+import { normalizeModelPoints, answerAids } from "./answerAids";
 
-// Direct unit coverage for the three functions moved out of
+// Direct unit coverage for the functions moved out of
 // app/api/copilot/answer/route.js into this module (see this file's own
 // header for why). Every one of these was previously exercised ONLY through
 // a mocked `generateContent` call several layers away in route.test.js; that
@@ -90,82 +90,6 @@ describe("normalizeModelPoints", () => {
   });
 });
 
-describe("generateIdealProjectExample", () => {
-  it("returns null without calling the model when there is no posting to build a prompt from", async () => {
-    const client = { models: { generateContent: vi.fn() } };
-    const result = await generateIdealProjectExample({
-      client,
-      geminiModel: "gemini-2.5-flash",
-      description: "",
-      question: "Tell me about a project.",
-    });
-    expect(result).toBeNull();
-    expect(client.models.generateContent).not.toHaveBeenCalled();
-  });
-
-  it("returns null, never throws, when the model call rejects", async () => {
-    const client = { models: { generateContent: vi.fn().mockRejectedValue(new Error("network")) } };
-    const result = await generateIdealProjectExample({
-      client,
-      geminiModel: "gemini-2.5-flash",
-      description: "We need a platform engineer to scale checkout.",
-      question: "Tell me about a project.",
-    });
-    expect(result).toBeNull();
-  });
-
-  it("returns null when the model's response fails normalizeIdealProject's validation", async () => {
-    const client = {
-      models: { generateContent: vi.fn().mockResolvedValue({ text: JSON.stringify({ title: "Incomplete" }) }) },
-    };
-    const result = await generateIdealProjectExample({
-      client,
-      geminiModel: "gemini-2.5-flash",
-      description: "We need a platform engineer to scale checkout.",
-      question: "Tell me about a project.",
-    });
-    expect(result).toBeNull();
-  });
-
-  it("returns the normalized project on a valid response", async () => {
-    const validPayload = {
-      title: "Checkout resilience",
-      sections: [
-        {
-          label: "Problem",
-          body: "Checkout silently failed under peak weekend load, and the team had no early warning before customers noticed.",
-        },
-        {
-          label: "Built",
-          body: "Added a request queue and an automatic retry layer in front of the third-party payment provider's API.",
-        },
-        {
-          label: "Ran",
-          body: "Rolled the queue out gradually behind a feature flag, watching error dashboards closely across two full sprints.",
-        },
-        {
-          label: "Landed",
-          body: "Checkout errors during peak traffic dropped close to zero and the on-call pager stayed quiet on launch weekends.",
-        },
-      ],
-      outcomes: [
-        { metric: "error rate", figure: "6% down to 0%" },
-        { metric: "peak throughput", figure: "3x without added capacity" },
-        { metric: "on-call pages", figure: "9 per week down to 1" },
-      ],
-    };
-    const client = { models: { generateContent: vi.fn().mockResolvedValue({ text: JSON.stringify(validPayload) }) } };
-    const result = await generateIdealProjectExample({
-      client,
-      geminiModel: "gemini-2.5-flash",
-      description: "We need a platform engineer to scale checkout.",
-      question: "Tell me about a project.",
-    });
-    expect(result).not.toBeNull();
-    expect(result.title).toBe("Checkout resilience");
-  });
-});
-
 describe("answerAids", () => {
   it("degrades every aid to absent when there is nothing to build one from", async () => {
     const result = await answerAids({
@@ -176,7 +100,7 @@ describe("answerAids", () => {
       points: ["A point about myself."],
       story: { matched: false },
     });
-    expect(result).toEqual({ buzzwords: [], resumeAnchor: null, idealProject: null });
+    expect(result).toEqual({ buzzwords: [], resumeAnchor: null });
   });
 
   it("prefers the résumé over the prep profile for resumeAnchor, and labels the source", async () => {
@@ -194,36 +118,6 @@ describe("answerAids", () => {
     });
     expect(result.resumeAnchor).not.toBeNull();
     expect(result.resumeAnchor.source).toBe("resume");
-  });
-
-  it("enriches the deterministic ideal project with a generated one, keeping the deterministic shape/summary/metrics", async () => {
-    // THE BUG THIS PREVENTS (see this function's own comment): substituting
-    // the generated project for the WHOLE aid, rather than only its
-    // `project` field, drops `shape`/`summary`/`metrics` and the aid
-    // silently renders as nothing downstream.
-    //
-    // N125 §3.4/§5.7 (ruled): answerAids now takes an ALREADY-RESOLVED
-    // `generatedProject` value, not a `generatedProjectPromise` it awaits
-    // itself (the per-question model call moved off this function's path). Same
-    // enrichment behaviour; the promise is resolved by the caller. RED on HEAD:
-    // the current signature reads `generatedProjectPromise` and ignores
-    // `generatedProject`, so the aid carries the deterministic project, not
-    // this one.
-    const description = "We need a Senior Product Manager with Agile experience to lead a cross-functional team.";
-    const generatedProject = { title: "Generated title", sections: [], outcomes: [] };
-    const result = await answerAids({
-      postingDescription: description,
-      resume: "",
-      profile: "",
-      question: "Tell me about a project.",
-      points: ["A point."],
-      generatedProject,
-      story: { matched: false },
-    });
-    expect(result.idealProject).not.toBeNull();
-    expect(result.idealProject.project).toEqual({ title: "Generated title", sections: [], outcomes: [] });
-    expect(result.idealProject).toHaveProperty("shape");
-    expect(result.idealProject.shape.trim()).not.toBe("");
   });
 
   it("falls back to the page-derived project aid, source PROJECT_PAGE_SOURCE, only when neither résumé nor prep notes name a role", async () => {

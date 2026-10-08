@@ -28,7 +28,6 @@ function entry(id, question, overrides = {}) {
     cues: [],
     buzzwords: [],
     anchor: null,
-    idealProject: null,
     pageSources: [],
     error: "",
     ...overrides,

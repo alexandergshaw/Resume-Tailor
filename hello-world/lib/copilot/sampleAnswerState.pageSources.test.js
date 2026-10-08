@@ -3,7 +3,7 @@
 //
 // WHY THIS IS ITS OWN FILE AND ITS OWN CASE: a drafted answer now reports
 // which of the candidate's own project pages each point came from. That field
-// travels the same path `cues`, `buzzwords`, `anchor` and `idealProject`
+// travels the same path `cues`, `buzzwords` and `anchor`
 // already travel — and every one of those had to be added to this slot
 // explicitly. A field that reaches the render layer but not the cache
 // produces an answer that shows its sources when freshly drafted and loses
@@ -36,7 +36,6 @@ function entry(extra = {}) {
     cues: ["The ledger", "The result"],
     buzzwords: [],
     anchor: null,
-    idealProject: null,
     grounding: null,
     profile: PROFILE,
     interviewType: TYPE,

@@ -7,7 +7,7 @@ vi.mock("@/lib/supabase/server", () => ({ createClient: vi.fn() }));
 // case above this mock's addition sends no `applicationId`, so the real
 // module would already behave this way; mocked so the one new case below can
 // pin a resolved TOKEN without warming a real cache through a hanging
-// `generateContent` mock (AC-P3.2's worked-example stand-in, above).
+// `generateContent` mock (the never-settling stand-in in mockGeminiStream).
 vi.mock("@/lib/copilot/answerCodeLanguage", () => ({
   startCodeLanguageResolution: vi.fn(),
   peekCodeLanguage: vi.fn(() => null),
@@ -21,15 +21,14 @@ import { createClient } from "@/lib/supabase/server";
 import { peekCodeLanguage } from "@/lib/copilot/answerCodeLanguage";
 import { splitFrames } from "@/lib/copilot/answerStream";
 
-// AC-P2.3/AC-P2.4/AC-P2.5/AC-P3.2: the streaming half of /api/copilot/answer.
+// AC-P2.3/AC-P2.4/AC-P2.5: the streaming half of /api/copilot/answer.
 //
 // The user-visible claim under test is "the first bullet appears while the
 // model is still writing the rest". That is only true if (a) the route
 // actually flushes partial frames instead of buffering the whole response,
-// and (b) nothing else on the request — the worked-example call, the posting
-// lookup — sits in front of those frames. Both are asserted below by
-// construction (a promise that never settles), not by timing, so neither can
-// pass on a fast machine and fail on a slow one.
+// and (b) nothing else on the request sits in front of those frames. Both
+// are asserted below by construction (a promise that never settles), not by
+// timing, so neither can pass on a fast machine and fail on a slow one.
 
 function jsonRequest(body) {
   return { json: async () => body };
@@ -124,13 +123,13 @@ const PAYLOAD = {
   type: "behavioral",
 };
 
-function mockGeminiStream(chunks, { idealProject } = {}) {
+function mockGeminiStream(chunks) {
   getServerEnv.mockReturnValue({ geminiModel: "gemini-2.5-flash" });
   const models = {
     generateContentStream: vi.fn().mockResolvedValue(chunkStream(chunks)),
-    // The worked-example call. Defaults to a promise that NEVER settles, so
-    // any test that completes proves the points frames did not wait on it.
-    generateContent: vi.fn(() => idealProject || new Promise(() => {})),
+    // Any non-streaming model call. A promise that NEVER settles, so any test
+    // that completes proves the points frames did not wait on one.
+    generateContent: vi.fn(() => new Promise(() => {})),
   };
   getGeminiClient.mockReturnValue({ models });
   return models;
@@ -217,7 +216,6 @@ describe("POST /api/copilot/answer with stream:true (AC-P2.3)", () => {
     expect(done.cues).toHaveLength(PAYLOAD.points.length);
     expect(Array.isArray(done.buzzwords)).toBe(true);
     expect(done).toHaveProperty("resumeAnchor");
-    expect(done).toHaveProperty("idealProject");
   });
 
   it("reports a model failure as a terminal error frame, never as a hung stream", async () => {
@@ -246,22 +244,6 @@ describe("POST /api/copilot/answer with stream:true (AC-P2.3)", () => {
     expect(terminal).toHaveLength(1);
     expect(terminal[0].t).toBe("error");
   });
-});
-
-describe("the worked example never blocks the bullets (AC-P3.2)", () => {
-  it("streams and completes even when the ideal-project call never resolves", async () => {
-    // generateContent is a promise that never settles. If `answerAids` still
-    // awaits it on the critical path — as it does today — this test hangs and
-    // times out rather than failing cleanly, which is itself the signal.
-    mockUser();
-    mockGeminiStream(fragment(JSON.stringify(PAYLOAD), 8));
-    const res = await POST(jsonRequest({ question: "Tell me about a migration.", stream: true }));
-    const frames = await readFrames(res);
-    expect(frames.filter((f) => f.t === "points").length).toBeGreaterThan(0);
-    const done = frames.find((f) => f.t === "done");
-    expect(done).toBeTruthy();
-    expect(done.points).toEqual(PAYLOAD.points);
-  }, 5000);
 });
 
 describe("the code-language TOKEN reaches the streamed prompt, the posting never does (AC-C9b)", () => {

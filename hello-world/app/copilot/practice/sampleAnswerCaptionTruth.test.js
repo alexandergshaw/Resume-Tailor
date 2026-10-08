@@ -53,7 +53,6 @@ const BASE = {
   cues: ["The sharding"],
   buzzwords: [],
   anchor: null,
-  idealProject: null,
   pageSources: [{ id: "p1", title: "Payments migration" }],
   error: "",
   isEmbedded: false,

@@ -84,7 +84,6 @@ export function useQuestionPipeline({
           cues: [],
           buzzwords: [],
           anchor: null,
-          idealProject: null,
           // ARCH §3.5/§4e: seeded empty alongside the other reading aids —
           // an entry is a complete shape from the moment it exists, whether
           // loading or idle. useDraftAnswer.js's runDraft is the sole

@@ -160,7 +160,6 @@ const REVEAL_PAYLOAD = {
   cues: ["Constraint", "Tradeoff"],
   buzzwords: [],
   resumeAnchor: null,
-  idealProject: null,
   pageSources: [],
   grounding: null,
 };

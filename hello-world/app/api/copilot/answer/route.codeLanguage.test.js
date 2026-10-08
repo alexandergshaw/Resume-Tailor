@@ -129,9 +129,9 @@ function mockUserWithPosting({ description = DESCRIPTION, title = TITLE } = {}) 
 }
 
 // POSITIVE identification of each call, per AC-C9d: the answer/points prompts
-// are the ones carrying `The interviewer asked:`; the worked-example prompt
-// says `The candidate was just asked:` instead and is the only other call.
-// A growing EXCLUSION list is exactly what AC-C9d says not to build.
+// are the ones carrying `The interviewer asked:`; any other model call on the
+// request is told apart by that marker's absence, never by a growing
+// EXCLUSION list, which is exactly what AC-C9d says not to build.
 const ANSWER_PROMPT_MARKER = "The interviewer asked:";
 
 function mockGeminiPerCall() {
@@ -139,9 +139,8 @@ function mockGeminiPerCall() {
   const generateContent = vi.fn(async (req) => {
     const text = String(req?.contents?.[0]?.parts?.[0]?.text || "");
     if (text.includes(ANSWER_PROMPT_MARKER)) return { text: JSON.stringify(ANSWER_PAYLOAD) };
-    // The worked-example call. Unparseable on purpose: its result is an aid
-    // beside the answer and falls back to the deterministic archetype, which
-    // keeps this file's subject to one thing.
+    // Any other model call. Unparseable on purpose, which keeps this file's
+    // subject to one thing.
     return { text: "not json at all" };
   });
   getGeminiClient.mockReturnValue({ models: { generateContent } });
@@ -490,10 +489,8 @@ describe("only the TOKEN crosses into the answer prompt (AC-C9)", () => {
   });
 
   it("carries neither on the STREAMING path either (AC-C9b)", async () => {
-    // Sited here rather than left to `idealProjectWiring.test.js`, which
-    // sends no `stream` key at all and therefore never reaches `streamAnswer`
-    // — and no `interviewType`, so `general` is normalized in and this feature
-    // is never exercised there.
+    // Sited here because the non-streaming cases above send no `stream` key
+    // at all and therefore never reach `streamAnswer`.
     peekCodeLanguage.mockReturnValue("Python");
     const stream = mockGeminiStreaming();
     const res = await draft({ stream: true });

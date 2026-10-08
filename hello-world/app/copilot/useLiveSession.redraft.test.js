@@ -42,7 +42,6 @@ const DRAFT_RESPONSE = {
   cues: [],
   buzzwords: [],
   resumeAnchor: null,
-  idealProject: null,
   type: "behavioral",
 };
 

@@ -10,7 +10,7 @@ import Typography from "@mui/material/Typography";
 import { answerLines } from "@/lib/copilot/answerPoints";
 import { answerStatusMessage, visuallyHidden } from "@/lib/copilot/answerStatus";
 import AnswerLines from "../AnswerLines";
-import IdealAnswerAids from "../IdealAnswerAids";
+import AnswerAids from "../AnswerAids";
 import { TOUCH_TARGET_SX, WRAP_ROW_SX } from "@/app/theme/mobileSx";
 
 // G1: the toggleable sample answer for practice mode's current question.
@@ -100,13 +100,6 @@ export default function SampleAnswer({
   // decides what (if anything) each one looks like.
   buzzwords,
   anchor,
-  // N125: the question on screen, which the worked example is asked for. The
-  // example itself (the kind of project a recruiter for this posting would
-  // consider ideal, and the metrics they'd want to hear, rendered as a
-  // benchmark rather than a claim) is NOT a prop any more: it is fetched by
-  // useIdealProject inside IdealAnswerAids, so the frozen `idealProject` the
-  // sample answer was cached with is never rendered beside it.
-  question,
   // ARCH §3.5/§4e: which knowledge-base page (if any) each point in
   // `points` came from — Array<{id, title} | null>, positionally paired.
   // Passed straight to answerLines below, exactly like `cues`; AnswerLines
@@ -218,7 +211,7 @@ export default function SampleAnswer({
           {status === "done" && lines.length > 0 ? (
             <>
               <AnswerLines lines={lines} />
-              <IdealAnswerAids buzzwords={buzzwords} anchor={anchor} question={question} />
+              <AnswerAids buzzwords={buzzwords} anchor={anchor} />
               <Typography variant="caption" sx={{ color: "var(--text-muted)", display: "block", mt: 1 }}>
                 {sourceCaption(isEmbedded, grounding)}
               </Typography>

@@ -108,8 +108,7 @@ export function startCodeLanguageResolution({
   }
 }
 
-// The model call itself (AC-C6). Mirrors `generateIdealProjectExample`
-// (`answerAids.js`) exactly in shape — a JSON-mode Gemini call, no `tools`,
+// The model call itself (AC-C6). A JSON-mode Gemini call, no `tools`,
 // no `thinkingConfig`, this call searches nothing and needs no reasoning
 // chain. `applicationId` is a fifth argument that exists only to reach the
 // log line below (test-round ruling 4) — it is never sent to the model, and

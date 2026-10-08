@@ -70,7 +70,6 @@ async function render(props) {
           cues: [],
           buzzwords: [],
           anchor: null,
-          idealProject: null,
           pageSources: [],
           grounding: null,
           error: "The drafter did not answer.",

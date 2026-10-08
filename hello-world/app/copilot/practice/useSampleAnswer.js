@@ -92,7 +92,6 @@ export function useSampleAnswer({ question, profile, interviewType, applicationI
       cues: [],
       buzzwords: [],
       anchor: null,
-      idealProject: null,
       // ARCH §3.5/§4e: seeded empty alongside the other reading aids while
       // loading — a real value only ever lands from the resolved response
       // below, never mid-request.
@@ -106,9 +105,9 @@ export function useSampleAnswer({ question, profile, interviewType, applicationI
     });
     // AC-H9/AC-K1: the route's `mode: "answer"` response is
     // { points, cues, answer, type, grounding, buzzwords, resumeAnchor,
-    // idealProject, pageSources }. `cues` is what SampleAnswer.js renders,
+    // pageSources }. `cues` is what SampleAnswer.js renders,
     // with `points` alongside its point (answerLines); `buzzwords`/
-    // `resumeAnchor`/`idealProject`/`pageSources` are the subsections under
+    // `resumeAnchor`/`pageSources` are the subsections under
     // it (ARCH §3.5 added `pageSources` — which knowledge-base page, if any,
     // each point came from). The derived prose `answer` field exists for a
     // later speech-synthesis feature and is deliberately not read here.
@@ -128,7 +127,7 @@ export function useSampleAnswer({ question, profile, interviewType, applicationI
       codeLanguage: cl,
       mode: "answer",
     })
-      .then(({ points, cues, buzzwords, resumeAnchor, idealProject, pageSources, grounding }) => {
+      .then(({ points, cues, buzzwords, resumeAnchor, pageSources, grounding }) => {
         if (genRef.current !== gen) return;
         const cleanPoints = Array.isArray(points) ? points : [];
         // AC-K1: same defensive normalization `points` already gets — a
@@ -138,7 +137,6 @@ export function useSampleAnswer({ question, profile, interviewType, applicationI
         const cleanCues = Array.isArray(cues) ? cues : [];
         const cleanBuzzwords = Array.isArray(buzzwords) ? buzzwords : [];
         const cleanAnchor = resumeAnchor || null;
-        const cleanIdealProject = idealProject || null;
         // ARCH §4f: same defensive normalization as its siblings above —
         // and the value this hook's caller (useSampleAnswer's own `request`
         // resolution) both renders NOW and, two statements down, writes into
@@ -154,7 +152,6 @@ export function useSampleAnswer({ question, profile, interviewType, applicationI
           cues: cleanCues,
           buzzwords: cleanBuzzwords,
           anchor: cleanAnchor,
-          idealProject: cleanIdealProject,
           pageSources: cleanPageSources,
           grounding: cleanGrounding,
           error: "",
@@ -177,7 +174,6 @@ export function useSampleAnswer({ question, profile, interviewType, applicationI
           cues: cleanCues,
           buzzwords: cleanBuzzwords,
           anchor: cleanAnchor,
-          idealProject: cleanIdealProject,
           pageSources: cleanPageSources,
           grounding: cleanGrounding,
           profile: p,
@@ -196,7 +192,6 @@ export function useSampleAnswer({ question, profile, interviewType, applicationI
           cues: [],
           buzzwords: [],
           anchor: null,
-          idealProject: null,
           pageSources: [],
           grounding: null,
           error: err?.message || "Could not draft a sample answer.",
@@ -281,7 +276,7 @@ export function useSampleAnswer({ question, profile, interviewType, applicationI
       codeLanguage: cl,
       mode: "answer",
     })
-      .then(({ points, cues, buzzwords, resumeAnchor, idealProject, pageSources, grounding }) => {
+      .then(({ points, cues, buzzwords, resumeAnchor, pageSources, grounding }) => {
         // A newer queue (or a real `request`) has since started for a
         // different question — this response belongs to a question the
         // user has already moved past, so it writes nothing.
@@ -291,7 +286,6 @@ export function useSampleAnswer({ question, profile, interviewType, applicationI
           cues: Array.isArray(cues) ? cues : [],
           buzzwords: Array.isArray(buzzwords) ? buzzwords : [],
           anchor: resumeAnchor || null,
-          idealProject: idealProject || null,
           // ARCH §4f/§6.8: this queue's own cache write must carry
           // `pageSources` the same way `request`'s does above — a draft
           // pre-fetched silently while unrevealed must not read back with
@@ -349,16 +343,6 @@ export function useSampleAnswer({ question, profile, interviewType, applicationI
     cues: active.cues,
     buzzwords: active.buzzwords,
     anchor: active.anchor,
-    // N125: still carried (the answer response has one, and the cache entry
-    // keeps its shape stable) but READ BY NO RENDERER. This is the draft's own
-    // example, FROZEN at the moment `queue` or `request` resolved — long
-    // before a reveal — and PracticeClient no longer passes it to the answer
-    // panel or the card: both render the worked example from useIdealProject
-    // (IdealAnswerAids), which peeks the pool at DISPLAY time and asks for the
-    // per-question one then. Rendering this beside that would be a second
-    // example on the same answer. Removing the field is a later chunk's job,
-    // once nothing references it.
-    idealProject: active.idealProject,
     pageSources: active.pageSources,
     grounding: active.grounding,
     error: active.error,

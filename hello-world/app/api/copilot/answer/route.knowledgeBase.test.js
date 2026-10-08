@@ -12,8 +12,8 @@
 //   - a request must carry `engine: "gemini"`, or `wantsEmbedded` defaults to
 //     the no-LLM path and the code under test is never reached;
 //   - `mockGemini` answers EVERY generateContent call with one canned
-//     payload, so a case that also selects a posting gets a second
-//     (ideal-project) call it did not ask for. Every Gemini case below
+//     payload, so a case that also selects a posting can get a second
+//     call it did not ask for. Every Gemini case below
 //     deliberately selects NO posting, which is what keeps
 //     `generateContent.mock.calls[0]` the answer call.
 
@@ -564,7 +564,7 @@ describe("what still must never reach the prompt (AC-7)", () => {
 // gained the reading aids, and nothing else — `answer` and `grounding` are
 // still answer mode's alone, which is what this case has always been about."
 // That is a rule about `answer` and `grounding`, not a freeze on the key set:
-// `cues`, `buzzwords`, `resumeAnchor` and `idealProject` were all added to
+// `cues`, `buzzwords` and `resumeAnchor` were all added to
 // points mode after those assertions were first written. `pageSources` is a
 // reading aid of exactly that kind and belongs with them. The cases below
 // pin BOTH halves, so the rule cannot be read as a freeze again.
@@ -599,7 +599,6 @@ describe("live mode gets the citations too (AC-6.2)", () => {
     expect(Object.keys(data).sort()).toEqual([
       "buzzwords",
       "cues",
-      "idealProject",
       "pageSources",
       "points",
       "resumeAnchor",
@@ -637,8 +636,8 @@ describe("live mode's streamed response carries the citations (AC-6.2, ARCH 4e)"
             yield { text: doc.slice(Math.floor(doc.length / 2)) };
           })(),
         ),
-        // The worked-example call never settles, so anything that completes
-        // here proves the frames did not wait on it.
+        // Any non-streaming model call never settles, so anything that
+        // completes here proves the frames did not wait on it.
         generateContent: vi.fn(() => new Promise(() => {})),
       },
     });

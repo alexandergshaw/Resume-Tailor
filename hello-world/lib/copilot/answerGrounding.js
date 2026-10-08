@@ -30,7 +30,7 @@
 // round-trip `pageSources` renders on a cache hit as an answer that has lost
 // its citations, the same failure useDraftAnswer.js already names for
 // `cues`. `pageSources` must be written to and read from both caches
-// alongside `cues`/`buzzwords`/`anchor`/`idealProject`, defaulting to `[]`
+// alongside `cues`/`buzzwords`/`anchor`, defaulting to `[]`
 // for any entry cached before that field existed — this file has no cache of
 // its own, so that work belongs to sampleAnswerState.js and
 // useDraftAnswer.js, not here.

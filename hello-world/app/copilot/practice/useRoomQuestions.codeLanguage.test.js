@@ -41,7 +41,6 @@ const DRAFT_RESPONSE = {
   cues: ["Constraint", "Tradeoff"],
   buzzwords: ["throughput"],
   resumeAnchor: { role: "Staff Engineer" },
-  idealProject: { title: "Platform consolidation" },
   pageSources: [],
   type: "technical",
 };

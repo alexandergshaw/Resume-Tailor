@@ -14,7 +14,6 @@ import { visuallyHidden } from "@/lib/copilot/answerStatus";
 import { useEngine } from "@/app/settings/engine";
 import { ExpansionScope } from "./useAnswerExpansions";
 import { GlossaryProvider } from "./GlossaryProvider";
-import { IdealProjectScope } from "./IdealAnswerAids";
 import { useIsMobile } from "@/app/hooks/useResponsive";
 import TabHeader from "@/app/components/TabHeader";
 import LiveHearingStrip from "./LiveHearingStrip";
@@ -125,7 +124,7 @@ export default function CopilotClient() {
   const isMobile = useIsMobile();
 
   // AC-N1.5: normalized question -> { points, type, cues, buzzwords, anchor,
-  // idealProject, pageSources, profile, interviewType, applicationId } — the
+  // pageSources, profile, interviewType, applicationId } — the
   // reading aids (AC-K1, extended by ARCH §3.5/§4f's `pageSources`) and the
   // grounding the draft was actually built from (AC-N1.2) both landed here
   // since this comment was last accurate; runDraft, inside useDraftAnswer.js
@@ -578,10 +577,6 @@ export default function CopilotClient() {
     // the provider's own default, because a default parameter on an id is what
     // let the ask-AI box ship sending `applicationId: ""` on every request.
     <GlossaryProvider applicationId={posting?.id || ""}>
-    {/* N125: the selected posting's id for every IdealAnswerAids beneath it
-        (QuestionFeed's cards, the dashboard's current answer and its
-        history) — see IdealAnswerAids.js. */}
-    <IdealProjectScope applicationId={posting?.id || ""}>
     <ExpansionScope
       questions={questions}
       request={{
@@ -939,7 +934,6 @@ export default function CopilotClient() {
       )}
     </Box>
     </ExpansionScope>
-    </IdealProjectScope>
     </GlossaryProvider>
   );
 }

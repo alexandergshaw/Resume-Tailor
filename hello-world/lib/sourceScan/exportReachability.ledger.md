@@ -20,13 +20,13 @@ Current pinned values, as of the last entry in each section:
 | ------------------------------------------- | ------ |
 | `ALLOWED_UNREACHABLE_MODULES.length`        | 14     |
 | `UNWIRED_MODULES` (exact list of 5 files)   | 5      |
-| `ORPHAN_EXPORTS.length`                     | 66     |
-| `TEST_REFERENCED.length` (rule TR-1)        | 396    |
-| `UNUSED_IN_SHIPPING_MODULES.length`         | 462    |
+| `ORPHAN_EXPORTS.length`                     | 65     |
+| `TEST_REFERENCED.length` (rule TR-1)        | 391    |
+| `UNUSED_IN_SHIPPING_MODULES.length`         | 456    |
 
 The identity that ties the last three together, and that the test asserts
 directly, is `UNUSED_IN_SHIPPING_MODULES = TEST_REFERENCED + ORPHANS`
-(396 + 66 = 462).
+(391 + 65 = 456).
 
 ---
 
@@ -96,7 +96,7 @@ site.
 
 ---
 
-## 3. ORPHAN_EXPORTS (pinned at 66)
+## 3. ORPHAN_EXPORTS (pinned at 65)
 
 Exports unused by shipping code AND imported by no test anywhere (plus a
 handful that a test reads only through a dynamic `await load()` this static
@@ -174,11 +174,15 @@ REMOVED_COPY_MESSAGES also surfaced and were un-exported, not ledgered.
 Details are in the ledger beside each entry.
 67 -> 66 (N107): LEVEL_CAPTIONS out (ApplyingControls.js renders the slider
 caption from it); none in.
+66 -> 65 (N141): lib/copilot/idealProject.js#MAX_SHAPE_TERMS out -- the module
+was deleted with the rest of the ideal-project / ready-example feature. ONE
+entry removed, none added; its entry in exportReachability.ledger.js went with
+it.
 ```
 
 ---
 
-## 4. TEST_REFERENCED, rule TR-1 (pinned at 396)
+## 4. TEST_REFERENCED, rule TR-1 (pinned at 391)
 
 Exports unused by shipping code that at least one `.test.js` imports BY NAME.
 A raise is a review event: check the new export is a helper being pinned, not
@@ -539,11 +543,22 @@ idealProjectPoolKey, idealProjectQuestionKey, startIdealProjectResolution, peekI
 Every other new export has a shipping importer (idealPoolFor, idealProjectTailoredKey,
 resolveTailoredIdealProject, enrichIdealProject, fetchIdealProject, useIdealProject,
 IdealProjectScope). ORPHAN_EXPORTS unmoved at 66.
+N141: 396 -> 391 (-5, +0): the ideal-project / ready-example feature was deleted
+whole. OUT (-5), each deleted with its module: idealProjectResolver.js's four
+test-referenced symbols (idealProjectPoolKey, idealProjectQuestionKey,
+startIdealProjectResolution, peekIdealProject) and idealProject.js#MAX_METRICS
+(pinned by name by idealProjectMetrics.test.js, imported by no shipping module).
+The two ideal-project caches were REMOVED from answerSessionCache.js together with
+idealProjectCaches.test.js, so they leave the census outright rather than falling
+back into this bucket. Nothing joined: no surviving module lost its only shipping
+importer to the deletion. Measured by running the sweep's own scan over a HEAD
+checkout and over the post-removal tree: the symmetric difference is exactly these
+five (and ORPHAN_EXPORTS' MAX_SHAPE_TERMS, section 3).
 ```
 
 ---
 
-## 5. UNUSED_IN_SHIPPING_MODULES total (pinned at 462)
+## 5. UNUSED_IN_SHIPPING_MODULES total (pinned at 456)
 
 The sum of the two halves above (`TEST_REFERENCED + ORPHANS`); the test also
 asserts that identity directly, so the split is pinned and not only the total.
@@ -692,4 +707,7 @@ N125 wave A: 458 -> 460 (TEST_REFERENCED's +2, the two ideal-project caches; ORP
 unmoved at 66). TEST_REFERENCED 394 + ORPHANS 66.
 N125 wave B: 460 -> 462 (TEST_REFERENCED's +2 net, described above; ORPHAN_EXPORTS unmoved
 at 66). TEST_REFERENCED 396 + ORPHANS 66.
+N141: 462 -> 456 (TEST_REFERENCED's -5, idealProjectResolver.js's four symbols and
+idealProject.js#MAX_METRICS, plus ORPHAN_EXPORTS' -1, idealProject.js#MAX_SHAPE_TERMS,
+all described above). TEST_REFERENCED 391 + ORPHANS 65.
 ```

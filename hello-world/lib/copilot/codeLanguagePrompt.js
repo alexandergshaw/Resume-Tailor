@@ -71,16 +71,14 @@ const collapse = (value) => value.replace(/\s+/g, " ");
 // A20's required restatement (§B.9.2), held ONCE and used at BOTH sites
 // (sentence 6 below, and the prompt body) so the system instruction and the
 // prompt body cannot drift into saying this differently. This is the only
-// hard rule restated in the body — matching the precedent
-// (idealProjectPrompt.js:50,89) — and the only one that needs to be: it is
+// hard rule restated in the body — and the only one that needs to be: it is
 // the rule a posting that merely mentions a language would otherwise defeat.
 const RULE_4_PROMPT_RESTATEMENT =
   'If the language this role is built around is not on that list, answer "none" — do not substitute an allowed answer that the posting merely mentions.';
 
-// The system instruction (AC-C7c). Shaped like IDEAL_PROJECT_SYSTEM
-// (idealProjectPrompt.js): a short statement of what the call is for, then
-// every hard rule, joined into one paragraph so a source reviewer reads the
-// whole contract in one constant.
+// The system instruction (AC-C7c): a short statement of what the call is
+// for, then every hard rule, joined into one paragraph so a source reviewer
+// reads the whole contract in one constant.
 //
 // Sentence 3 names the full output set INSIDE this constant — not only in
 // the user prompt — because a source-review criterion whose subject is a

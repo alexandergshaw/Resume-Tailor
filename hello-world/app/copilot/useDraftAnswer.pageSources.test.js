@@ -41,7 +41,6 @@ const DONE_FRAME = {
   cues: ["The migration"],
   buzzwords: [],
   resumeAnchor: null,
-  idealProject: null,
   pageSources: [PAGE],
   type: "behavioral",
 };
@@ -56,7 +55,6 @@ function seedQuestion(id, question) {
     cues: [],
     buzzwords: [],
     anchor: null,
-    idealProject: null,
     pageSources: [],
     type: null,
     error: "",

@@ -1,4 +1,4 @@
-// The three functions /api/copilot/answer uses to build the "aids" that sit
+// The two functions /api/copilot/answer uses to build the "aids" that sit
 // beside a drafted answer (AC-K1) and to normalise a model's raw JSON before
 // anything downstream trusts it, moved out of
 // app/api/copilot/answer/route.js.
@@ -15,17 +15,14 @@
 //
 // The move is behaviour-preserving: every existing route test
 // (route.test.js, route.knowledgeBase.test.js, streaming.test.js,
-// idealProjectWiring.test.js, route.latency.test.js) exercises these three
-// functions only through the route's public HTTP surface, and passes
-// unchanged on both sides of this extraction — that is the whole proof that
-// moving code, rather than rewriting it, is what happened here. Nothing
-// about any of the three functions' logic changed; only their address did.
+// route.latency.test.js) exercises these functions only through the route's
+// public HTTP surface, and passes unchanged on both sides of this
+// extraction — that is the whole proof that moving code, rather than
+// rewriting it, is what happened here. Nothing about either function's
+// logic changed; only their address did.
 
-import { parseModelJson } from "@/lib/llm/extractEmployment";
-import { buildIdealProjectPrompt, IDEAL_PROJECT_SYSTEM, normalizeIdealProject } from "@/lib/copilot/idealProjectPrompt";
 import { postingBuzzwords } from "@/lib/copilot/postingBuzzwords";
 import { resumeAnchor, MAX_PROJECT_WORDS } from "@/lib/copilot/resumeAnchor";
-import { idealProject as idealProjectFor } from "@/lib/copilot/idealProject";
 import { shortenToCue } from "@/lib/copilot/answerCues";
 import { PROJECT_PAGE_SOURCE } from "@/lib/copilot/projectStories";
 
@@ -84,36 +81,6 @@ export function normalizeModelPoints(parsed, cap) {
   };
 }
 
-// AC-N3: asks the model for a worked example grounded in the actual posting,
-// instead of always handing back one of idealProjectNarrative.js's seven
-// archetypes. N125: this is no longer called from the answer route at all —
-// a model call on the path that serves an answer is out. It is the loader body
-// lib/copilot/idealProjectResolver.js runs off the serve path, for the READY
-// pool example (prefetched, question-independent) and for the TAILORED
-// per-question example (its own non-blocking channel).
-//
-// Resolves to null, never rejects, on every failure mode: no posting to
-// build a prompt from, a network error, unparseable JSON, or a response
-// normalizeIdealProject won't vouch for. This has to be true unconditionally
-// — a broken worked example is an aid beside the answer, not the answer, and
-// must never be able to fail the request it rides beside or surface an
-// error the candidate would see mid-question.
-export async function generateIdealProjectExample({ client, geminiModel, description, question }) {
-  const prompt = buildIdealProjectPrompt({ description, question });
-  if (!prompt) return null;
-  try {
-    const response = await client.models.generateContent({
-      model: geminiModel,
-      contents: [{ role: "user", parts: [{ text: prompt }] }],
-      config: { systemInstruction: IDEAL_PROJECT_SYSTEM, responseMimeType: "application/json" },
-    });
-    const parsed = parseModelJson(response.text?.trim() || "");
-    return normalizeIdealProject(parsed, { description });
-  } catch {
-    return null;
-  }
-}
-
 // AC-K1.2/AC-K1.3: the two aids that sit BESIDE a drafted answer rather than
 // inside it — the posting's own vocabulary to work in, and which of the
 // candidate's own roles (and which project inside it) the answer came out of.
@@ -133,14 +100,6 @@ export async function generateIdealProjectExample({ client, geminiModel, descrip
 // submitted for this application, since it is often résumé-shaped text
 // pasted in by hand.
 //
-// `generatedProject` (N125) is an ALREADY-RESOLVED value — the READY pool
-// example the caller read with lib/copilot/idealProjectResolver.js's
-// `peekIdealProject` (only on the Gemini path; the embedded path passes null),
-// or null on a cold pool. It used to be an in-flight `generatedProjectPromise`
-// this function awaited, which put a per-question model call on the path that
-// serves the answer; nothing here awaits a model call now. Still `async`,
-// because every caller `await`s it and the signature is not worth churning.
-//
 // `story` (ARCH §3.6/§4e) is lib/copilot/projectStories.js's selectBestStory
 // return, selected ONCE by the caller (POST, in route.js) and handed down here
 // — this function used to run a SECOND, independent selectBestStory call of
@@ -148,13 +107,9 @@ export async function generateIdealProjectExample({ client, geminiModel, descrip
 // embedded engine's own override (scored against {question} alone) about
 // which page was "the" match for the same request (D7). One selection, one
 // answer, on every call site.
-export async function answerAids({ postingDescription, resume, profile, question, points, generatedProject, story }) {
+export function answerAids({ postingDescription, resume, profile, question, points, story }) {
   const anchorText = resume || profile;
   const anchor = resumeAnchor(anchorText, { question, points });
-  // The FALLBACK, computed exactly as it always has been — never skipped,
-  // because a missing or rejected model response must still leave the
-  // candidate with an example rather than nothing.
-  const deterministicProject = idealProjectFor(postingDescription, { question, points });
   // Page-derived fallback for the résumé-anchor aid: only reachable when
   // `anchor` above is null — i.e. neither a submitted résumé nor prep notes
   // yielded anything to name a role from — so an eligible project page never
@@ -215,33 +170,5 @@ export async function answerAids({ postingDescription, resume, profile, question
     // PROJECT_PAGE_SOURCE, marks the page-derived fallback above — never
     // "resume", never "prep" (lib/copilot/projectStories.js's own contract).
     resumeAnchor: resumeAnchorAid,
-    idealProject: enrichIdealProject(deterministicProject, generatedProject),
   };
-}
-
-// BUG: `generatedProject` is `normalizeIdealProject`'s return value — the
-// shape of `idealProjectFor()`'s `project` FIELD ({ title, sections,
-// outcomes }), never the shape of the aid itself ({ shape, summary,
-// metrics, project }). `generatedProject || deterministicProject` used
-// to substitute the field's shape for the whole aid's shape, so on the
-// accept path `shape`/`summary`/`metrics` vanished, AnswerAids.js's
-// `hasIdealRow` computed false, and the entire block — row, disclosure,
-// worked example — rendered as nothing. The feature reached the user
-// only when the model call failed or was rejected. A valid generated
-// example must ENRICH the deterministic aid, not replace it: keep
-// `deterministicProject`'s `shape`/`summary`/`metrics` and swap only its
-// `project` for the model's. If there is no deterministic aid at all (no
-// posting — idealProjectFor returns null for a missing or blank one),
-// there is nothing for a generated example to sit beside, so the result
-// stays null rather than shipping a `project`-only object — that bare
-// shape is exactly the broken state this bug produced.
-//
-// N125: its own export so the answer route's READY example and the
-// ideal-project endpoint's READY and TAILORED examples go through ONE
-// enrichment, and so can never disagree about content, only about which
-// `project` they carry.
-export function enrichIdealProject(deterministicProject, generatedProject) {
-  return deterministicProject
-    ? (generatedProject ? { ...deterministicProject, project: generatedProject } : deterministicProject)
-    : null;
 }

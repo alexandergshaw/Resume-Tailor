@@ -51,11 +51,6 @@ export function emptySampleAnswer() {
     // { title, company, matched, project } once a draft lands, or null when
     // there was no resume to read a role out of.
     anchor: null,
-    // { shape, metrics } once a draft lands and a posting was selected, or
-    // null otherwise — lib/copilot/idealProject.js's benchmark, carried
-    // through this slot exactly like `buzzwords`/`anchor` (same caching and
-    // staleness rules; just as wrong to show against a different question).
-    idealProject: null,
     // ARCH §3.5/§4f: which knowledge-base page (if any) each point in
     // `points` came from — Array<{id, title} | null>, positionally paired,
     // straight from the response's `pageSources` field. `[]` rather than
@@ -226,9 +221,8 @@ export function cachedSampleAnswerFor(entry, question, profile, interviewType, a
     cues: Array.isArray(hit.cues) ? hit.cues : [],
     buzzwords: Array.isArray(hit.buzzwords) ? hit.buzzwords : [],
     anchor: hit.anchor || null,
-    idealProject: hit.idealProject || null,
-    // ARCH §4f/§6.8: the cache round-trip `cues`/`buzzwords`/`anchor`/
-    // `idealProject` already have, extended to `pageSources`. Without this,
+    // ARCH §4f/§6.8: the cache round-trip `cues`/`buzzwords`/`anchor`
+    // already have, extended to `pageSources`. Without this,
     // a question answered twice shows its knowledge-base citations on the
     // first ask and silently loses them on the second (the reveal -> hide ->
     // reveal path, or a Next-question-back-again) — the same failure this
