@@ -449,7 +449,12 @@ function CurrentAnswerPanel({
                   resume). Reading these aloud too — via the same focus
                   move, without any separate wiring — is F9's free coverage
                   for this panel. */}
-              <AnswerAids buzzwords={current.buzzwords} anchor={current.anchor} />
+              <AnswerAids
+                buzzwords={current.buzzwords}
+                anchor={current.anchor}
+                projectExample={current.projectExample}
+                projectExampleLive={current.projectExampleLive}
+              />
             </>
           ) : (
             // WCAG 1.4.3: --text-secondary, not --text-muted — see the
@@ -739,7 +744,16 @@ function HistoryItem({ entry, copy }) {
           {lines.length ? (
             <>
               <AnswerLines lines={lines} />
-              <AnswerAids buzzwords={entry.buzzwords} anchor={entry.anchor} />
+              {/* A past question: its example rows can only be in a final state
+                  (`finalOnly`), so a Row 2 that never settled reads as failed
+                  here instead of a skeleton on an answer given long ago. */}
+              <AnswerAids
+                buzzwords={entry.buzzwords}
+                anchor={entry.anchor}
+                projectExample={entry.projectExample}
+                projectExampleLive={entry.projectExampleLive}
+                finalOnly
+              />
             </>
           ) : (
             <Typography variant="body2" sx={{ color: "var(--text-secondary)" }}>

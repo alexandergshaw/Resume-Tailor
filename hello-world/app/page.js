@@ -55,6 +55,7 @@ import { useManualPostings } from "./hooks/useManualPostings";
 import { useChat } from "./hooks/useChat";
 import { useApplicationDialogs } from "./hooks/useApplicationDialogs";
 import { useApplicationDigests } from "./hooks/useApplicationDigests";
+import { useApplicationProjectPool } from "./hooks/useApplicationProjectPool";
 import { useLayoutPrefs } from "./hooks/useLayoutPrefs";
 import { useEmploymentImport } from "./hooks/useEmploymentImport";
 import { useMaterialsLocker } from "./hooks/useMaterialsLocker";
@@ -289,6 +290,7 @@ export default function Home() {
   // app/hooks/useApplicationDigests.js for the fetch/auto-populate/Research
   // logic this only instantiates and hands down to <TrackingTab>.
   const applicationDigests = useApplicationDigests(applicationData);
+  useApplicationProjectPool({ applications: applicationData });
 
   // Refs for targeted re-fetches when individual controls change
   const hasFetchedRef = useRef(false);

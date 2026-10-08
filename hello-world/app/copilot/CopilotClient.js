@@ -32,6 +32,7 @@ import RoleDrillClient from "./roles/RoleDrillClient";
 import ModeSwitch from "./ModeSwitch";
 import { usePrepContext } from "./usePrepContext";
 import { useApplicationDocs } from "./useApplicationDocs";
+import { useApplicationProjectPool } from "@/app/hooks/useApplicationProjectPool";
 import { useCopilotDashboard } from "./useCopilotDashboard";
 import { useLastSampleAt, useDeliveryReadings } from "./useDeliveryReadings";
 import { useLiveSession } from "./useLiveSession";
@@ -40,6 +41,8 @@ import { useCompanyBrief } from "./useCompanyBrief";
 import { useLiveColumnHeight } from "./useLiveColumnHeight";
 import { useInterviewType } from "./useInterviewType";
 import { useCodeLanguage } from "./useCodeLanguage";
+import { useSttProviderName } from "./useSttProviderName";
+import { useRowOneStatusRelay, useBindRowOneStatus } from "./useRowOneStatusRelay";
 import { interviewTypeLabel } from "@/lib/copilot/interviewTypes";
 import { useTypeAnnouncements } from "./useTypeAnnouncements";
 import { confirmRevealLabel, needsDraftOnConfirm, entryById } from "@/lib/copilot/confirmReveal";
@@ -108,10 +111,10 @@ export default function CopilotClient() {
   } = useCaptureSetup();
   const [showConsent, setShowConsent] = useState(true);
   // F2: which speech-to-text provider is actually live — `null` until the
-  // mount-time probe below resolves. See the useEffect near the other
-  // mount-time setup for why this is a separate, display-only fetch rather
-  // than something threaded out of a running session.
-  const [sttProviderName, setSttProviderName] = useState(null);
+  // mount-time probe resolves. See useSttProviderName.js for why this is a
+  // separate, display-only fetch rather than something threaded out of a
+  // running session.
+  const sttProviderName = useSttProviderName(STT_PROVIDER_NAMES);
   // Step 2: whether SessionSetup renders in full. Defaults `true` to match
   // "renders in full before a session starts"; `start`/`stop` below flip
   // it false/true again each session, and the user can toggle it in
@@ -228,36 +231,6 @@ export default function CopilotClient() {
     answerCacheRef.current.clear();
   }, [profile]);
 
-  // F2: learn which speech-to-text provider is actually live, purely so the
-  // privacy notices below (and the one PracticeClient renders, which reads
-  // this as a prop) can name it instead of unconditionally saying
-  // "Deepgram" the way they used to. Hits the token route's GET handler —
-  // NOT fetchSttToken()'s POST — because GET mints nothing: it just answers
-  // "which provider?" (see app/api/copilot/token/route.js). Using POST here
-  // would mint a real credential on every page view purely to read
-  // `.provider` and then throw it away unconnected, which is wasteful on
-  // any provider and a genuine loss on ElevenLabs, whose token is
-  // single-use. This runs ahead of, and separately from, whatever a
-  // session's own createSttStream call does when a session actually starts
-  // (see lib/copilot/stt/index.js) — the whole point is to inform the user
-  // BEFORE they press Start, not only once a session already exists.
-  // Errors are swallowed: an unreachable/misconfigured provider surfaces
-  // for real through the normal onError/onStatus("error") path once a
-  // session is actually started, and this mount-time probe is not it.
-  useEffect(() => {
-    let cancelled = false;
-    fetch("/api/copilot/token", { method: "GET" })
-      .then((res) => (res.ok ? res.json() : null))
-      .then((body) => {
-        if (cancelled || !body) return;
-        setSttProviderName(STT_PROVIDER_NAMES[body?.provider] || null);
-      })
-      .catch(() => {});
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
   const live = status === "live" || status === "connecting";
 
   // I3: the rail auto-collapses once live and auto-expands once idle again
@@ -315,6 +288,13 @@ export default function CopilotClient() {
   const [staleTypeChangeAt, setStaleTypeChangeAt] = useState(0); // Contract 8, hoisted for a stable onCurrentEntryRedrafted below.
   const onCurrentEntryRedrafted = useCallback(() => setStaleTypeChangeAt(0), []);
 
+  // The example-pool prewarm below needs the session log's recorder, which only
+  // useLiveSession returns, so it is called after it; this stable relay is how
+  // the drafts inside useLiveSession reach that hook's noteRowOneStatus (the
+  // self-heal for a pool that was cold when a question was answered). See
+  // useRowOneStatusRelay.js.
+  const { onRowOneStatus, bindRowOneStatus } = useRowOneStatusRelay();
+
   const {
     warning,
     setWarning,
@@ -349,6 +329,9 @@ export default function CopilotClient() {
     // control's disabled state below, replacing a per-render deep clone of
     // the whole log (see this variable's old derivation, removed).
     sessionLogHasEvents,
+    // The session log's recorder, handed to the example-project prewarm below
+    // so a pool warmed mid-session lands in the same downloadable log.
+    logEvent,
     // N18 delta review D5: `cueAnnouncement` (and the `cueText` it fed
     // useTypeAnnouncements below) is removed entirely. useCueActions.js/
     // useLiveSession.js have not returned this key at all since the N18
@@ -387,7 +370,17 @@ export default function CopilotClient() {
     setShowHistory,
     onCompanyCue,
     onCurrentEntryRedrafted, // MATERIAL-3: clears the caption below on redraft.
+    onRowOneStatus,
   });
+
+  // The example-project pool for the posting selected for this session, warmed
+  // straight through the route the moment it is chosen (an older application the
+  // tracking table's age-limited prewarm skipped included), so Row 1 of the
+  // example group is ready by the first question. A pool that was still cold
+  // when a question was answered is warmed once more through noteRowOneStatus
+  // (relayed above), so the next question shows it. Renders nothing itself.
+  const { noteRowOneStatus } = useApplicationProjectPool({ selectedApplicationId: posting?.id || null, logEvent });
+  useBindRowOneStatus(bindRowOneStatus, noteRowOneStatus);
 
   // AC-N18.9/F-A1/m9: the ONE handler behind every confirm control below —
   // see confirmReveal.js's needsDraftOnConfirm for the idle-entry draft.

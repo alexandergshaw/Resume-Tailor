@@ -100,6 +100,12 @@ export default function SampleAnswer({
   // decides what (if anything) each one looks like.
   buzzwords,
   anchor,
+  // The two invented example rows (Row 1, picked server-side from the
+  // pre-warmed pool; Row 2, written after the answer lands). Straight through
+  // to AnswerAids, which decides what each state looks like; both are
+  // undefined when there is no posting selected or the engine is embedded.
+  projectExample,
+  projectExampleLive,
   // ARCH §3.5/§4e: which knowledge-base page (if any) each point in
   // `points` came from — Array<{id, title} | null>, positionally paired.
   // Passed straight to answerLines below, exactly like `cues`; AnswerLines
@@ -211,7 +217,12 @@ export default function SampleAnswer({
           {status === "done" && lines.length > 0 ? (
             <>
               <AnswerLines lines={lines} />
-              <AnswerAids buzzwords={buzzwords} anchor={anchor} />
+              <AnswerAids
+                buzzwords={buzzwords}
+                anchor={anchor}
+                projectExample={projectExample}
+                projectExampleLive={projectExampleLive}
+              />
               <Typography variant="caption" sx={{ color: "var(--text-muted)", display: "block", mt: 1 }}>
                 {sourceCaption(isEmbedded, grounding)}
               </Typography>

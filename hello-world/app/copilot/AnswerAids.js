@@ -1,11 +1,15 @@
 "use client";
 
+import { useId, useSyncExternalStore } from "react";
 import Box from "@mui/material/Box";
+import Button from "@mui/material/Button";
 import Chip from "@mui/material/Chip";
+import Skeleton from "@mui/material/Skeleton";
 import Stack from "@mui/material/Stack";
 import Typography from "@mui/material/Typography";
 
-import { BREAK_LONG_WORDS_SX } from "@/app/theme/mobileSx";
+import { BREAK_LONG_WORDS_SX, TOUCH_TARGET_SX } from "@/app/theme/mobileSx";
+import { createChoiceStore } from "../../lib/copilot/choiceStore.js";
 import { PROJECT_PAGE_SOURCE } from "../../lib/copilot/projectStories.js";
 
 // AC-K1.2/AC-K1.3: the two groups that sit UNDER a drafted answer's cues —
@@ -39,6 +43,19 @@ import { PROJECT_PAGE_SOURCE } from "../../lib/copilot/projectStories.js";
 // posting's vocabulary second. Both `dl`s share one grid style and one row
 // component (`Aid`) below so the two groups cannot visually drift apart
 // from each other.
+//
+// A THIRD group, always LAST, holds the example projects: two INVENTED
+// hypotheticals ("Ready example", picked from a pre-warmed set; "Example for
+// this question", written after the answer lands). They are a third
+// provenance, not the candidate's and not the posting's, so they get their own
+// separator, their own `dl` and a labelled group, never a row inside the
+// résumé group where an invented project would sit beside the real "Project to
+// talk about". Last also means the late arrival of the second row appends below
+// everything already on screen and moves nothing the candidate is reading. The
+// structure (a role="group" named by its header, the lead inside each `dd`, no
+// CSS `order`, the second row appended last) is the stable surface the mobile
+// pass restyles; keep it. Every state the two rows can be in, and the exact
+// strings, are the example-projects UX design's (docs/loop/N143.ux.r1.md).
 
 // Below `md` the grid collapses to one column ordered dt, dd, dt, dd — a
 // single uniform rowGap would put a label exactly as far from its OWN value
@@ -124,8 +141,10 @@ function roleText(anchor) {
   return title || company;
 }
 
-// The one row shape both `dl`s are built from.
-function Aid({ label, children }) {
+// The one row shape every `dl` here is built from. `ddSx` / `ddProps` exist
+// for the example rows only: the accent rule on a `dd` that carries invented
+// content, and `aria-busy` on one that is still being written.
+function Aid({ label, children, ddSx, ddProps }) {
   return (
     <>
       <Typography
@@ -147,14 +166,243 @@ function Aid({ label, children }) {
       >
         {label}
       </Typography>
-      <Box component="dd" sx={{ m: 0, ...BREAK_LONG_WORDS_SX }}>
+      <Box component="dd" {...ddProps} sx={{ m: 0, ...BREAK_LONG_WORDS_SX, ...ddSx }}>
         {children}
       </Box>
     </>
   );
 }
 
-export default function AnswerAids({ buzzwords, anchor }) {
+// ---------------------------------------------------------------------------
+// The example-projects group. Everything below up to AnswerAids itself is
+// presentation only: a row's state arrives on its prop already decided (Row 1
+// by the answer route from the pool, Row 2 by the request the hooks fire after
+// the answer lands), and this file only maps a state to markup. Nothing here
+// decides what a good example is.
+// ---------------------------------------------------------------------------
+
+// Pinned copy. The lead is ONE constant pair shared by both rows so the two
+// can never word the warning differently. No em dash or en dash anywhere in
+// these (a screen reader does not speak one at default punctuation), no emoji.
+const EXAMPLE_GROUP_LABEL = "Example projects (invented)";
+const EXAMPLE_DT_READY = "Ready example";
+const EXAMPLE_DT_LIVE = "Example for this question";
+const EXAMPLE_LEAD_BOLD = "Not from your resume.";
+const EXAMPLE_LEAD_REST = " Numbers are invented; swap in your own.";
+const R1_WARMING = "Still being prepared. Shows from your next question.";
+const R1_NO_MATCH = "No close match for this question.";
+const R1_FAILED = "Couldn't prepare examples for this posting.";
+const R2_PENDING = "Writing one for this question…";
+const R2_FAILED = "Couldn't write one this time.";
+
+// A 2px accent rule on the left of a `dd` that carries INVENTED content. It is
+// reinforcement for the written lead inside the same `dd`, never the only
+// carrier of "this is not yours" (WCAG 1.4.1), so it is only ever drawn with
+// the lead.
+const INVENTED_DD_SX = { borderLeft: "2px solid var(--accent)", pl: 1.25 };
+
+// The group's open/closed choice, remembered across reloads and tabs. ONE
+// choice for the whole group, never per row: two controls for one decision
+// would bury the useful row or double the state. `null` means "the person has
+// not chosen", which renders open -- absence, not "open", is the default, so a
+// later release can pick a different default for a narrow screen without
+// migrating anything already stored. A storage failure falls back to open
+// without throwing (the store is memory-authoritative).
+const EXAMPLES_COLLAPSE_KEY = "copilot-example-projects";
+const examplesCollapse = createChoiceStore({
+  storageKey: EXAMPLES_COLLAPSE_KEY,
+  defaultValue: null,
+  normalize: (value) => (value === "open" || value === "closed" ? value : null),
+  crossWindow: true,
+});
+examplesCollapse.hydrate();
+
+// An example is shown only if it is shaped like one: a title and at least one
+// bullet, every bullet a non-empty string. The server validates on the way in,
+// but this is the last gate before a made-up project is read aloud, and a
+// half-built one is worse than none.
+function isShownEntry(entry) {
+  return (
+    !!entry &&
+    typeof entry.title === "string" &&
+    entry.title.trim() !== "" &&
+    Array.isArray(entry.bullets) &&
+    entry.bullets.length > 0 &&
+    entry.bullets.every((b) => typeof b === "string" && b.trim() !== "")
+  );
+}
+
+// Row 1 ("Ready example"), pre-warmed and picked for this question. null means
+// the row does not exist for this card (no application, or the embedded engine:
+// the server omits the field), which is different from any state below. Only a
+// `ready` value that passes the render guard ever shows content; everything
+// else is one quiet line, and the status is read, never the carried fields, so
+// a pending or failed value that still has a title on it shows no title.
+function rowOneView(example) {
+  if (!example || typeof example !== "object") return null;
+  switch (example.status) {
+    case "ready":
+      return isShownEntry(example) ? { kind: "ready", entry: example } : { kind: "no_match" };
+    case "pending":
+      return { kind: "warming" };
+    case "no_match":
+      return { kind: "no_match" };
+    default:
+      return { kind: "failed" };
+  }
+}
+
+// Row 2 ("Example for this question"), written after the answer lands.
+// `finalOnly` is a past question's card (the history list): it can show only a
+// final state, so a Row 2 that never settled reads as failed there instead of a
+// skeleton counting down on a question that was answered long ago.
+function rowTwoView(example, finalOnly) {
+  if (!example || typeof example !== "object") return null;
+  if (example.status === "ready") {
+    return isShownEntry(example) ? { kind: "ready", entry: example } : { kind: "failed" };
+  }
+  if (example.status === "pending") return { kind: finalOnly ? "failed" : "pending" };
+  return { kind: "failed" };
+}
+
+function QuietLine({ children }) {
+  return (
+    <Typography variant="body2" sx={{ color: "var(--text-secondary)" }}>
+      {children}
+    </Typography>
+  );
+}
+
+// The body of a row that carries invented content: the lead first (so the
+// warning is read before the content, and survives a screen reader that drops
+// `dl` semantics from a grid), then the title, then the bullets as a real list.
+// The lead is NOT conditional on the entry's `hypothetical` flag: a missing or
+// false flag cannot remove it, because an invented project read as the
+// candidate's real one is the one lie that ends an interview. `competency`
+// prefixes the title on Row 1 only, so a mis-selection is visible at a glance.
+function ExampleBody({ entry, withCompetency }) {
+  const competency = withCompetency && typeof entry.competency === "string" ? entry.competency.trim() : "";
+  return (
+    <Stack spacing={LINE_GAP}>
+      <Typography variant="body2" sx={{ color: "var(--text-primary)" }}>
+        <Box component="strong" sx={{ fontWeight: 700 }}>
+          {EXAMPLE_LEAD_BOLD}
+        </Box>
+        {EXAMPLE_LEAD_REST}
+      </Typography>
+      <Typography variant="body2" sx={{ color: "var(--text-primary)", fontWeight: 600 }}>
+        {competency ? `${competency}: ${entry.title}` : entry.title}
+      </Typography>
+      <Box component="ul" sx={{ m: 0, pl: 2.5 }}>
+        {entry.bullets.map((bullet, i) => (
+          <Typography key={i} component="li" variant="body2" sx={{ color: "var(--text-primary)" }}>
+            {bullet}
+          </Typography>
+        ))}
+      </Box>
+    </Stack>
+  );
+}
+
+function RowOne({ view }) {
+  if (view.kind === "ready") {
+    return (
+      <Aid label={EXAMPLE_DT_READY} ddSx={INVENTED_DD_SX}>
+        <ExampleBody entry={view.entry} withCompetency />
+      </Aid>
+    );
+  }
+  const line = view.kind === "warming" ? R1_WARMING : view.kind === "no_match" ? R1_NO_MATCH : R1_FAILED;
+  return (
+    <Aid label={EXAMPLE_DT_READY}>
+      <QuietLine>{line}</QuietLine>
+    </Aid>
+  );
+}
+
+function RowTwo({ view }) {
+  if (view.kind === "ready") {
+    return (
+      <Aid label={EXAMPLE_DT_LIVE} ddSx={INVENTED_DD_SX}>
+        <ExampleBody entry={view.entry} />
+      </Aid>
+    );
+  }
+  if (view.kind === "pending") {
+    // A STATIC skeleton: MUI's default pulse is infinite and nothing in this
+    // app honours prefers-reduced-motion, so the placeholder does not move at
+    // all. Two text lines reserve roughly the height of a ready example so the
+    // swap does not jump the page; `aria-hidden` because the visible line above
+    // them is the announcement, and `aria-busy` marks the row as unfinished.
+    // Nothing invented is on screen yet, so no lead and no accent rule.
+    return (
+      <Aid label={EXAMPLE_DT_LIVE} ddProps={{ "aria-busy": "true" }}>
+        <QuietLine>{R2_PENDING}</QuietLine>
+        <Box aria-hidden="true" sx={{ mt: 0.5 }}>
+          <Skeleton animation={false} variant="text" width="85%" />
+          <Skeleton animation={false} variant="text" width="60%" />
+        </Box>
+      </Aid>
+    );
+  }
+  return (
+    <Aid label={EXAMPLE_DT_LIVE}>
+      <QuietLine>{R2_FAILED}</QuietLine>
+    </Aid>
+  );
+}
+
+// The labelled group: a native disclosure button (so it is one tab stop, works
+// with Enter and Space, and its name is its visible text) over the group's own
+// `dl`. Collapsing unmounts the `dl`, so a collapsed group is out of both the
+// accessibility tree and the tab order, and only the header line remains --
+// still honest, because "invented" is in its text.
+function ExampleProjectsGroup({ rowOne, rowTwo }) {
+  const headerId = useId();
+  const panelId = useId();
+  const choice = useSyncExternalStore(
+    examplesCollapse.subscribe,
+    examplesCollapse.get,
+    examplesCollapse.getServerSnapshot,
+  );
+  const open = choice !== "closed";
+  return (
+    <Box role="group" aria-labelledby={headerId}>
+      <Button
+        id={headerId}
+        variant="text"
+        size="small"
+        onClick={() => examplesCollapse.set(open ? "closed" : "open")}
+        aria-expanded={open}
+        aria-controls={panelId}
+        sx={{
+          justifyContent: "flex-start",
+          minWidth: 0,
+          px: 0,
+          mb: open ? 0.5 : 0,
+          textTransform: "none",
+          textAlign: "left",
+          color: "var(--text-secondary)",
+          fontWeight: 700,
+          ...TOUCH_TARGET_SX,
+        }}
+      >
+        <Box component="span" aria-hidden="true" sx={{ mr: 0.75 }}>
+          {open ? "▾" : "▸"}
+        </Box>
+        {EXAMPLE_GROUP_LABEL}
+      </Button>
+      {open ? (
+        <Box component="dl" id={panelId} sx={AID_GRID_SX}>
+          {rowOne ? <RowOne view={rowOne} /> : null}
+          {rowTwo ? <RowTwo view={rowTwo} /> : null}
+        </Box>
+      ) : null}
+    </Box>
+  );
+}
+
+export default function AnswerAids({ buzzwords, anchor, projectExample, projectExampleLive, finalOnly }) {
   const terms = (Array.isArray(buzzwords) ? buzzwords : []).filter((t) => typeof t === "string" && t.trim());
 
   // A plausibility gate upstream (lib/copilot/resumeAnchor.js) can suppress
@@ -186,12 +434,19 @@ export default function AnswerAids({ buzzwords, anchor }) {
   const hasWordsRow = terms.length > 0;
   const hasPostingGroup = hasWordsRow;
 
+  // The example rows: each is null when the card has nothing to say about it
+  // (no application selected, the embedded engine, or Row 2 not yet fired), and
+  // the group exists only while at least one row does.
+  const exampleRowOne = rowOneView(projectExample);
+  const exampleRowTwo = rowTwoView(projectExampleLive, !!finalOnly);
+  const hasExampleGroup = !!exampleRowOne || !!exampleRowTwo;
+
   // Nothing to show is nothing rendered — never a header with an empty
   // group under it. No posting selected means no posting group; no
   // submitted résumé means no résumé group; both are ordinary states, not
   // errors. A group whose every row is empty renders neither that `dl` nor
   // the divider next to it.
-  if (!hasResumeGroup && !hasPostingGroup) return null;
+  if (!hasResumeGroup && !hasPostingGroup && !hasExampleGroup) return null;
 
   return (
     <Box sx={{ mt: 1.5, pt: 1.5, borderTop: "1px solid var(--border)" }}>
@@ -308,6 +563,16 @@ export default function AnswerAids({ buzzwords, anchor }) {
           ) : null}
         </Box>
       ) : null}
+
+      {hasExampleGroup && (hasResumeGroup || hasPostingGroup) ? (
+        // Same separator, same reasoning, as the one above: it gives the third
+        // group's boundary a presence in the accessibility tree. Rendered only
+        // when an earlier group did, so an examples-only card does not open with
+        // a line that divides nothing from nothing.
+        <Box role="separator" sx={{ my: 1.25, borderTop: "1px solid var(--border)" }} />
+      ) : null}
+
+      {hasExampleGroup ? <ExampleProjectsGroup rowOne={exampleRowOne} rowTwo={exampleRowTwo} /> : null}
     </Box>
   );
 }

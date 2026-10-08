@@ -96,6 +96,12 @@ const BOUNDED = [
     why: "a grounded Interactions call per digest -- the most expensive single request in the tracking table",
   },
   {
+    route: "app/api/application-project-pool/route.js",
+    limit: 12,
+    windowMs: 600_000,
+    why: "one pool generation per application, fired lazily by the tracking-table prewarm; the digest's own number for the same shape (a billed call on a cache miss, a stored row serving every re-render after). A denial leaves the application with no pool row, which the cost gate simply retries on a later load",
+  },
+  {
     route: "app/api/meeting/insights/route.js",
     limit: 60,
     windowMs: 600_000,
@@ -261,6 +267,10 @@ const DEFERRED = [
   {
     route: "app/api/cover-fact-smooth/route.js",
     why: "hard-authenticates via getUser() and could be bounded like the routes above, but AC-B8 (N92 Wave 3, same N65 precedent as salary-estimate above) rejects a numeric per-day/per-window cap for this feature: the route fires only when a signed-in user clicks the smoothing control on one inserted fact in the cover-letter review surface, and the unattended paths (autoInsertFactsForJob, letter generation, repaint, the cron tailor pipeline) never import lib/coverFacts/smoothTransition.js's client orchestrator or this route at all, so unattended spend stays at zero structurally rather than by a limiter (AC-B8a). The module-scope createRateLimiter seam the routes above use is a documented, ready insertion point if the owner sets a number later.",
+  },
+  {
+    route: "app/api/copilot/answer/project-example/route.js",
+    why: "hard-authenticates via getUser() and could be bounded like the routes above, but an owner ruling (N143, 2026-10-08) removed the per-user cap it first shipped with (40 per ten minutes): a cap on one call per drafted question can only ever refuse a real person mid-interview. The route fires only from a signed-in user's own copilot or practice session, after the answer has landed, and nothing unattended reaches it. The anti-stampede protection for this feature sits on the unattended fan-out instead: app/api/application-project-pool/route.js keeps its BOUNDED limiter above, and lib/copilot/projectPoolPrewarm.js is the cost gate in front of it. The module-scope createRateLimiter seam the routes above use is a documented, ready insertion point if the owner sets a number later.",
   },
 ];
 
@@ -720,5 +730,43 @@ describe("the triage itself is pinned", () => {
     // bounded. If someone bounds it, they must move this line deliberately.
     expect(DEFERRED_ROUTES.has("app/api/copilot/answer/route.js")).toBe(true);
     expect(sourceOf("app/api/copilot/answer/route.js")).not.toMatch(/createRateLimiter/);
+  });
+});
+
+describe("the Row-2 example-project route is deliberately unmetered (N143 owner ruling, 2026-10-08)", () => {
+  const ROW2 = "app/api/copilot/answer/project-example/route.js";
+  const PREWARM = "app/api/application-project-pool/route.js";
+
+  it("[positive control] the prewarm route, which owns the anti-stampede protection, stays BOUNDED", () => {
+    // The ruling removed ONE cap. If this ever fails, the cap that was meant to
+    // stay was removed along with it.
+    expect(BOUNDED_ROUTES.has(PREWARM)).toBe(true);
+    expect(sourceOf(PREWARM)).toMatch(/^const \w+ = createRateLimiter\(/m);
+  });
+
+  it("is accounted for as DEFERRED with a reason, and not as BOUNDED", () => {
+    expect(DEFERRED_ROUTES.has(ROW2)).toBe(true);
+    expect(BOUNDED_ROUTES.has(ROW2)).toBe(false);
+    const entry = DEFERRED.find((e) => e.route === ROW2);
+    expect(entry.why).toMatch(/owner ruling/);
+  });
+
+  it("[mutation control] still reaches the model, so the sweep cannot pass by it having gone unmetered by accident", () => {
+    // A route that stopped importing the Gemini client would no longer need the
+    // DEFERRED line at all; this pins that the exemption is covering a real spender.
+    expect(reachesModel(ROW2)).toBe(true);
+  });
+
+  it("carries no limiter: no createRateLimiter, no 429, no shared-limiter import", () => {
+    const code = codeOf(ROW2);
+    expect(code).not.toMatch(/createRateLimiter/);
+    expect(code).not.toMatch(/status:\s*429/);
+    expect(code).not.toMatch(/@\/lib\/rateLimit/);
+    // Canary: the same scan over a route that IS limited sees all three, so the
+    // absence above is measured, not vacuous.
+    const bounded = codeOf(PREWARM);
+    expect(bounded).toMatch(/createRateLimiter/);
+    expect(bounded).toMatch(/status:\s*429/);
+    expect(bounded).toMatch(/@\/lib\/rateLimit/);
   });
 });

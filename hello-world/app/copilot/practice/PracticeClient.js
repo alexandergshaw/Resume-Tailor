@@ -30,6 +30,8 @@ import { usePracticeAnswer } from "./usePracticeAnswer";
 import { usePracticeQuestions } from "./usePracticeQuestions";
 import { useRoomQuestions } from "./useRoomQuestions";
 import { useSampleAnswer } from "./useSampleAnswer";
+import { useApplicationProjectPool } from "@/app/hooks/useApplicationProjectPool";
+import { useRowOneStatusRelay, useBindRowOneStatus } from "../useRowOneStatusRelay";
 import { usePracticeCodeLanguage } from "./usePracticeCodeLanguage";
 import { shouldQueueSampleAnswer } from "@/lib/copilot/practiceFlow";
 import { useInterviewType } from "../useInterviewType";
@@ -169,6 +171,13 @@ export default function PracticeClient({
   // to that answer, whoever's voice it actually is.
   const collectingAnswer = answering || settling;
 
+  // The example-pool prewarm is mounted further down (it sits beside the other
+  // posting-keyed hooks), after the two answer producers that need to report to
+  // it. This stable relay is how a fresh answer's Row 1 status reaches that
+  // hook's noteRowOneStatus, the self-heal for a pool that was cold when a
+  // question was answered. See useRowOneStatusRelay.js.
+  const { onRowOneStatus, bindRowOneStatus } = useRowOneStatusRelay();
+
   // Final wave (AC-M2): detects a question asked by someone else in the
   // room WHILE it's being asked, and drafts the full answer for it — the
   // same detect/confirm/draft pipeline live mode's detected-question feed
@@ -182,6 +191,7 @@ export default function PracticeClient({
     profile,
     myTag,
     collecting: collectingAnswer,
+    onRowOneStatus,
   });
 
   // A-25/D-1: the code-language store read AND its change subscriber, out of
@@ -227,6 +237,7 @@ export default function PracticeClient({
     interviewType,
     applicationId: posting?.id || null,
     codeLanguage,
+    onRowOneStatus,
   });
 
   // AC-H3: the read-only "Submitted for this application" panel's data —
@@ -238,6 +249,16 @@ export default function PracticeClient({
   // context (AC-H3.14) — `profile`/`setProfile` above are never touched by
   // this hook or by SubmittedDocs.
   const submittedDocs = useApplicationDocs(posting?.id || null);
+
+  // The example-project pool for the selected posting, warmed through the route
+  // the moment it is chosen (an older application the tracking table's age-
+  // limited prewarm skipped included), so the sample answer's Row 1 is ready.
+  // No logger: practice's session log observes the sample answer's own values
+  // (usePracticeSessionLog) and has no recorder to hand a hook. Its
+  // noteRowOneStatus is wired into the relay above, so a pool that was cold when
+  // a question was answered is warmed once more for the next one.
+  const { noteRowOneStatus } = useApplicationProjectPool({ selectedApplicationId: posting?.id || null });
+  useBindRowOneStatus(bindRowOneStatus, noteRowOneStatus);
 
   // BUG-J4: stays here — onDoneAnswer below reads it for the critique
   // payload, not exclusively a question-flow concern (askedRef/
@@ -337,6 +358,10 @@ export default function PracticeClient({
         buzzwords: sampleAnswer.buzzwords,
         anchor: sampleAnswer.anchor,
         pageSources: sampleAnswer.pageSources,
+        // The two invented example rows, for the dashboard's answer panel
+        // (CurrentAnswerPanel reads them off its entry like the fields above).
+        projectExample: sampleAnswer.projectExample,
+        projectExampleLive: sampleAnswer.projectExampleLive,
         error: sampleAnswer.error,
       },
     ];
@@ -348,6 +373,8 @@ export default function PracticeClient({
     sampleAnswer.buzzwords,
     sampleAnswer.anchor,
     sampleAnswer.pageSources,
+    sampleAnswer.projectExample,
+    sampleAnswer.projectExampleLive,
     sampleAnswer.error,
   ]);
 
@@ -491,6 +518,8 @@ export default function PracticeClient({
     activeSessionId,
     captureError: error, captureWarning: warning,
     answering, answerMetrics, critique, critiqueStatus, critiqueError,
+    projectExample: sampleAnswer.projectExample,
+    projectExampleLive: sampleAnswer.projectExampleLive,
   });
 
   // Derived from state, not hard-coded, and names every destination that
@@ -767,6 +796,8 @@ export default function PracticeClient({
                 sampleBuzzwords={sampleAnswer.buzzwords}
                 sampleAnchor={sampleAnswer.anchor}
                 samplePageSources={sampleAnswer.pageSources}
+                sampleProjectExample={sampleAnswer.projectExample}
+                sampleProjectExampleLive={sampleAnswer.projectExampleLive}
                 sampleGrounding={sampleAnswer.grounding}
                 sampleError={sampleAnswer.error}
                 isEmbedded={isEmbedded}

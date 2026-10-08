@@ -51,6 +51,10 @@ export default function QuestionCard({
   sampleBuzzwords,
   sampleAnchor,
   samplePageSources,
+  // The two invented example rows for the sample answer, straight through to
+  // SampleAnswer's `projectExample` / `projectExampleLive` props.
+  sampleProjectExample,
+  sampleProjectExampleLive,
   sampleGrounding,
   sampleError,
   isEmbedded,
@@ -209,6 +213,8 @@ export default function QuestionCard({
           buzzwords={sampleBuzzwords}
           anchor={sampleAnchor}
           pageSources={samplePageSources}
+          projectExample={sampleProjectExample}
+          projectExampleLive={sampleProjectExampleLive}
           grounding={sampleGrounding}
           error={sampleError}
           isEmbedded={isEmbedded}

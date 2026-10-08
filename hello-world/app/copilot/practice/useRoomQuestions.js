@@ -5,9 +5,52 @@ import { shouldTreatAsRoomQuestion } from "@/lib/copilot/roomQuestions";
 import { detectQuestion, normalizeQuestion } from "@/lib/copilot/questions";
 import { confirmQuestion } from "@/lib/copilot/detectClient";
 import { draftAnswer } from "@/lib/copilot/answerClient";
+// Namespace import for Row 2 only, probed with `in` before use -- see
+// liveFetchAvailable below for why a named import cannot be used here.
+import * as answerClientModule from "@/lib/copilot/answerClient";
+import { projectExampleFromResponse, startProjectExampleLive } from "@/lib/copilot/projectExampleLive";
+import { readEngine } from "@/app/settings/engine";
 import { normalizeManualQuestion } from "@/lib/copilot/manualQuestion";
 import { getInterviewType } from "../useInterviewType";
 import { getCodeLanguage } from "../useCodeLanguage";
+
+// Row 2 of the example-projects group goes through a namespace probe because a
+// test file that stubs answerClient with only the exports it uses (this hook's
+// own suites stub just `draftAnswer`) omits this one, and Vitest treats touching
+// an omitted export as an error. Absent, the feature simply does not run, which
+// is what every suite that predates it expects. useDraftAnswer.js and
+// useSampleAnswer.js carry the same probe for the same reason.
+function liveFetchAvailable() {
+  return "fetchProjectExampleLive" in answerClientModule && typeof answerClientModule.fetchProjectExampleLive === "function";
+}
+
+// Row 2 for one detected-question card: an invented project written for the
+// question, requested after the answer has landed and never awaited, so it can
+// neither delay the answer nor fail it. `example` is the Row 1 value the ANSWER
+// carried, in whatever status, and it is the gate -- the same one live mode and
+// the sample answer use (the server omits Row 1 exactly when the feature does
+// not apply). Every write is gated `q.id === id && q.draftToken === token`, like
+// every other post-await write in runDraft; invalidateDrafts also clears the
+// card's rows, so a format change leaves no placeholder waiting on a settle that
+// the token gate will now drop.
+function fireRoomExampleLive({ setQuestions, id, token, question, appId, example }) {
+  if (!appId || !example || !liveFetchAvailable()) return;
+  try {
+    startProjectExampleLive({
+      applicationId: appId,
+      question,
+      engine: readEngine(),
+      fetchLive: answerClientModule.fetchProjectExampleLive,
+      apply: (value) => {
+        setQuestions((prev) =>
+          prev.map((q) => (q.id === id && q.draftToken === token ? { ...q, projectExampleLive: value } : q)),
+        );
+      },
+    });
+  } catch {
+    // Row 2 is a supplement; nothing here may interrupt the draft.
+  }
+}
 
 // Final wave (AC-M2): practice mode's counterpart of live mode's own
 // detected-question pipeline (app/copilot/useLiveSession.js's
@@ -58,8 +101,18 @@ const MIN_WORDS_FOR_LLM = 4;
 // render — see PracticeClient.js) whose body must still see the LATEST
 // values across the async confirm/draft chain, not whatever was current
 // when that instance was wired up.
-export function useRoomQuestions({ applicationId, profile, myTag, collecting }) {
+export function useRoomQuestions({ applicationId, profile, myTag, collecting, onRowOneStatus }) {
   const [questions, setQuestions] = useState([]);
+
+  // Optional. Told, for every drafted answer that carried a Row 1 value, which
+  // application it was drafted for and that Row 1's status, so a cold example
+  // pool can be warmed again within the session (useApplicationProjectPool's
+  // noteRowOneStatus). A ref, so the stable runDraft below reads the latest
+  // callback without depending on its identity.
+  const onRowOneStatusRef = useRef(onRowOneStatus);
+  useEffect(() => {
+    onRowOneStatusRef.current = onRowOneStatus;
+  }, [onRowOneStatus]);
 
   const applicationIdRef = useRef(applicationId ?? null);
   const profileRef = useRef(profile ?? "");
@@ -87,6 +140,12 @@ export function useRoomQuestions({ applicationId, profile, myTag, collecting }) 
   // rejection path — an unguarded catch is half the hazard) after the
   // format has changed out from under it.
   const roomDraftTokenRef = useRef(0);
+  // The newest draft token stamped on each card, by card id. The card's own
+  // `draftToken` is only readable inside a setQuestions updater, which must stay
+  // pure, so this is how a draft that resolves AFTER a newer one (or an
+  // invalidation) took its card finds that out before it spends a model call on
+  // an example nobody will see (Row 2). invalidateDrafts empties it.
+  const latestTokenByIdRef = useRef(new Map());
 
   useEffect(() => {
     applicationIdRef.current = applicationId ?? null;
@@ -156,18 +215,37 @@ export function useRoomQuestions({ applicationId, profile, myTag, collecting }) 
   // starts sending an interview type.
   const runDraft = useCallback(async (id, question) => {
     const token = (roomDraftTokenRef.current += 1);
+    latestTokenByIdRef.current.set(id, token);
+    // The application this draft is for, read once before the await: it is the
+    // id the request sends AND the id Row 2 and the warm-up report are keyed to.
+    const appId = applicationIdRef.current;
     setQuestions((prev) =>
-      prev.map((q) => (q.id === id ? { ...q, status: "loading", error: "", draftToken: token } : q)),
+      prev.map((q) =>
+        // A redraft clears the previous answer's two example rows with its
+        // status, for the reason useDraftAnswer.js clears them: a new answer must
+        // not sit beside the last answer's example, and a previous Row 2 is
+        // never carried across.
+        q.id === id
+          ? { ...q, status: "loading", error: "", draftToken: token, projectExample: undefined, projectExampleLive: undefined }
+          : q,
+      ),
     );
     try {
-      const { points, type, cues, buzzwords, resumeAnchor, pageSources } = await draftAnswer({
+      const { points, type, cues, buzzwords, resumeAnchor, pageSources, projectExample } = await draftAnswer({
         question,
         context: "",
         profile: profileRef.current,
-        applicationId: applicationIdRef.current,
+        applicationId: appId,
         interviewType: getInterviewType(),
         codeLanguage: getCodeLanguage(),
       });
+      // Row 1 of the example-projects group, picked server-side from the
+      // pre-warmed pool for THIS question. Absent stays absent (see
+      // projectExampleFromResponse): the server omits it when the feature does
+      // not apply, and absence is how a card renders no example group at all.
+      // Dropping it here (as this destructure once did) rendered "nothing" on
+      // every detected-question card while the server did the pool read.
+      const example = projectExampleFromResponse(projectExample);
       setQuestions((prev) =>
         prev.map((q) =>
           q.id === id && q.draftToken === token
@@ -186,6 +264,9 @@ export function useRoomQuestions({ applicationId, profile, myTag, collecting }) 
                 // siblings above — which knowledge-base page (if any) each
                 // point came from, rendered by AnswerLines via QuestionFeed.
                 pageSources: Array.isArray(pageSources) ? pageSources : [],
+                projectExample: example,
+                // Row 2 starts below, after this write; never carried over.
+                projectExampleLive: undefined,
                 // Prefer the type confirmQuestion already classified this
                 // question as (set when the entry was first added, below)
                 // over draftAnswer's own guess — same precedence
@@ -195,6 +276,16 @@ export function useRoomQuestions({ applicationId, profile, myTag, collecting }) 
             : q,
         ),
       );
+      if (latestTokenByIdRef.current.get(id) === token) {
+        fireRoomExampleLive({ setQuestions, id, token, question, appId, example });
+      }
+      // Guarded on its own: the answer above has landed, and a throw out of the
+      // warm-up report must not reach the catch below and turn it into an error.
+      try {
+        onRowOneStatusRef.current?.(appId, example?.status);
+      } catch {
+        // The warm-up is a supplement; nothing here may interrupt the draft.
+      }
     } catch (err) {
       setQuestions((prev) =>
         prev.map((q) =>
@@ -372,6 +463,7 @@ export function useRoomQuestions({ applicationId, profile, myTag, collecting }) 
   const resetForSession = useCallback(() => {
     setQuestions([]);
     lastQNormRef.current = "";
+    latestTokenByIdRef.current.clear();
   }, []);
 
   // AC-A21b: PracticeClient's interview-type-change subscriber calls this,
@@ -401,6 +493,7 @@ export function useRoomQuestions({ applicationId, profile, myTag, collecting }) 
   // repeats it, which is exactly the duplicate resetForSession's OWN clear
   // of that guard exists to prevent between sessions, not within one.
   const invalidateDrafts = useCallback(() => {
+    latestTokenByIdRef.current.clear();
     setQuestions((prev) =>
       prev.map((q) => ({
         ...q,
@@ -412,6 +505,10 @@ export function useRoomQuestions({ applicationId, profile, myTag, collecting }) 
         buzzwords: [],
         anchor: null,
         pageSources: [],
+        // The two example rows go with the answer they sat beside: a Row 2 still
+        // pending would otherwise wait on a settle the token gate now drops.
+        projectExample: undefined,
+        projectExampleLive: undefined,
         draftToken: null,
       })),
     );

@@ -352,6 +352,10 @@ describe("POST /api/copilot/answer (answer mode)", () => {
       // route.knowledgeBase.test.js's "reports no page sources at all when
       // no page reached the draft".
       pageSources: [],
+      // N143 Row 1: a Gemini request with an application selected always carries
+      // the example-projects status; this fixture has no pool row yet, so it
+      // reads as still being prepared.
+      projectExample: { status: "pending" },
     });
 
     const client = getGeminiClient();
@@ -450,6 +454,7 @@ describe("POST /api/copilot/answer (points mode grounding, AC-H4)", () => {
       "cues",
       "pageSources",
       "points",
+      "projectExample",
       "resumeAnchor",
       "type",
     ]);

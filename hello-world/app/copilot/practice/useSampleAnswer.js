@@ -1,7 +1,16 @@
 "use client";
 
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { draftAnswer } from "@/lib/copilot/answerClient";
+// Namespace import for Row 2 only, probed with `in` before use -- see
+// liveFetchAvailable below for why a named import cannot be used here.
+import * as answerClientModule from "@/lib/copilot/answerClient";
+import {
+  finalProjectExample,
+  projectExampleFromResponse,
+  startProjectExampleLive,
+} from "@/lib/copilot/projectExampleLive";
+import { readEngine } from "@/app/settings/engine";
 import {
   emptySampleAnswer,
   activeSampleAnswer,
@@ -9,6 +18,16 @@ import {
   cachedSampleAnswerFor,
 } from "@/lib/copilot/sampleAnswerState";
 import { normalizeQuestion } from "@/lib/copilot/questions";
+
+// Row 2 of the example-projects group is requested through a namespace probe
+// because a test file that stubs answerClient with only the exports it uses
+// omits this one, and Vitest treats touching an omitted export as an error.
+// Absent, the feature simply does not run (the sample answer renders no Row 2),
+// which is what every suite that predates it expects. useDraftAnswer.js carries
+// the same probe for the same reason.
+function liveFetchAvailable() {
+  return "fetchProjectExampleLive" in answerClientModule && typeof answerClientModule.fetchProjectExampleLive === "function";
+}
 
 // G1: thin React wrapper around lib/copilot/sampleAnswerState.js's pure
 // derivation. This hook owns exactly the three things React-specific
@@ -41,8 +60,19 @@ import { normalizeQuestion } from "@/lib/copilot/questions";
 // cache write, and every draftAnswer call this hook makes, so a reveal after
 // a language change is a cache MISS and drafts fresh in the new language,
 // exactly like a profile edit or a posting change already does.
-export function useSampleAnswer({ question, profile, interviewType, applicationId, codeLanguage }) {
+//
+// `onRowOneStatus` is optional: told, for every FRESH answer (a real request or
+// a silent queue, never a cache reuse) that carried a Row 1 value, which
+// application it was drafted for and that Row 1's status, so a cold pool can be
+// warmed again within the session (useApplicationProjectPool's
+// noteRowOneStatus). Held in a ref so a caller handing over a new function each
+// render changes the identity of nothing below.
+export function useSampleAnswer({ question, profile, interviewType, applicationId, codeLanguage, onRowOneStatus }) {
   const [state, setState] = useState(emptySampleAnswer);
+  const onRowOneStatusRef = useRef(onRowOneStatus);
+  useEffect(() => {
+    onRowOneStatusRef.current = onRowOneStatus;
+  }, [onRowOneStatus]);
   // Bumped on every new request; a response is only ever written to state
   // while it's still the newest one requested — a slow draft for a question
   // the user has since moved past must repaint nothing (AC-G1-7).
@@ -67,6 +97,57 @@ export function useSampleAnswer({ question, profile, interviewType, applicationI
   // itself trigger a render) so PracticeClient's queue effect can dedupe
   // against it via shouldQueueSampleAnswer without a second cache lookup.
   const queuedForRef = useRef("");
+  // Which Row 2 request currently owns the sample answer: bumped by every fire
+  // below and by every fresh `request`, so a Row 2 that resolves after a newer
+  // draft (a Regenerate, a Retry) took over the panel repaints nothing. Separate
+  // from `genRef`, which gates the ANSWER's own write -- a Row 2 for a reveal
+  // served from the cache has no answer request to borrow a generation from.
+  const liveGenRef = useRef(0);
+
+  // Row 2 of the example-projects group for the sample answer now on screen:
+  // an invented project written for `q`, requested after the answer has landed
+  // and never awaited, so it cannot delay or fail the answer. Called from BOTH
+  // places a sample answer lands -- a fresh draft resolving, and a reveal served
+  // from the cache (which makes no request of its own, so nothing else would
+  // fire it). Row 2 is never cached; a revealed-again answer gets a fresh one.
+  //
+  // `example` is the Row 1 value the ANSWER carried, in whatever status, and it
+  // is the gate: the server omits Row 1 exactly when the feature does not apply
+  // (no application selected, or an engine the SERVER treats as embedded, which
+  // the browser's own engine setting cannot always see), so its presence is the
+  // one authoritative "Row 2 applies here" signal this hook has. Without it a
+  // sample answer for a server-embedded deployment would spend a request on every
+  // reveal to be told "nothing to show".
+  const fireProjectExampleLive = useCallback((q, appId, example) => {
+    if (!appId || !example || !liveFetchAvailable()) return;
+    const liveGen = (liveGenRef.current += 1);
+    try {
+      startProjectExampleLive({
+        applicationId: appId,
+        question: q,
+        engine: readEngine(),
+        fetchLive: answerClientModule.fetchProjectExampleLive,
+        apply: (value) => {
+          if (liveGenRef.current !== liveGen) return;
+          setState((prev) => (prev.question === q ? { ...prev, projectExampleLive: value } : prev));
+        },
+      });
+    } catch {
+      // Row 2 is a supplement; nothing here may interrupt the sample answer.
+    }
+  }, []);
+
+  // Reports a fresh answer's Row 1 status to the pool prewarm's self-heal. Guarded
+  // on its own: both call sites sit inside a promise chain whose catch turns a
+  // throw into an error card, and a warm-up callback must never be able to turn a
+  // delivered answer into one.
+  const reportRowOneStatus = useCallback((appId, example) => {
+    try {
+      onRowOneStatusRef.current?.(appId, example?.status);
+    } catch {
+      // The warm-up is a supplement; nothing here may interrupt the sample answer.
+    }
+  }, []);
 
   // Only a stored draft built for the EXACT question on screen right now
   // ever applies (AC-G1-5) — no effect resets this on question change, the
@@ -84,6 +165,9 @@ export function useSampleAnswer({ question, profile, interviewType, applicationI
   // (AC-G1-4): nothing here ever throws back out to a caller.
   const request = useCallback((q, p, it, appId, cl) => {
     const gen = (genRef.current += 1);
+    // A Row 2 still in flight for the draft this one replaces must not land on
+    // the new one's panel.
+    liveGenRef.current += 1;
     setState({
       question: q,
       visible: true,
@@ -127,7 +211,7 @@ export function useSampleAnswer({ question, profile, interviewType, applicationI
       codeLanguage: cl,
       mode: "answer",
     })
-      .then(({ points, cues, buzzwords, resumeAnchor, pageSources, grounding }) => {
+      .then(({ points, cues, buzzwords, resumeAnchor, pageSources, grounding, projectExample }) => {
         if (genRef.current !== gen) return;
         const cleanPoints = Array.isArray(points) ? points : [];
         // AC-K1: same defensive normalization `points` already gets — a
@@ -144,6 +228,9 @@ export function useSampleAnswer({ question, profile, interviewType, applicationI
         // agree.
         const cleanPageSources = Array.isArray(pageSources) ? pageSources : [];
         const cleanGrounding = grounding || null;
+        // Row 1 of the example-projects group, picked server-side for this
+        // question; absent stays absent (see projectExampleFromResponse).
+        const cleanExample = projectExampleFromResponse(projectExample);
         setState((prev) => ({
           ...prev,
           question: q,
@@ -153,6 +240,8 @@ export function useSampleAnswer({ question, profile, interviewType, applicationI
           buzzwords: cleanBuzzwords,
           anchor: cleanAnchor,
           pageSources: cleanPageSources,
+          projectExample: cleanExample,
+          projectExampleLive: undefined,
           grounding: cleanGrounding,
           error: "",
           profile: p,
@@ -175,12 +264,15 @@ export function useSampleAnswer({ question, profile, interviewType, applicationI
           buzzwords: cleanBuzzwords,
           anchor: cleanAnchor,
           pageSources: cleanPageSources,
+          projectExample: cleanExample,
           grounding: cleanGrounding,
           profile: p,
           interviewType: it,
           applicationId: appId,
           codeLanguage: cl,
         });
+        fireProjectExampleLive(q, appId, cleanExample);
+        reportRowOneStatus(appId, cleanExample);
       })
       .catch((err) => {
         if (genRef.current !== gen) return;
@@ -201,7 +293,7 @@ export function useSampleAnswer({ question, profile, interviewType, applicationI
           codeLanguage: cl,
         }));
       });
-  }, []);
+  }, [fireProjectExampleLive, reportRowOneStatus]);
 
   // Shared by the toggle's "show" branch (force=false — serve the cache
   // when it's still valid per needsRedraft) and by Retry/Regenerate
@@ -233,7 +325,13 @@ export function useSampleAnswer({ question, profile, interviewType, applicationI
             codeLanguage,
           );
           if (cached) {
-            setState(cached);
+            // Row 1 rides the cache only in a FINAL state, and Row 2 is never
+            // part of a cached entry: a reveal served from the cache makes no
+            // request, so it gets a fresh Row 2 here rather than replaying a
+            // pending or settled one. See finalProjectExample.
+            const raw = cacheRef.current.get(normalizeQuestion(question));
+            setState({ ...cached, projectExample: finalProjectExample(raw?.projectExample) });
+            fireProjectExampleLive(question, applicationId, raw?.projectExample);
             return;
           }
         }
@@ -242,7 +340,7 @@ export function useSampleAnswer({ question, profile, interviewType, applicationI
       }
       setState((prev) => (prev.question === question ? { ...prev, visible: true } : prev));
     },
-    [active, profile, interviewType, applicationId, codeLanguage, question, request],
+    [active, profile, interviewType, applicationId, codeLanguage, question, request, fireProjectExampleLive],
   );
 
   // AC-N2: fetches a draft for `q` and writes it to the cache via the exact
@@ -276,11 +374,12 @@ export function useSampleAnswer({ question, profile, interviewType, applicationI
       codeLanguage: cl,
       mode: "answer",
     })
-      .then(({ points, cues, buzzwords, resumeAnchor, pageSources, grounding }) => {
+      .then(({ points, cues, buzzwords, resumeAnchor, pageSources, grounding, projectExample }) => {
         // A newer queue (or a real `request`) has since started for a
         // different question — this response belongs to a question the
         // user has already moved past, so it writes nothing.
         if (queueGenRef.current !== gen) return;
+        const queuedExample = projectExampleFromResponse(projectExample);
         cacheRef.current.set(normalizeQuestion(q), {
           points: Array.isArray(points) ? points : [],
           cues: Array.isArray(cues) ? cues : [],
@@ -291,12 +390,19 @@ export function useSampleAnswer({ question, profile, interviewType, applicationI
           // pre-fetched silently while unrevealed must not read back with
           // its citations missing the moment it IS revealed.
           pageSources: Array.isArray(pageSources) ? pageSources : [],
+          // Same field `request`'s cache write carries, for the same reason: a
+          // draft pre-fetched while unrevealed must still show its Row 1 the
+          // moment it IS revealed (in a final state only -- see reveal).
+          projectExample: queuedExample,
           grounding: grounding || null,
           profile: p,
           interviewType: it,
           applicationId: appId,
           codeLanguage: cl,
         });
+        // A silent pre-fetch is a fresh server call too, so it is as good a
+        // witness of the pool's state as a revealed one.
+        reportRowOneStatus(appId, queuedExample);
       })
       .catch(() => {
         // AC-N2: swallowed on purpose — a failed queue must leave the user
@@ -306,7 +412,7 @@ export function useSampleAnswer({ question, profile, interviewType, applicationI
         // back to a fresh request whenever the cache has nothing usable, so
         // there is nothing else to do here.
       });
-  }, []);
+  }, [reportRowOneStatus]);
 
   // AC-N2: whether a draft is already cached for `q` — exposed so
   // PracticeClient's queue effect can feed shouldQueueSampleAnswer's
@@ -344,6 +450,10 @@ export function useSampleAnswer({ question, profile, interviewType, applicationI
     buzzwords: active.buzzwords,
     anchor: active.anchor,
     pageSources: active.pageSources,
+    // Rows 1 and 2 of the example-projects group; undefined when the response
+    // carried none (no posting selected, or the embedded engine).
+    projectExample: active.projectExample,
+    projectExampleLive: active.projectExampleLive,
     grounding: active.grounding,
     error: active.error,
     toggle,

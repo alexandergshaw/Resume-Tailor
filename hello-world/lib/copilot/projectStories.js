@@ -75,7 +75,10 @@ import { MIN_TITLE_WORDS, pointWordCount } from "./pointLength.js";
 
 // Consulted by the MATCH DECISION in selectBestStory only — never by
 // significantTerms or overlapScore, which lib/meeting/** shares (R-257).
-const STOPWORDS = new Set(stopwords);
+// Exported (read-only by convention, never mutated) for the one other caller
+// that asks the same question of an interview question: lib/copilot/
+// projectExampleSelect.js's fit score, which copies it before adjusting it.
+export const STOPWORDS = new Set(stopwords);
 
 // Never "resume" and never "prep" — see this file's header comment. A plain
 // constant (not derived per call) so every caller that needs to attribute

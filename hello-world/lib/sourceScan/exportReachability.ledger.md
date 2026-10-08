@@ -21,12 +21,12 @@ Current pinned values, as of the last entry in each section:
 | `ALLOWED_UNREACHABLE_MODULES.length`        | 14     |
 | `UNWIRED_MODULES` (exact list of 5 files)   | 5      |
 | `ORPHAN_EXPORTS.length`                     | 65     |
-| `TEST_REFERENCED.length` (rule TR-1)        | 391    |
-| `UNUSED_IN_SHIPPING_MODULES.length`         | 456    |
+| `TEST_REFERENCED.length` (rule TR-1)        | 407    |
+| `UNUSED_IN_SHIPPING_MODULES.length`         | 472    |
 
 The identity that ties the last three together, and that the test asserts
 directly, is `UNUSED_IN_SHIPPING_MODULES = TEST_REFERENCED + ORPHANS`
-(391 + 65 = 456).
+(407 + 65 = 472).
 
 ---
 
@@ -182,7 +182,7 @@ it.
 
 ---
 
-## 4. TEST_REFERENCED, rule TR-1 (pinned at 391)
+## 4. TEST_REFERENCED, rule TR-1 (pinned at 407)
 
 Exports unused by shipping code that at least one `.test.js` imports BY NAME.
 A raise is a review event: check the new export is a helper being pinned, not
@@ -554,11 +554,39 @@ back into this bucket. Nothing joined: no surviving module lost its only shippin
 importer to the deletion. Measured by running the sweep's own scan over a HEAD
 checkout and over the post-removal tree: the symmetric difference is exactly these
 five (and ORPHAN_EXPORTS' MAX_SHAPE_TERMS, section 3).
+N143: 391 -> 407 (+16, -0): the example-projects feature (invented "Ready example" /
+"Example for this question" rows under a drafted answer). IN (+16), by name and by
+module, each pinned by name by its module's own suite, each called ONLY from inside its
+own module in production (so none is dead, and none is an orphan -- a suite does import
+it):
+  lib/copilot/projectExampleGen.js x11 -- the owner-tunable constants PROJECT_POOL_SIZE,
+    POOL_BULLETS_MAX, POOL_BULLET_MAX_WORDS, POOL_TITLE_MAX_WORDS,
+    POOL_GENERATION_TIMEOUT_MS, ON_THE_SPOT_TIMEOUT_MS (read by the prompts, the parser
+    and the generate functions' default timeout), and the pure helpers buildPoolPrompt,
+    buildOnTheSpotPrompt, parsePoolResponse, parseOnTheSpotResponse, stripPostingFigures
+    (all four are called by generateProjectPool / generateOnTheSpotProject, which the two
+    new routes import);
+  lib/copilot/projectExampleSelect.js x2 -- POOL_FIT_THRESHOLD (read by selectPoolProject)
+    and POOL_PENDING_MAX_AGE (read by isStalePending);
+  lib/copilot/projectPoolPrewarm.js x1 -- AUTO_PROJECT_POOL_MAX_AGE_HOURS (read by
+    selectAutoProjectPoolTargets);
+  lib/copilot/projectExampleLive.js x2 -- ROW2_PENDING_MAX_MS (the default of
+    startProjectExampleLive's watchdog) and normalizeLiveResult (called by it).
+Every other export the feature added has a shipping importer and is in neither bucket:
+generateProjectPool, generateOnTheSpotProject (the two routes), selectPoolProject,
+isStalePending, buildProjectExample, selectAutoProjectPoolTargets,
+AUTO_PROJECT_POOL_CONCURRENCY, getProjectPool, listProjectPools, upsertProjectPool,
+finalProjectExample, projectExampleFromResponse, startProjectExampleLive,
+fetchProjectExampleLive (answerClient.js, via the namespace import in useDraftAnswer.js
+and useSampleAnswer.js), useApplicationProjectPool (page.js, CopilotClient.js,
+PracticeClient.js). No new module is unreachable. ORPHAN_EXPORTS unmoved at 65. Measured
+by running the sweep's own scan (exportReachability.scan.js) over the post-wave tree and
+classifying every export of the fifteen files the feature touched.
 ```
 
 ---
 
-## 5. UNUSED_IN_SHIPPING_MODULES total (pinned at 456)
+## 5. UNUSED_IN_SHIPPING_MODULES total (pinned at 472)
 
 The sum of the two halves above (`TEST_REFERENCED + ORPHANS`); the test also
 asserts that identity directly, so the split is pinned and not only the total.
@@ -710,4 +738,9 @@ at 66). TEST_REFERENCED 396 + ORPHANS 66.
 N141: 462 -> 456 (TEST_REFERENCED's -5, idealProjectResolver.js's four symbols and
 idealProject.js#MAX_METRICS, plus ORPHAN_EXPORTS' -1, idealProject.js#MAX_SHAPE_TERMS,
 all described above). TEST_REFERENCED 391 + ORPHANS 65.
+N143: 456 -> 472 (TEST_REFERENCED's +16, the example-projects feature's test-pinned
+constants and pure helpers, named at section 4; ORPHAN_EXPORTS unmoved at 65). The
+total moving by exactly the TR-1 half's +16 with the orphan half frozen is what says
+this was a widened export surface for unit suites and not a feature built and never
+wired. TEST_REFERENCED 407 + ORPHANS 65.
 ```

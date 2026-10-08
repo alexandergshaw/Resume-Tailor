@@ -7,6 +7,12 @@ import { getInterviewType } from "./useInterviewType";
 import { getCodeLanguage } from "./useCodeLanguage";
 // Namespace import, not named — see fetchAnswer's own comment for why.
 import * as answerClientModule from "@/lib/copilot/answerClient";
+import {
+  finalProjectExample,
+  projectExampleFromResponse,
+  startProjectExampleLive,
+} from "@/lib/copilot/projectExampleLive";
+import { readEngine } from "@/app/settings/engine";
 
 // AC-P4.2: runDraft's one and only answer-fetching call, in production
 // always the streaming client — draftAnswerStreaming resolves with exactly
@@ -37,6 +43,44 @@ function fetchAnswer(args, handlers) {
   return answerClientModule.draftAnswer(args);
 }
 
+// Row 2 of the example-projects group goes through the same namespace probe, for
+// the same reason: a test file that stubs answerClient with only the exports it
+// cares about omits this one, and touching an omitted export throws. Absent, the
+// feature simply does not run (the card renders no Row 2), which is what every
+// pre-existing suite that never heard of it expects.
+function liveFetchAvailable() {
+  return "fetchProjectExampleLive" in answerClientModule && typeof answerClientModule.fetchProjectExampleLive === "function";
+}
+
+// What the session log records about the two example rows: the card's id, the
+// value's status and the identity tags a pool entry carries, never the entry's
+// text. Row 1 is logged when it lands on a card (the selection decision), Row 2
+// when it settles (the on-the-spot outcome).
+//
+// `fitScore` and `poolTags` are the owner probe's evidence (AC-N143-Q,
+// docs/loop/N143.probe.md): the score the pick won or missed with, and every
+// entry of the pool it was picked from as { competency, domain, title }. They are
+// present only on a ready or no_match value (the server sends them there) and
+// the log omits an undefined field, so a pending or failed value logs as before.
+// Practice mode's log (usePracticeSessionLog) carries the same two fields, so the
+// probe reads the same evidence in either mode.
+function logExampleShown(logEvent, id, example) {
+  if (!example) return;
+  logEvent("projectExample.shown", {
+    id,
+    status: example.status,
+    competency: example.competency || "",
+    domain: example.domain || "",
+    fitScore: example.fitScore,
+    poolTags: example.poolTags,
+  });
+}
+
+function logExampleLive(logEvent, id, example) {
+  if (!example) return;
+  logEvent("projectExample.live", { id, status: example.status, competency: example.competency || "" });
+}
+
 // AC-P4/AC-N1/AC-Q6.9: split out of useLiveSession.js purely to keep that
 // file under this project's 1000-line cap — the same reasoning
 // useSessionLogRecorder.js's own module doc gives (which itself split out of
@@ -58,7 +102,17 @@ export function useDraftAnswer({
   buildContext,
   setQuestions,
   logEvent,
+  // Optional. Told, for every FRESH answer that carries a Row 1 value, which
+  // application it was drafted for and what status that Row 1 had, so a pool that
+  // was cold (`pending`) can be warmed again within the session. See
+  // useApplicationProjectPool's noteRowOneStatus; held in a ref below so a caller
+  // handing over a new function each render does not change runDraft's identity.
+  onRowOneStatus,
 }) {
+  const onRowOneStatusRef = useRef(onRowOneStatus);
+  useEffect(() => {
+    onRowOneStatusRef.current = onRowOneStatus;
+  }, [onRowOneStatus]);
   const profileRef = useRef("");
   // AC-H1: mirrors `posting`, the same reason profileRef exists just above.
   const postingRef = useRef(null);
@@ -73,6 +127,12 @@ export function useDraftAnswer({
   // render would still read the OLD value inside a synchronous change
   // listener (AC-C26).
   const draftTokenRef = useRef(0);
+  // The newest draft token stamped on each card, by card id. The card's own
+  // `draftToken` is only readable inside a setQuestions updater, which must stay
+  // pure, so this is how a draft that resolves AFTER a newer one took over its
+  // card finds that out before it spends a model call on an example nobody
+  // will see (Row 2 below).
+  const latestTokenByIdRef = useRef(new Map());
 
   useEffect(() => {
     profileRef.current = profile;
@@ -122,6 +182,59 @@ export function useDraftAnswer({
       // anywhere else (C3/§D.22) — an entry that was never drafted carries no
       // token, and no live token can ever equal `undefined`.
       const token = (draftTokenRef.current += 1);
+      latestTokenByIdRef.current.set(id, token);
+      // Row 2 of the example-projects group: an invented project written for
+      // THIS question, requested after the answer has landed and never awaited,
+      // so it can neither delay the answer nor fail it. ONE function, called from
+      // BOTH places a draft resolves a card — the cache-hit branch below, which
+      // returns before the done-frame write, and the done-frame write itself.
+      // Wired only to the done-frame write, a re-asked question (a cache hit)
+      // would never fire it and its card would sit on "Writing one for this
+      // question" until the watchdog gave up; a reused answer deserves a fresh
+      // example, since Row 2 is by contract never cached.
+      //
+      // `example` is the Row 1 value the ANSWER carried, in whatever status, and it
+      // is the gate -- the same one practice mode's sample answer uses, so the two
+      // modes cannot disagree about when Row 2 exists. The server omits Row 1
+      // exactly when the feature does not apply (no application, or an engine the
+      // SERVER treats as embedded, which the browser's own engine setting cannot
+      // always see), so its presence is the one authoritative "Row 2 applies here"
+      // signal. Gating on the client's engine alone spent a request on every
+      // question of a server-embedded deployment, and flashed an empty "Example
+      // projects" group while it waited to be told "nothing to show".
+      //
+      // Every write is gated `it.id === id && it.draftToken === token`, like
+      // every other post-await write in this function. A write that settles after
+      // a GENERATION bump (the user changed posting or profile, or started a fresh
+      // session, while Row 2 was in flight) clears the row rather than being
+      // dropped: the pending placeholder written at the start belongs to a card
+      // the user has left, and dropping the settle left "Writing one for this
+      // question" on it forever. A card a newer draft has taken fails the token
+      // gate, so the clear can never touch the newer draft's own row.
+      const fireProjectExampleLive = (example) => {
+        if (!grounding.applicationId || !example || !liveFetchAvailable()) return;
+        if (latestTokenByIdRef.current.get(id) !== token) return;
+        try {
+          startProjectExampleLive({
+            applicationId: grounding.applicationId,
+            question,
+            engine: readEngine(),
+            fetchLive: answerClientModule.fetchProjectExampleLive,
+            apply: (value, settled) => {
+              const superseded = settled && draftGenRef.current !== gen;
+              const next = superseded ? undefined : value;
+              setQuestions((prev) =>
+                prev.map((it) =>
+                  it.id === id && it.draftToken === token ? { ...it, projectExampleLive: next } : it,
+                ),
+              );
+              if (settled && !superseded) logExampleLive(logEvent, id, value);
+            },
+          });
+        } catch {
+          // Row 2 is a supplement; nothing here may interrupt the draft.
+        }
+      };
       // Reuse a prior answer for the same (normalized) question — interviewers
       // often circle back or rephrase — unless the user explicitly redrafts.
       // AC-N1.2: cachedAnswerFor rejects an entry whose OWN grounding
@@ -135,6 +248,12 @@ export function useDraftAnswer({
           // AC-Q6.3: a reused answer resolved this card too — same outcome
           // as a fresh draft, from the log's point of view.
           logEvent("answer.done", { id, points: cached.points });
+          // Row 1 rides the cache only in a FINAL state (ready, or no close
+          // match): a reused answer makes no server call, so a cached "still
+          // being prepared" or "couldn't prepare" would be replayed long after
+          // the pool it described has changed. See finalProjectExample.
+          const replayedExample = finalProjectExample(cached.projectExample);
+          logExampleShown(logEvent, id, replayedExample);
           setQuestions((prev) =>
             prev.map((it) =>
               it.id === id
@@ -169,6 +288,12 @@ export function useDraftAnswer({
                     // the same question was asked, with nothing on screen
                     // explaining why.
                     pageSources: Array.isArray(cached.pageSources) ? cached.pageSources : [],
+                    projectExample: replayedExample,
+                    // Never copied from the cache (it is not part of a cached
+                    // entry): a stale pending or settled Row 2 from a previous
+                    // draft of this card must not survive a reuse. The fire
+                    // below writes the fresh one.
+                    projectExampleLive: undefined,
                     type: it.type || cached.type,
                     cached: true,
                     // AC-A16b: a cache hit ADVANCES the token — it must not
@@ -179,6 +304,9 @@ export function useDraftAnswer({
                 : it,
             ),
           );
+          // The RAW cached Row 1 is the gate (any status), not the replayed one:
+          // whether the answer carried a Row 1 at all is what says Row 2 applies.
+          fireProjectExampleLive(cached.projectExample);
           return;
         }
       }
@@ -197,8 +325,20 @@ export function useDraftAnswer({
           // is not free (its own fallback logic reads the previous array) and
           // a mis-attributed page is the worse of the two by this feature's
           // own reasoning.
+          // The two example rows are cleared with `pageSources` for the same
+          // reason: a redraft's new answer must not sit beside the previous
+          // answer's example, and a previous Row 2 is never carried across.
           it.id === id
-            ? { ...it, status: "loading", error: "", cached: false, pageSources: [], draftToken: token }
+            ? {
+                ...it,
+                status: "loading",
+                error: "",
+                cached: false,
+                pageSources: [],
+                projectExample: undefined,
+                projectExampleLive: undefined,
+                draftToken: token,
+              }
             : it,
         ),
       );
@@ -223,7 +363,7 @@ export function useDraftAnswer({
         );
       };
       try {
-        const { points, type, cues, buzzwords, resumeAnchor, pageSources } = await fetchAnswer(
+        const { points, type, cues, buzzwords, resumeAnchor, pageSources, projectExample } = await fetchAnswer(
           {
             question,
             context: buildContext(),
@@ -286,6 +426,12 @@ export function useDraftAnswer({
           // partial value; the `onPoints` callback above keeps carrying
           // ONLY `points`, unchanged, during the stream itself.
           pageSources: Array.isArray(pageSources) ? pageSources : [],
+          // Row 1 of the example-projects group, picked server-side from the
+          // pre-warmed pool for THIS question. ABSENT (not defaulted) when the
+          // server omitted it -- see projectExampleFromResponse. Like `anchor`,
+          // it rides the question-keyed cache below; the server never caches it
+          // (the pick is per question).
+          ...(projectExampleFromResponse(projectExample) ? { projectExample } : {}),
         };
         // AC-N1.2: the grounding this draft was ACTUALLY built from — the
         // same `grounding` captured before the await above, not a fresh read
@@ -293,6 +439,7 @@ export function useDraftAnswer({
         answerCacheRef.current.set(norm, { points, type, ...aids, ...grounding });
         // AC-Q6.2: the resolved answer for this question.
         logEvent("answer.done", { id, points });
+        logExampleShown(logEvent, id, aids.projectExample);
         setQuestions((prev) =>
           prev.map((it) =>
             it.id === id && it.draftToken === token
@@ -300,6 +447,17 @@ export function useDraftAnswer({
               : it,
           ),
         );
+        fireProjectExampleLive(aids.projectExample);
+        // A fresh answer is the only evidence of the pool's state at question
+        // time (a reused one made no server call), so only this branch reports it.
+        // Guarded on its own: the answer above has already landed, and a throw
+        // out of the report must not reach the catch below and turn a delivered
+        // answer into an error card.
+        try {
+          onRowOneStatusRef.current?.(grounding.applicationId, aids.projectExample?.status);
+        } catch {
+          // The warm-up is a supplement; nothing here may interrupt the draft.
+        }
       } catch (err) {
         if (draftGenRef.current !== gen) {
           revertToIdle();

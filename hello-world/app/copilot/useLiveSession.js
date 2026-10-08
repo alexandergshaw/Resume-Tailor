@@ -121,6 +121,11 @@ export function useLiveSession({
   // stamped once at question detection and never moves, so nothing else
   // would ever tell that caption a fresh draft has since landed.
   onCurrentEntryRedrafted,
+  // Optional pass-through to useDraftAnswer: told, for every fresh answer that
+  // carries a Row 1 example value, which application it was drafted for and that
+  // value's status, so CopilotClient can warm a cold example pool again within
+  // the session (useApplicationProjectPool's noteRowOneStatus).
+  onRowOneStatus,
 }) {
   const [warning, setWarning] = useState("");
   const [error, setError] = useState("");
@@ -305,6 +310,7 @@ export function useLiveSession({
     buildContext,
     setQuestions,
     logEvent,
+    onRowOneStatus,
   });
 
   // AC-M1.3.5/AC-M1.6.3/AC-O2/AC-P4.1: the question pipeline — everything
@@ -813,6 +819,10 @@ export function useLiveSession({
     // enabled state.
     sessionLogSnapshot,
     downloadLog,
+    // The log's recorder, for CopilotClient to hand to the example-project
+    // prewarm (useApplicationProjectPool) so a pool warmed mid-session lands in
+    // this same log. A no-op until "Start session", like every other event.
+    logEvent,
     // D7: a real, reactive boolean — flipped true inside useSessionLogRecorder's
     // startLog(), not derived by deep-cloning sessionLogSnapshot() on every
     // render (that clone used to run at least once a second from the

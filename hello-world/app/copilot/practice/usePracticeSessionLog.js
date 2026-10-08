@@ -44,6 +44,12 @@ export function usePracticeSessionLog({
   critique,
   critiqueStatus,
   critiqueError,
+  // The sample answer's two invented example rows (Row 1 picked from the
+  // pre-warmed pool, Row 2 written after the answer lands). OBSERVED here like
+  // everything above, so the same download that explains a transcript also
+  // explains an example that was missing or failed. Both are optional.
+  projectExample,
+  projectExampleLive,
 }) {
   const logRef = useRef(null);
   // AC-Q7.5: reactive twin of "does logRef hold anything" — the log itself
@@ -83,6 +89,10 @@ export function usePracticeSessionLog({
   const loggedMetricsRef = useRef(null);
   const loggedCritiqueRef = useRef(null);
   const lastCritiqueErrorRef = useRef("");
+  // The example-row values already written to the log, by reference, so a
+  // re-render that hands back the same object logs nothing a second time.
+  const loggedExampleRef = useRef(null);
+  const loggedExampleLiveRef = useRef(null);
 
   // AC-Q2.3 correlation: practice questions have no server-issued id, but
   // sessionLog.js's renderer needs one to pair a spoken answer's metrics and
@@ -138,6 +148,8 @@ export function usePracticeSessionLog({
       loggedMetricsRef.current = null;
       loggedCritiqueRef.current = null;
       lastCritiqueErrorRef.current = "";
+      loggedExampleRef.current = null;
+      loggedExampleLiveRef.current = null;
       questionIdRef.current = 0;
       currentQuestionIdRef.current = undefined;
       answerQuestionIdRef.current = undefined;
@@ -309,6 +321,43 @@ export function usePracticeSessionLog({
     lastCritiqueErrorRef.current = critiqueError;
     event("answer.critique.error", { id: answerQuestionIdRef.current, message: critiqueError });
   }, [critiqueError, critiqueStatus, event]);
+
+  // The sample answer's Row 1 example: which status the card showed and which
+  // competency/domain tag was picked. Identity only -- the example's text, the
+  // posting and the person never reach the log. Keyed to the question on
+  // screen, the same id the question's other events carry.
+  //
+  // `fitScore` and `poolTags` are the owner probe's evidence (AC-N143-Q,
+  // docs/loop/N143.probe.md): the score the pick won with and EVERY entry of the
+  // pool it was picked from (competency, domain and title only), which is what
+  // lets the probe tell a mis-selection from a too-narrow pool from a pool that
+  // ignored the role's domain. Both are absent unless the server sent them (a
+  // ready or no_match value), and the log omits an undefined field.
+  useEffect(() => {
+    if (!projectExample || projectExample === loggedExampleRef.current) return;
+    loggedExampleRef.current = projectExample;
+    event("projectExample.shown", {
+      id: currentQuestionIdRef.current,
+      status: projectExample.status,
+      competency: projectExample.competency || "",
+      domain: projectExample.domain || "",
+      fitScore: projectExample.fitScore,
+      poolTags: projectExample.poolTags,
+    });
+  }, [projectExample, event]);
+
+  // Row 2's outcome, once it has settled (the pending placeholder is not an
+  // outcome and is not logged).
+  useEffect(() => {
+    if (!projectExampleLive || projectExampleLive.status === "pending") return;
+    if (projectExampleLive === loggedExampleLiveRef.current) return;
+    loggedExampleLiveRef.current = projectExampleLive;
+    event("projectExample.live", {
+      id: currentQuestionIdRef.current,
+      status: projectExampleLive.status,
+      competency: projectExampleLive.competency || "",
+    });
+  }, [projectExampleLive, event]);
 
   return {
     hasLog,

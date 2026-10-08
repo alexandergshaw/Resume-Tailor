@@ -58,6 +58,14 @@ import { roleTerms, MAX_QUESTION_CHARS } from "@/lib/copilot/questionVocabulary"
 import { geminiRoleTermsFlag, embeddedRoleTermsFlag } from "@/lib/copilot/roleTermsFlag";
 import { normalizeCodeLanguageChoice } from "@/lib/copilot/codeLanguages";
 import { startCodeLanguageResolution, peekCodeLanguage } from "@/lib/copilot/answerCodeLanguage";
+// Row 1 of the invented example-projects group: the pre-warmed pool's best match
+// for THIS question, read and picked fresh per question below. The selector and
+// the status derivation are pure and live in projectExampleSelect.js, which is
+// why picking adds no model call; the pool itself is written only by the
+// prewarm route (app/api/application-project-pool), never from here.
+import { getProjectPool } from "@/lib/supabase/applicationProjectPool";
+import { selectPoolProject } from "@/lib/copilot/projectExampleSelect";
+import { startProjectExampleField } from "@/lib/copilot/projectExampleRead";
 
 // Two modes on one route (AC-G2-D-1). "points" (default, and the only mode
 // live mode ever sends — CopilotClient/QuestionFeed call draftAnswer with no
@@ -195,6 +203,11 @@ async function streamAnswer({
   // truthy `companyFacts` in practice, but nothing here assumes that; it is
   // simply never given one.
   awaitCompanyFacts,
+  // Row 1 of the example-projects group, as a PROMISE of the fragment to spread
+  // onto the `done` frame (`{ projectExample }`, or `{}`). Started in POST and
+  // settled here, just before the `done` frame, like `awaitCompanyFacts`
+  // above; it never rejects and is deadline-bounded (projectExampleRead.js).
+  projectExampleFieldPromise,
 }) {
   const { geminiModel } = getServerEnv();
   const client = getGeminiClient();
@@ -294,6 +307,9 @@ async function streamAnswer({
       coverLetter,
       pagesBlock: kb.block,
     });
+    // Row 1, settled as late as it can be: a slow pool read delays only this
+    // terminal frame, never a bullet.
+    const projectExampleField = await projectExampleFieldPromise;
     const done = isAnswerMode
       ? {
           points,
@@ -304,6 +320,7 @@ async function streamAnswer({
           pageSources,
           ...aids,
           ...roleTermsFlag,
+          ...projectExampleField,
         }
       : {
           points,
@@ -315,6 +332,7 @@ async function streamAnswer({
             : {}),
           ...aids,
           ...roleTermsFlag,
+          ...projectExampleField,
         };
     write({ t: "done", ...done });
   });
@@ -416,6 +434,22 @@ export async function POST(request) {
     // runs the module's Promise.all; a hit skips every one of its five
     // Supabase round trips.
     const contextCacheKey = answerContextKey(user.id, applicationId);
+
+    // Row 1 of the example-projects group: the pool row, read FRESH per question
+    // and deliberately NOT through loadAnswerContext's session cache below (a
+    // cached read would freeze a cold pool; lib/supabase/applicationProjectPool.js
+    // has the reasoning). Started here to overlap that fan-out, deadline-bounded,
+    // and settled by the response paths at the END, never ahead of the model
+    // call (lib/copilot/projectExampleRead.js). The pick is this route's, made
+    // for THIS question only: never in answerContextCache, never written back to
+    // the pool row. Never rejects, so an early return leaves nothing unhandled;
+    // no application or an embedded engine starts no read and yields `{}`.
+    const projectExampleFieldPromise = startProjectExampleField({
+      read: () => getProjectPool(supabase, user.id, applicationId),
+      pick: (pool) => selectPoolProject(pool?.projects, { question }),
+      applicationId,
+      engine: body?.engine,
+    });
     const { resume, coverLetter, posting, employer, pages } = await loadAnswerContext(supabase, {
       userId: user.id,
       applicationId,
@@ -615,6 +649,7 @@ export async function POST(request) {
         // producer, so the facts deadline can no longer sit in front of the
         // connection itself.
         awaitCompanyFacts,
+        projectExampleFieldPromise,
       });
     }
 
@@ -720,6 +755,9 @@ export async function POST(request) {
       // AC-H9.33: `answer` is derived here, from the same `points` just
       // returned to the caller — never a second field asked of the model.
       const answer = deriveAnswerFromPoints(points).slice(0, MAX_ANSWER_CHARS);
+      // Row 1, settled only now that the answer is whole: bounded by its own
+      // deadline, so a slow pool read delays this body, never the model call.
+      const projectExampleField = await projectExampleFieldPromise;
       return Response.json({
         points,
         // The model's own cues when it returned one per point; otherwise the
@@ -754,6 +792,8 @@ export async function POST(request) {
           coverLetter,
           pagesBlock: kb.block,
         }),
+        // Row 1 of the example-projects group (built once above).
+        ...projectExampleField,
       });
     }
 
@@ -844,6 +884,10 @@ export async function POST(request) {
     // a caller with none of resume/coverLetter/pagesBlock — buildPointsPrompt
     // only ever adds a block when it has something to add — the model
     // is not asked for cues here, so they are always derived.
+    //
+    // Row 1, settled only now that the answer is whole (see the answer-mode
+    // branch above): a slow pool read delays this body, never the model call.
+    const projectExampleField = await projectExampleFieldPromise;
     return Response.json({
       points,
       cues: deriveCues(points),
@@ -866,6 +910,8 @@ export async function POST(request) {
       ...answerAids({ postingDescription: posting, resume, profile, question, points, story }),
       // §4d: Gemini path, so `geminiRoleTermsFlag` with `kb.block`.
       ...geminiRoleTermsFlag({ terms: questionRoleTerms, points, profile, resume, coverLetter, pagesBlock: kb.block }),
+      // Row 1 of the example-projects group (built once above).
+      ...projectExampleField,
     });
   } catch (err) {
     return Response.json(

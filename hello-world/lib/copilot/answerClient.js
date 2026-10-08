@@ -143,3 +143,28 @@ export async function draftAnswerStreaming(
   delete payload.t;
   return payload;
 }
+
+// Row 2 of the example-projects group: ONE invented project written for ONE
+// question, requested AFTER the answer has landed (see
+// app/api/copilot/answer/project-example/route.js for why it is its own request
+// and not another frame on the answer stream -- a `done` frame is terminal for
+// draftAnswerStreaming above). Resolves with the route's body verbatim,
+// { projectExample }, where projectExample is a ready entry, { status: "failed" }
+// or null (the embedded engine: nothing to show). Rejects on a non-ok response
+// or an aborted request; the caller (lib/copilot/projectExampleLive.js) turns
+// every rejection into the failed state, so nothing here needs to be gentle.
+// `signal` lets that caller's watchdog stop the request it has already given up
+// on.
+export async function fetchProjectExampleLive({ applicationId, question, signal } = {}) {
+  const res = await fetch("/api/copilot/answer/project-example", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ applicationId, question, engine: readEngine() }),
+    signal,
+  });
+  const json = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error(json.error || `Example project request failed (${res.status}).`);
+  }
+  return json;
+}
