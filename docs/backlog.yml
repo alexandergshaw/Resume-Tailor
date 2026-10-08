@@ -1682,7 +1682,7 @@
 
 - id: "N143"
   state: "actionable"
-  title: "**OWNER 2026-10-07: add TWO new project-example rows to the interview copilot answer aids (a deliberate, better-architected re-introduction of what N141 removed — must be QUESTION-RELEVANT this time, never a generic process/ops template, or it gets deleted again). ROW 1 = PRE-WARMED pool: when the user tailors/first-engages a posting, generate (model) a small POOL of hypothetical benchmark projects spanning the role's key competencies, STORE keyed to the application; at each question, INSTANTLY select + show the pool project that best corresponds to the question (owner decision: pool, matched per question). ROW 2 = ON-THE-SPOT: a fully idealized hypothetical project generated live per question, async/non-blocking (second, streamed in). Both are HYPOTHETICAL (not the candidate's real projects) and sit beside the existing 'Project to talk about' row in AnswerAids.js (shared across live+history+practice). GROUND MAP (Explore 2026-10-07): no single 'apply' server hook — mirror the application_digests lazy-prewarm+cache idiom; new join table application_project_pool(application_id pk -> applications.id on delete cascade, user_id, projects jsonb, status, engine, timestamps) modeled on 20260817000000_application_digests.sql; prewarm trigger TBD by design (tailor-flow hook vs digest-style lazy on first tracking/copilot load); per-question SELECTION stays fresh (never cache the ranked pick — mirror selectBestStory/buildKnowledgeBaseBlock at answer/route.js:480/:529); on-the-spot gen belongs in the ANSWER route (has applicationId), NOT the question route. QUALITY is the crux (why v1 died): examples must fit the QUESTION's domain/competency (a teaching/curriculum project for a teaching Q, not an ops-metrics story); final content quality is owner/Gemini-env (apply the N135 probe rule). Feature-log per the standing feature-logs rule. Mobile presentation deferred to the N144 overhaul (rows first per owner).**"
+  title: "**SHIPPED 2026-10-08 (full suite 18663 green; delta review SHIP): two project-example rows live — Row 1 pre-warmed pool (application_project_pool table, lazy digest-style prewarm, question-aware stopword/scaffolding-filtered+stemmed matcher with honest no-match, self-heal, no auto-rebill), Row 2 on-the-spot async (no cap per owner), embedded refuses, invented-figure safety, domain-anchored prompt. Owner Gemini-env QUALITY PROBE pending: docs/loop/N143.probe.md (the decisive relevance check). Follow-ups N145 (Try again control), N146 (latent + matcher on-domain mis-pick note). OWNER 2026-10-07: add TWO new project-example rows to the interview copilot answer aids (a deliberate, better-architected re-introduction of what N141 removed — must be QUESTION-RELEVANT this time, never a generic process/ops template, or it gets deleted again). ROW 1 = PRE-WARMED pool: when the user tailors/first-engages a posting, generate (model) a small POOL of hypothetical benchmark projects spanning the role's key competencies, STORE keyed to the application; at each question, INSTANTLY select + show the pool project that best corresponds to the question (owner decision: pool, matched per question). ROW 2 = ON-THE-SPOT: a fully idealized hypothetical project generated live per question, async/non-blocking (second, streamed in). Both are HYPOTHETICAL (not the candidate's real projects) and sit beside the existing 'Project to talk about' row in AnswerAids.js (shared across live+history+practice). GROUND MAP (Explore 2026-10-07): no single 'apply' server hook — mirror the application_digests lazy-prewarm+cache idiom; new join table application_project_pool(application_id pk -> applications.id on delete cascade, user_id, projects jsonb, status, engine, timestamps) modeled on 20260817000000_application_digests.sql; prewarm trigger TBD by design (tailor-flow hook vs digest-style lazy on first tracking/copilot load); per-question SELECTION stays fresh (never cache the ranked pick — mirror selectBestStory/buildKnowledgeBaseBlock at answer/route.js:480/:529); on-the-spot gen belongs in the ANSWER route (has applicationId), NOT the question route. QUALITY is the crux (why v1 died): examples must fit the QUESTION's domain/competency (a teaching/curriculum project for a teaching Q, not an ops-metrics story); final content quality is owner/Gemini-env (apply the N135 probe rule). Feature-log per the standing feature-logs rule. Mobile presentation deferred to the N144 overhaul (rows first per owner).**"
   owed_by: "AC -> architect(1b: table+trigger+selection seam+generation contract)+UX(1c rows) -> check -> plan -> TDD -> implement (migration, prewarm generator+storage, pool fetch+selection, on-the-spot gen, 2 AnswerAids rows, feature log) -> full-suite gate; content quality owner/Gemini-env"
   evidence: ["Owner 2026-10-07: two rows — pre-warmed-at-apply pool matched per question + on-the-spot idealized; done right (question-relevant)", "Explore 2026-10-07 ground map: application_digests is the persistence template; AnswerAids.js:229 'Project to talk about' is the row precedent; answer/route.js has applicationId + selectBestStory/kb ranking seam"]
   blocked_reason: null
@@ -1703,6 +1703,66 @@
   verify: null
   verify_proof: null
   blocked_by: ["N143"]
+
+- id: "N145"
+  state: "actionable"
+  title: "**N143 follow-up (UX-N143-11, deferred): the Row-1 'Try again' control for a FAILED pre-warmed pool is not built (useApplicationProjectPool.regenerateOne has no consumer). Stopgap today: reselecting the posting in the copilot retries a failed pool. FIX: thread an explicit retry handler through CopilotClient/PracticeClient/the dashboard to AnswerAids' failed Row-1 state so a user can regenerate a failed pool deliberately (force). Honors the N143 'no auto-rebill of failed' decision — this is the explicit retry path.**"
+  owed_by: "A small UI+wiring chunk: retry handler -> regenerateOne(force) from the failed Row-1 affordance"
+  evidence: ["N143 verify m4 + F2 hand-back 2026-10-08: regenerateOne has no consumer; failed Row 1 has no user retry"]
+  blocked_reason: null
+  instrument: null
+  owns: null
+  verify: null
+  verify_proof: null
+  blocked_by: []
+
+- id: "N146"
+  state: "actionable"
+  title: "**N143 residuals (low): (a) latent — a FAILED regeneration over a GOOD pool keeps the old projects row but the answer route reports 'failed' for it, so the old projects become unreachable; only reachable today via force-on-failed, so latent. Fix: on a failed regen, keep serving the last good pool. (b) matcher on-domain mis-pick (F-1): 'disruptive student' selects 'student assessment' over 'classroom management' — ON-domain (not the v1 off-domain failure); owner-tunable via the N143 Gemini probe; revisit only if (d)-class mis-selection recurs. (c) note (F-2): sub-4-char tokens (bare acronyms like 'SRE') never score — moot because the generator is prompted for descriptive multi-word tags.**"
+  owed_by: "Small: (a) serve-last-good-pool on failed regen + test; (b)/(c) probe-gated notes"
+  evidence: ["N143 verify m9 + delta review F-1/F-2 2026-10-08"]
+  blocked_reason: null
+  instrument: null
+  owns: null
+  verify: null
+  verify_proof: null
+  blocked_by: []
+
+- id: "N148"
+  state: "actionable"
+  title: "**OWNER 2026-10-08: the 'Ask AI about this application' box must NOT be locked to the application — answer GENERAL/off-topic questions too (app materials as CONTEXT, not a cage). DESIGN DONE (docs/loop/N148.design.r1.md): new ASK_SYSTEM constant — ground 'about THIS application' questions in the fenced material + admit gaps, answer general questions from general knowledge, never refuse for being off-topic, anti-fabrication floor, keep attribution/no-markdown/no-URL(exfil gate)/never-reveal. Route: Gemini+empty-context falls through to the model; embedded+empty returns a no-material note. PRESERVED: injection fence, URL output gate, systemInstruction constant-ness (toBe). Test impact: route.test.js:506 'refuses without a model call' REVERSES (ruled); NEW askPrompt.test.js (8 clauses) + 5 route cases. Style kept plain-prose/no-links. Sibling of N149/N150.**"
+  owed_by: "Implement new ASK_SYSTEM + route zero-context split + tests -> full-suite gate"
+  evidence: ["Owner 2026-10-08: ask box not locked to the application", "N148.design.r1.md"]
+  blocked_reason: null
+  instrument: null
+  owns: null
+  verify: null
+  verify_proof: null
+  blocked_by: []
+
+- id: "N149"
+  state: "actionable"
+  title: "**OWNER 2026-10-08: the 'More detail' expanders must call the LLM for GREATER detail, app materials as CONTEXT not a cage (EXPANSION_SYSTEM currently caged to 'quote only the material / return empty'). DESIGN DONE (docs/loop/N149.design.r1.md): new EXPANSION_SYSTEM (general-knowledge depth allowed; NO invented accomplishment/metric/employer/title/date/credential/named-tool; elaborate-rather-than-empty; first person; attribution; const/toBe holds). Add a bounded resume slice (4000 chars) to the fenced context. Timeout 4s->8s env-tunable (client 10s). Keep applicationId requirement, embedded honest-degrade, plain-prose/no-links. LOAD-BEARING (needs a FRESH CHECK before implement): replace the honesty CAGE (filterExpansionCandidates quote-whole) with a NARROWER control — specific FIGURES + NAMED ENTITIES must trace to the record, generic method prose flows free (new answerLocal.namedEntityTokens); keeps the 'drops invented Rust rewrite' guard alive. Remove the story-match early-return. Ruled+new tests in design §8. Sibling of N148/N150.**"
+  owed_by: "FRESH CHECK of the honesty-filter replacement -> implement -> full-suite gate"
+  evidence: ["Owner 2026-10-08: More detail should call the LLM for greater detail", "N149.design.r1.md: filterExpansionCandidates is the anti-fabrication mechanism to narrow not drop"]
+  blocked_reason: null
+  instrument: null
+  owns: null
+  verify: null
+  verify_proof: null
+  blocked_by: []
+
+- id: "N150"
+  state: "actionable"
+  title: "**OWNER 2026-10-08: a NEW per-answer copilot row of LLM-generated relevant TECH BUZZWORDS the candidate can use — explicitly NOT tied to their materials (surface terms they may lack) — AND each buzzword expandable for greater detail via the LLM. Reuses N143 (per-question async on-the-spot row, done-frame field, 4+1 render sites, feature log) + N149 (per-item expand, context-not-cage). SUGGESTED terms to be aware of, clearly NOT claims the candidate has done them. Design in progress (docs/loop/N150.design.r1.md). Embedded refuses. Mobile deferred to N144. Sibling of N148/N149.**"
+  owed_by: "Design -> check -> plan/TDD -> implement (tech-terms gen route + per-buzzword expand + AnswerAids chip row across producers) -> gate; content quality owner/Gemini-env"
+  evidence: ["Owner 2026-10-08: new LLM tech-buzzwords row, not tied to materials, each expandable"]
+  blocked_reason: null
+  instrument: null
+  owns: null
+  verify: null
+  verify_proof: null
+  blocked_by: []
 
 # VERIFICATION (1)
 - id: "V1"
