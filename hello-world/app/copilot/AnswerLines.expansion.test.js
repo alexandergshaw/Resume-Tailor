@@ -661,11 +661,18 @@ describe("through the real hook: a click actually fetches, once", () => {
   }
 
   it("wires the control through context, with no prop and no surface change", async () => {
+    // N153: a stub so the warm-on-mount (now live) has a fetch to call; the
+    // assertion is unchanged — three controls render through context.
+    vi.stubGlobal("fetch", vi.fn(async () => ({ ok: true, status: 200, json: async () => ({ subBullets: [], caption: "", empty: true }) })));
     const el = await render(scoped(createElement(AnswerLines, { lines: LINES })));
     expect(el.querySelectorAll("li button")).toHaveLength(3);
   });
 
-  it("issues exactly one request per bullet, however many times it is clicked", async () => {
+  it("issues exactly one request per bullet across any number of clicks", async () => {
+    // N153 ADOPTION: every resolvable bullet is warmed ONCE on mount (three here),
+    // and clicking/collapsing/reopening a bullet opens its warmed record with no
+    // further call. RED on HEAD: a rendered answer prefetched nothing, so the only
+    // call was the first click and the count was 1.
     const fetchMock = vi.fn(async () => ({
       ok: true,
       status: 200,
@@ -678,11 +685,12 @@ describe("through the real hook: a click actually fetches, once", () => {
     vi.stubGlobal("fetch", fetchMock);
 
     const el = await render(scoped(createElement(AnswerLines, { lines: LINES })));
+    expect(fetchMock).toHaveBeenCalledTimes(3); // one warm per resolvable bullet
     const btn = el.querySelectorAll("li button")[0];
     await act(async () => btn.click());
     await act(async () => container.querySelectorAll("li button")[0].click()); // collapse
     await act(async () => container.querySelectorAll("li button")[0].click()); // re-open
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock).toHaveBeenCalledTimes(3); // the clicks opened a warmed record, no new call
     expect(topItems(container)[0].textContent).toContain("I reconciled every settlement by hand.");
   });
 
@@ -691,9 +699,14 @@ describe("through the real hook: a click actually fetches, once", () => {
     vi.stubGlobal("fetch", fetchMock);
     const el = await render(scoped(createElement(AnswerLines, { lines: LINES })));
     await act(async () => el.querySelectorAll("li button")[1].click());
-    const sent = JSON.parse(fetchMock.mock.calls[0][1].body);
+    // N153 ADOPTION: the warm issues one request per bullet on mount, so the
+    // request for bullet 1 is already among the calls (the click dedupes). Find
+    // it by its parent point rather than assuming it is calls[0].
+    const sent = fetchMock.mock.calls
+      .map((c) => JSON.parse(c[1].body))
+      .find((b) => b.parentPoint === "I paged the on-call team during the incident.");
+    expect(sent).toBeTruthy();
     expect(sent.pointIndex).toBe(1);
-    expect(sent.parentPoint).toBe("I paged the on-call team during the incident.");
     expect(sent.points).toEqual(QUESTIONS[0].points);
     expect(sent.question).toBe("Tell me about a failure.");
   });
@@ -711,10 +724,15 @@ describe("through the real hook: a click actually fetches, once", () => {
     expect(el.querySelectorAll("li button")).toHaveLength(0);
   });
 
-  it("does not prefetch: a rendered answer issues zero requests", async () => {
-    const fetchMock = vi.fn();
+  it("prefetches on render: a rendered answer warms each resolvable bullet once, with no interaction", async () => {
+    // N153: the direct inverse of the old "does not prefetch" assertion. The
+    // feature warms each bullet's expansion the instant the answer mounts, so a
+    // later click opens instantly. RED on HEAD: a rendered answer issued zero
+    // requests. The warm must NOT open anything — nothing is aria-expanded.
+    const fetchMock = vi.fn(async () => ({ ok: true, status: 200, json: async () => ({ subBullets: [], caption: "", empty: true }) }));
     vi.stubGlobal("fetch", fetchMock);
-    await render(scoped(createElement(AnswerLines, { lines: LINES })));
-    expect(fetchMock).not.toHaveBeenCalled();
+    const el = await render(scoped(createElement(AnswerLines, { lines: LINES })));
+    expect(fetchMock).toHaveBeenCalledTimes(3); // one per resolvable bullet
+    expect(el.querySelectorAll('[aria-expanded="true"]')).toHaveLength(0);
   });
 });

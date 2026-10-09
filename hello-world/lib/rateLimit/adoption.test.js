@@ -41,12 +41,9 @@ const APP_API = path.join(process.cwd(), "app", "api");
  */
 const BOUNDED = [
   // --- hard-authenticated: keyed on the id `auth.getUser()` resolved --------
-  {
-    route: "app/api/copilot/answer/expand/route.js",
-    limit: 40,
-    windowMs: 600_000,
-    why: "one expansion per bullet the candidate opens; an answer carries at most a handful of bullets, so 40 in ten minutes covers opening every bullet of several answers while a scripted loop stops at 40",
-  },
+  // app/api/copilot/answer/expand/route.js USED TO SIT HERE (40/10min). N153
+  // (owner ruling, 2026-10-08) removed its cap so the copilot can prefetch every
+  // bullet the instant it appears; it is accounted DEFERRED below.
   {
     route: "app/api/copilot/glossary/route.js",
     limit: 4,
@@ -178,17 +175,9 @@ const BOUNDED = [
     windowMs: 600_000,
     why: "N60 second chunk -- one chat-derived configuration turn per ten minutes, matching interview-prep's human-paced bound above for the same reason: a single generation per user-triggered turn. app/api/feed-config/apply/route.js (the sibling write path) reaches no model and deliberately does NOT appear here.",
   },
-  // --- N150 (2026-10-08): the per-term tech-terms DETAIL endpoint. The
-  // repeatable per-click model call -- one detail per buzzword a candidate opens
-  // -- exactly the unbounded-loop shape /expand's limiter guards, so it adopts
-  // the same module-scope 40/10min bound. (Its sibling GENERATION route is a
-  // one-shot and is DEFERRED/unmetered below.)
-  {
-    route: "app/api/copilot/answer/tech-term-detail/route.js",
-    limit: 40,
-    windowMs: 600_000,
-    why: "one detail per buzzword the candidate opens -- the repeatable per-click model call whose unbounded-loop shape /expand's own 40/10min limiter guards; hard-authenticated via getUser(), so identify() keys on the user and the bound is exact",
-  },
+  // N150 bounded app/api/copilot/answer/tech-term-detail/route.js here (40/10min);
+  // N153 (owner ruling, 2026-10-08) removed that cap alongside /expand's for the
+  // same reason (prefetch-on-render), so it is accounted DEFERRED below.
 ];
 
 /**
@@ -285,7 +274,22 @@ const DEFERRED = [
   },
   {
     route: "app/api/copilot/answer/tech-terms/route.js",
-    why: "N150 (owner ruling, 2026-10-08) -- the tech-buzzwords GENERATION route, a post-answer one-shot (one non-streaming call per drafted question, fired by a signed-in user's own copilot/practice session after the answer has landed, like project-example). Unmetered for the same reason project-example is: a cap on one call per drafted question can only refuse a real person mid-interview, and nothing unattended reaches it. Its repeatable per-click sibling (tech-term-detail) IS bounded above. The module-scope createRateLimiter seam is the ready insertion point if the owner sets a number later.",
+    why: "N150 (owner ruling, 2026-10-08) -- the tech-buzzwords GENERATION route, a post-answer one-shot (one non-streaming call per drafted question, fired by a signed-in user's own copilot/practice session after the answer has landed, like project-example). Unmetered for the same reason project-example is: a cap on one call per drafted question can only refuse a real person mid-interview, and nothing unattended reaches it. Its repeatable per-click sibling (tech-term-detail) is ALSO unmetered as of N153 (below). The module-scope createRateLimiter seam is the ready insertion point if the owner sets a number later.",
+  },
+  // --- N153 (owner ruling, 2026-10-08): the two per-click expanders. Both lost
+  // the 40/10min cap they used to carry in BOUNDED so the copilot can prefetch
+  // every bullet/term the instant it appears; a cap could only refuse a real
+  // candidate mid-interview, and the client-side concurrency throttle
+  // (lib/copilot/prefetchQueue.js) plus the store dedupe are the anti-burst
+  // controls instead. Both still reachModel(), so the transitive sweep keeps
+  // them covered in the deferred column.
+  {
+    route: "app/api/copilot/answer/expand/route.js",
+    why: "N153 (owner ruling, 2026-10-08) -- the per-bullet expansion route's cap (40/10min) was removed so the copilot can prefetch every bullet the instant it appears; a cap on a per-click expander could only refuse a real candidate mid-interview, and the client-side concurrency throttle plus the store's in-flight/settled dedupe are the anti-burst controls instead. Hard-authenticated via getUser(), so the module-scope createRateLimiter seam is the ready insertion point if the owner sets a number later.",
+  },
+  {
+    route: "app/api/copilot/answer/tech-term-detail/route.js",
+    why: "N153 (owner ruling, 2026-10-08) -- the per-buzzword detail route's cap (40/10min, N150) was removed alongside /expand's for the same reason: the copilot prefetches every shown term's detail, and a cap could only refuse a real candidate mid-interview. The client-side concurrency throttle plus the store dedupe are the anti-burst controls instead. Hard-authenticated via getUser(), so the module-scope createRateLimiter seam is the ready insertion point if the owner sets a number later.",
   },
 ];
 
@@ -786,13 +790,17 @@ describe("the Row-2 example-project route is deliberately unmetered (N143 owner 
   });
 });
 
-describe("N150 — the two tech-terms sub-routes are triaged (gen DEFERRED/unmetered, detail BOUNDED 40/10min)", () => {
-  // RED on HEAD: both routes are unimplemented, so every sourceOf() below throws.
-  // The it.each(BOUNDED/DEFERRED) sweeps above ALSO cover these once the table
-  // rows land; this block is the explicit, named hand-off and the per-route
-  // behavioural shape the implementer must satisfy.
+describe("N153 — the two per-click expanders are now DEFERRED/unmetered (gen stays DEFERRED)", () => {
+  // The N150 version of this block had DETAIL BOUNDED 40/10min; N153 (owner
+  // ruling, 2026-10-08) removed the caps on BOTH per-click expanders so the
+  // copilot can prefetch on render. RED on HEAD: both routes still construct a
+  // limiter, so the carries-no-limiter cases are red until the limiters are gone.
+  // The it.each(DEFERRED) sweeps above ALSO cover these once the table rows land;
+  // this block is the explicit, named hand-off.
   const GEN = "app/api/copilot/answer/tech-terms/route.js";
   const DETAIL = "app/api/copilot/answer/tech-term-detail/route.js";
+  const EXPAND = "app/api/copilot/answer/expand/route.js";
+  const PREWARM = "app/api/application-project-pool/route.js";
 
   it("the GENERATION route is accounted DEFERRED (owner-ruling unmetered), not BOUNDED", () => {
     expect(DEFERRED_ROUTES.has(GEN)).toBe(true);
@@ -805,23 +813,36 @@ describe("N150 — the two tech-terms sub-routes are triaged (gen DEFERRED/unmet
     const code = codeOf(GEN);
     expect(code).not.toMatch(/createRateLimiter/);
     expect(code).not.toMatch(/status:\s*429/);
-    // A route that stopped importing the Gemini client would not need the
-    // DEFERRED line; this pins the exemption covers a real spender.
     expect(reachesModel(GEN)).toBe(true);
   });
 
-  it("the DETAIL route is accounted BOUNDED (40 / 600_000) and builds its limiter at MODULE scope", () => {
-    expect(BOUNDED_ROUTES.has(DETAIL)).toBe(true);
-    expect(DEFERRED_ROUTES.has(DETAIL)).toBe(false);
-    const entry = BOUNDED.find((e) => e.route === DETAIL);
-    expect(entry.limit).toBe(40);
-    expect(entry.windowMs).toBe(600_000);
-    const source = sourceOf(DETAIL);
-    const declaration = /^const \w+ = createRateLimiter\(/m;
-    expect(source).toMatch(declaration);
-    expect(source.search(declaration)).toBeLessThan(firstHandlerAt(source));
-    // and nothing builds a second limiter once the handler opens.
-    expect(source.slice(firstHandlerAt(source))).not.toMatch(/createRateLimiter\(/);
-    expect(reachesModel(DETAIL)).toBe(true);
+  it.each([
+    ["the per-bullet EXPAND route", EXPAND],
+    ["the per-term DETAIL route", DETAIL],
+  ])("%s is accounted DEFERRED (owner ruling) and not BOUNDED", (_name, route) => {
+    expect(DEFERRED_ROUTES.has(route)).toBe(true);
+    expect(BOUNDED_ROUTES.has(route)).toBe(false);
+    const entry = DEFERRED.find((e) => e.route === route);
+    expect(entry.why).toMatch(/owner ruling/i);
+  });
+
+  it.each([
+    ["the per-bullet EXPAND route", EXPAND],
+    ["the per-term DETAIL route", DETAIL],
+  ])("%s carries no limiter and still reaches the model", (_name, route) => {
+    const code = codeOf(route);
+    expect(code).not.toMatch(/createRateLimiter/);
+    expect(code).not.toMatch(/status:\s*429/);
+    expect(code).not.toMatch(/@\/lib\/rateLimit/);
+    // A route that stopped importing the Gemini client would not need the
+    // DEFERRED line; this pins the deferral covers a real spender.
+    expect(reachesModel(route)).toBe(true);
+  });
+
+  it("[positive canary] a still-bounded route sees all three tokens, so the absences above are measured", () => {
+    const bounded = codeOf(PREWARM);
+    expect(bounded).toMatch(/createRateLimiter/);
+    expect(bounded).toMatch(/status:\s*429/);
+    expect(bounded).toMatch(/@\/lib\/rateLimit/);
   });
 });

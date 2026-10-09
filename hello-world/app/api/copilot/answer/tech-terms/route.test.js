@@ -140,7 +140,7 @@ describe("the route is UNMETERED (owner ruling)", () => {
     const src = readFileSync(path.resolve(process.cwd(), ROUTE_REL), "utf8");
     expect(src).not.toMatch(/createRateLimiter/);
     // Canary: a route that IS limited shows the symbol, so the absence is real.
-    const limited = readFileSync(path.resolve(process.cwd(), "app/api/copilot/answer/expand/route.js"), "utf8");
+    const limited = readFileSync(path.resolve(process.cwd(), "app/api/copilot/glossary/route.js"), "utf8");
     expect(limited).toMatch(/createRateLimiter/);
   });
 });

@@ -18,37 +18,12 @@ import { createClient as createSupabaseServerClient } from "@/lib/supabase/serve
 import { getServerEnv } from "@/lib/config/env";
 import { getGeminiClient } from "@/lib/llm/geminiClient";
 import { wantsEmbedded } from "@/lib/llm/featureEngine";
-// The shared bound. See the ordering note on `techTermDetailLimiter` below.
-import { createRateLimiter, identify, rateLimitHeaders } from "@/lib/rateLimit/index";
 import { TECH_TERM_MAX_CHARS } from "@/lib/copilot/techTermDetailContract";
 import { TECH_TERM_DETAIL_SYSTEM, buildTechTermDetailUserTurn } from "@/lib/copilot/techTermPrompt";
 import { sanitizeTechTermDetail } from "@/lib/copilot/techTermDetailHonesty";
 
 export const runtime = "nodejs";
 export const maxDuration = 30;
-
-// ---------------------------------------------------------------------------
-// THE SPEND CEILING.
-//
-// BUILT AT MODULE SCOPE, AND THAT IS LOAD-BEARING. A limiter constructed inside
-// the handler gets a brand-new store on every request, so every caller is forever
-// on its first request: it permits everything, counts nothing, and passes a smoke
-// test while doing it. This route's suite pins BOTH halves, a behavioural case
-// that fires past the bound and lib/rateLimit/adoption.test.js's static case that
-// this declaration precedes the handler.
-//
-// 40 details per 10 minutes, per authenticated user, the same bound the expand
-// route holds for the same shape of endpoint: a repeatable, per-click model call.
-// A DENIED REQUEST STILL INCREMENTS: the bound is 40 ATTEMPTS, not 40 successes.
-// Its generation sibling is deliberately unmetered (one call per drafted
-// question); this one is closer to a loop a script could run over every chip.
-//
-// HONEST ABOUT WHAT THIS BUYS: the memory store is per-instance, so on serverless
-// this bounds a caller to 40 x instanceCount, not 40. It turns an unbounded loop
-// against a model-calling endpoint into a bounded one, but it is not a fleet-wide
-// guarantee and must not be described as one.
-// ---------------------------------------------------------------------------
-const techTermDetailLimiter = createRateLimiter({ limit: 40, windowMs: 600_000, prefix: "copilot-tech-term-detail" });
 
 // The server's budget for its one model call. Strictly shorter than the client's
 // own (CLIENT_TIMEOUT_MS = 6000 in lib/copilot/techTermDetailClient.js) so that
@@ -64,8 +39,6 @@ const MAX_ROLE_CHARS = 120;
 
 const DISABLED_MESSAGE =
   "Term explanations are switched off on this server right now. Nothing was sent and nothing was charged.";
-const RATE_LIMITED_MESSAGE =
-  "You have opened a lot of terms in a short window. Wait a moment and try again.";
 const TIMEOUT_MESSAGE = "That took too long to look up.";
 const FAILED_MESSAGE = "Could not explain this term.";
 const INVALID_MESSAGE = "That request did not describe a term of the current answer.";
@@ -128,17 +101,13 @@ export async function POST(request) {
       return fail("Invalid request body.", 400);
     }
 
-    // 3. THE BOUND, keyed on the id step 2 resolved to. Checked ahead of
-    //    validation on purpose: an invalid request is still a request, and a
-    //    caller hammering this endpoint with junk should exhaust its own
-    //    allowance rather than get an unmetered lane.
-    const decision = await techTermDetailLimiter.check(identify(request, { userId: user.id }));
-    if (!decision.allowed) {
-      return Response.json(
-        { error: RATE_LIMITED_MESSAGE },
-        { status: 429, headers: rateLimitHeaders(decision) },
-      );
-    }
+    // 3. NO PER-USER BOUND, ON PURPOSE. The copilot prefetches every shown term's
+    //    detail, so a cap here could only refuse a real candidate mid-interview
+    //    (an owner ruling, recorded in lib/rateLimit/adoption.test.js). What
+    //    keeps a render from bursting is the client-side concurrency throttle and
+    //    the store's dedupe. This is the seam where a bound would sit, keyed on
+    //    the id step 2 resolved to and checked ahead of validation, if the owner
+    //    sets a number later.
 
     // 4. VALIDATION, before a single Supabase data read and before any model
     //    client. Every field REFUSES rather than coerces: `.toString()` on an

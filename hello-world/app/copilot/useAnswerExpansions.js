@@ -6,6 +6,7 @@ import { expansionKey } from "@/lib/copilot/expansionContract";
 import { normalizeForComparison, stripStarLabel } from "@/lib/copilot/answerPoints";
 import { beginExpansion, getExpansion, getSnapshot, subscribe } from "@/lib/copilot/expansionStore";
 import { fetchExpansion } from "@/lib/copilot/expansionClient";
+import { copilotPrefetchQueue } from "@/lib/copilot/prefetchQueue";
 
 // THE ONE PLACE THIS FEATURE SUBSCRIBES TO ITS STORE, and it is called once
 // per SURFACE rather than once per bullet.
@@ -121,6 +122,25 @@ export function useAnswerExpansions({ questions, request } = {}) {
     };
     return {
       resolves: (line) => resolve(line) !== null,
+      // The resolved store key, or null when the line names no answer in this
+      // scope. A render leaf hands it to useWarmOnMount as the warm key: it is a
+      // stable string, so the warm fires once per item and not once per store write.
+      keyFor: (line) => resolve(line)?.key ?? null,
+      // WARM THE CACHE WITHOUT OPENING ANYTHING. Goes through the shared throttle
+      // so a rendered answer never fires all its bullets at once, then through
+      // beginExpansion, whose loading-record guard makes a click that follows (or a
+      // second warm) issue no second request. It sets no `open`, so nothing renders
+      // and a failed warm is silent: the record is an error the reader meets, with
+      // a Retry, only if they open the bullet. A click does NOT come through here:
+      // toggle and retry call beginExpansion directly, so they are never queued
+      // behind warms.
+      prefetch: (line) => {
+        const resolved = resolve(line);
+        if (!resolved) return;
+        copilotPrefetchQueue.enqueue(resolved.key, () =>
+          beginExpansion({ key: resolved.key, request: resolved.payload }, fetchExpansion),
+        );
+      },
       get: (line) => {
         const resolved = resolve(line);
         return resolved ? getExpansion(resolved.key) : null;

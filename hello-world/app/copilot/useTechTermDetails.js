@@ -16,6 +16,7 @@ import { normalizeQuestion } from "@/lib/copilot/questions";
 import { techTermDetailKey } from "@/lib/copilot/techTermDetailContract";
 import { beginTechTermDetail, getSnapshot, getTechTermDetail, subscribe } from "@/lib/copilot/techTermDetailStore";
 import { fetchTechTermDetail } from "@/lib/copilot/techTermDetailClient";
+import { copilotPrefetchQueue } from "@/lib/copilot/prefetchQueue";
 
 // THE CLIENT HALF OF "EXPAND A TECH BUZZWORD", mirroring useAnswerExpansions.js.
 //
@@ -90,6 +91,10 @@ function useTechTermDetails({ questions, extraQuestions, request, onDetailOutcom
     onOutcomeRef.current = onDetailOutcome;
   }, [onDetailOutcome]);
 
+  // Keys whose outcome has already been reported to the session log. See
+  // reportWhenSettled below.
+  const loggedRef = useRef(new Set());
+
   const index = useMemo(() => indexTerms(questions, extraQuestions), [questions, extraQuestions]);
   const applicationId = request?.applicationId ?? "";
   const engine = request?.engine ?? "";
@@ -107,30 +112,69 @@ function useTechTermDetails({ questions, extraQuestions, request, onDetailOutcom
   );
 
   return useMemo(() => {
+    // THE SESSION LOG RECORDS TERMS THE CANDIDATE OPENED, NOT TERMS THAT WERE
+    // WARMED. A prefetch issues the request before any click, so by the time the
+    // candidate opens a term its record is already loading or settled and the
+    // request this call would issue is a no-op: the old "log the request this call
+    // issued" gate would never fire for a warmed term. So the report is driven by
+    // the OPEN instead, once per key for the scope's lifetime (loggedRef), and it
+    // reads the OBSERVED terminal outcome: straight from the store when the record
+    // has already settled (a warmed term), otherwise on the first terminal write.
+    // Prefetch never comes through here.
+    const reportWhenSettled = (key, term) => {
+      const settled = (record) => record.status !== "idle" && record.status !== "loading";
+      const emit = (record) => {
+        try {
+          onOutcomeRef.current?.({ term, status: record.status, code: record.code });
+        } catch {
+          // Logging is a supplement; nothing here may interrupt the reader.
+        }
+      };
+      const current = getTechTermDetail(key);
+      if (settled(current)) {
+        emit(current);
+        return;
+      }
+      const unsubscribe = subscribe(() => {
+        const record = getTechTermDetail(key);
+        if (record.status === "idle") {
+          // Evicted or reset while in flight: nothing will ever settle it.
+          unsubscribe();
+          return;
+        }
+        if (settled(record)) {
+          unsubscribe();
+          emit(record);
+        }
+      });
+    };
+
     const start = (term, options) => {
       const resolved = resolve(term);
       if (!resolved) return;
-      // Only the call that actually issues the request reports its outcome: a
-      // second click while one is in flight, or a reopen of a settled record,
-      // issues nothing and so would only log a duplicate.
-      const before = getTechTermDetail(resolved.key).status;
-      const issues = before === "idle" || (options?.retry === true && before === "error");
-      const pending = beginTechTermDetail({ key: resolved.key, request: resolved.payload }, fetchTechTermDetail, options);
-      if (!issues) return;
-      pending.then(
-        () => {
-          try {
-            const after = getTechTermDetail(resolved.key);
-            onOutcomeRef.current?.({ term: resolved.payload.term, status: after.status, code: after.code });
-          } catch {
-            // Logging is a supplement; nothing here may interrupt the reader.
-          }
-        },
-        () => {},
-      );
+      beginTechTermDetail({ key: resolved.key, request: resolved.payload }, fetchTechTermDetail, options);
+      if (loggedRef.current.has(resolved.key)) return;
+      loggedRef.current.add(resolved.key);
+      reportWhenSettled(resolved.key, resolved.payload.term);
     };
     return {
       resolves: (term) => resolve(term) !== null,
+      // The resolved store key, or null when no answer in the scope suggested the
+      // term. A chip hands it to useWarmOnMount as the warm key: a stable string,
+      // so the warm fires once per term and not once per store write.
+      keyFor: (term) => resolve(term)?.key ?? null,
+      // WARM THE CACHE WITHOUT OPENING ANYTHING, and without reporting: a warm is
+      // not an open (see reportWhenSettled). Goes through the shared throttle, then
+      // beginTechTermDetail, whose loading-record guard makes a click that follows
+      // issue no second request. A click does NOT come through here: toggle and
+      // retry call beginTechTermDetail directly.
+      prefetch: (term) => {
+        const resolved = resolve(term);
+        if (!resolved) return;
+        copilotPrefetchQueue.enqueue(resolved.key, () =>
+          beginTechTermDetail({ key: resolved.key, request: resolved.payload }, fetchTechTermDetail),
+        );
+      },
       get: (term) => {
         const resolved = resolve(term);
         return resolved ? getTechTermDetail(resolved.key) : null;
@@ -167,9 +211,9 @@ function useTechTermDetails({ questions, extraQuestions, request, onDetailOutcom
  * `questions` is the surface's own answer list (`extraQuestions`, optional, a
  * second one); `request` is the grounding the answers were drafted under
  * (applicationId, engine). `onDetailOutcome`, when
- * given, is told `{ term, status, code }` once per request this scope issued,
- * which is what the session log records: the term and the outcome, never the
- * explanation or the question.
+ * given, is told `{ term, status, code }` once per term, when the candidate
+ * first opens it (never for a background prefetch), which is what the session
+ * log records: the term and the outcome, never the explanation or the question.
  */
 export function TechTermDetailScope({ questions, extraQuestions, request, onDetailOutcome, children }) {
   const api = useTechTermDetails({ questions, extraQuestions, request, onDetailOutcome });

@@ -15,6 +15,8 @@
 // 502 on any other throw with a FIXED error string (no degradation).
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { readFileSync } from "node:fs";
+import path from "node:path";
 
 vi.mock("@/lib/supabase/server", () => ({ createClient: vi.fn() }));
 vi.mock("@/lib/llm/geminiClient", () => ({ getGeminiClient: vi.fn() }));
@@ -161,17 +163,31 @@ describe("gates and failure modes", () => {
   });
 });
 
-describe("the module-scope limiter bounds the route (BOUNDED 40/10min)", () => {
-  it("[behavioural] the 41st attempt by one user is a 429", async () => {
-    const userId = supabaseWith({ userId: "rl-fixed-user" });
-    modelReturns("Idempotency keys make a retried request safe.");
-    let last;
-    for (let i = 0; i < 41; i += 1) {
-      // Same user id throughout, so identify() keys every attempt on one bucket.
-      supabaseWith({ userId, position: POSITION });
-      modelReturns("Idempotency keys make a retried request safe.");
-      last = await post({ applicationId: APP_ID, question: "q?", term: `term ${i}`, engine: "gemini" });
-    }
-    expect(last.status).toBe(429);
+describe("carries no spend limiter after the cap removal (N153 owner ruling, 2026-10-08)", () => {
+  // The per-click cap (techTermDetailLimiter, 40/10min) is GONE: the copilot now
+  // prefetches every buzzword detail the instant the term appears, and a cap could
+  // only ever refuse a real candidate mid-interview. The client-side concurrency
+  // throttle (lib/copilot/prefetchQueue.js) plus the store's own in-flight/settled
+  // dedupe are the anti-burst controls instead. lib/rateLimit/adoption.test.js
+  // moves this route BOUNDED -> DEFERRED in the same change.
+  //
+  // RED on HEAD: the route still constructs techTermDetailLimiter and returns 429,
+  // so the first case below is red until the limiter is removed.
+  const strip = (src) => src.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^[ \t]*\/\/.*$/gm, "");
+  it("constructs no limiter, returns no 429, and imports nothing from the rate-limit module", () => {
+    const code = strip(readFileSync(path.join(process.cwd(), "app/api/copilot/answer/tech-term-detail/route.js"), "utf8"));
+    expect(code).not.toMatch(/createRateLimiter/);
+    expect(code).not.toMatch(/status:\s*429/);
+    expect(code).not.toMatch(/@\/lib\/rateLimit/);
+    expect(code).not.toMatch(/\bidentify\b/);
+    expect(code).not.toMatch(/\brateLimitHeaders\b/);
+    expect(code).not.toContain("RATE_LIMITED_MESSAGE");
+  });
+
+  it("[canary] the same scan over a still-bounded route sees all three, so the absence above is measured", () => {
+    const boundedCode = strip(readFileSync(path.join(process.cwd(), "app/api/application-project-pool/route.js"), "utf8"));
+    expect(boundedCode).toMatch(/createRateLimiter/);
+    expect(boundedCode).toMatch(/status:\s*429/);
+    expect(boundedCode).toMatch(/@\/lib\/rateLimit/);
   });
 });

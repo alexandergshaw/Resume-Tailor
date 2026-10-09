@@ -169,50 +169,34 @@ describe("identity is resolved before anything is read", () => {
   });
 });
 
-describe("the spend ceiling actually bites", () => {
-  it("denies past the bound with 429 and rate-limit headers", async () => {
-    mockSupabase({ id: "greedy-expander" });
-    const statuses = [];
-    for (let i = 0; i < 41; i += 1) {
-      const res = await POST(jsonRequest(body()));
-      statuses.push(res.status);
-    }
-    // A limiter built INSIDE the handler gets a fresh store per request, so
-    // every caller is forever on its first request and all 41 succeed. This
-    // assertion is what catches that, which is why the loop runs past the
-    // bound rather than stopping at it.
-    expect(statuses.filter((s) => s === 429).length).toBeGreaterThan(0);
-    const denied = await POST(jsonRequest(body()));
-    expect(denied.status).toBe(429);
-    expect(Number(denied.headers.get("Retry-After"))).toBeGreaterThanOrEqual(1);
+describe("carries no spend limiter after the cap removal (N153 owner ruling, 2026-10-08)", () => {
+  // The per-click cap (expandLimiter, 40/10min) is GONE: the copilot now
+  // prefetches every bullet the instant it appears, and a cap could only ever
+  // refuse a real candidate mid-interview. The client-side concurrency throttle
+  // (lib/copilot/prefetchQueue.js) plus the store's own in-flight/settled dedupe
+  // are the anti-burst controls instead. lib/rateLimit/adoption.test.js moves
+  // this route BOUNDED -> DEFERRED in the same change.
+  //
+  // RED on HEAD: the route still constructs expandLimiter and returns 429, so the
+  // first case below is red until the limiter is removed.
+  it("constructs no limiter, returns no 429, and imports nothing from the rate-limit module", () => {
+    // COMMENT-STRIPPED code (ROUTE_CODE), so the route's own prose cannot read as
+    // a use — the same precaution adoption.test.js's codeOf() takes.
+    expect(ROUTE_CODE).not.toMatch(/createRateLimiter/);
+    expect(ROUTE_CODE).not.toMatch(/status:\s*429/);
+    expect(ROUTE_CODE).not.toMatch(/@\/lib\/rateLimit/);
+    expect(ROUTE_CODE).not.toMatch(/\bidentify\b/);
+    expect(ROUTE_CODE).not.toMatch(/\brateLimitHeaders\b/);
+    expect(ROUTE_CODE).not.toContain("RATE_LIMITED_MESSAGE");
   });
 
-  it("builds the limiter at MODULE scope, never inside the handler", () => {
-    // The static half. A per-request limiter counts nothing while looking
-    // correct, so both halves are kept: the behavioural one proves the bound
-    // today, this one proves the construction that makes the bound survivable.
-    const declaration = /^const \w+ = createRateLimiter\(/m;
-    expect(ROUTE_SOURCE).toMatch(declaration);
-    const limiterAt = ROUTE_SOURCE.search(declaration);
-    const handlerAt = ROUTE_SOURCE.indexOf("export async function POST");
-    expect(limiterAt).toBeGreaterThan(-1);
-    expect(limiterAt).toBeLessThan(handlerAt);
-    expect(ROUTE_SOURCE.slice(handlerAt)).not.toMatch(/createRateLimiter\(/);
-  });
-
-  it("keys the bound on the SERVER-RESOLVED user id, never on a body field", () => {
-    // MUTATION PROOF: replace `identify(request, { userId: user.id })` with
-    // `identify(request)` -- which falls back to the client IP -- and the
-    // two-users case below goes red.
-    expect(ROUTE_CODE).toMatch(/identify\(request,\s*\{\s*userId:\s*user\.id\s*\}\)/);
-  });
-
-  it("does not let one user's spending deny another's", async () => {
-    mockSupabase({ id: "tenant-hungry" });
-    for (let i = 0; i < 41; i += 1) await POST(jsonRequest(body()));
-    mockSupabase({ id: "tenant-innocent" });
-    const res = await POST(jsonRequest(body()));
-    expect(res.status).toBe(200);
+  it("[canary] the same scan over a still-bounded route sees all three, so the absence above is measured", () => {
+    const boundedCode = readFileSync(path.join(process.cwd(), "app/api/application-project-pool/route.js"), "utf8")
+      .replace(/\/\*[\s\S]*?\*\//g, "")
+      .replace(/^[ \t]*\/\/.*$/gm, "");
+    expect(boundedCode).toMatch(/createRateLimiter/);
+    expect(boundedCode).toMatch(/status:\s*429/);
+    expect(boundedCode).toMatch(/@\/lib\/rateLimit/);
   });
 });
 

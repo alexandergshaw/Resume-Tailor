@@ -21,12 +21,12 @@ Current pinned values, as of the last entry in each section:
 | `ALLOWED_UNREACHABLE_MODULES.length`        | 14     |
 | `UNWIRED_MODULES` (exact list of 5 files)   | 5      |
 | `ORPHAN_EXPORTS.length`                     | 65     |
-| `TEST_REFERENCED.length` (rule TR-1)        | 422    |
-| `UNUSED_IN_SHIPPING_MODULES.length`         | 487    |
+| `TEST_REFERENCED.length` (rule TR-1)        | 424    |
+| `UNUSED_IN_SHIPPING_MODULES.length`         | 489    |
 
 The identity that ties the last three together, and that the test asserts
 directly, is `UNUSED_IN_SHIPPING_MODULES = TEST_REFERENCED + ORPHANS`
-(422 + 65 = 487).
+(424 + 65 = 489).
 
 ---
 
@@ -182,7 +182,7 @@ it.
 
 ---
 
-## 4. TEST_REFERENCED, rule TR-1 (pinned at 422)
+## 4. TEST_REFERENCED, rule TR-1 (pinned at 424)
 
 Exports unused by shipping code that at least one `.test.js` imports BY NAME.
 A raise is a review event: check the new export is a helper being pinned, not
@@ -664,11 +664,29 @@ UNWIRED_MODULES unmoved at 14 and 5. ORPHAN_EXPORTS unmoved at 65. Measured by r
 the sweep's own scan (exportReachability.scan.js) over the post-change tree and
 listing every export of the two new modules and the files the chunk edited; the one
 name above is the complete symmetric difference against the N151a baseline.
+N153: 422 -> 424 (+2, -0): prefetch-on-render for the two per-click expanders. IN (+2),
+by name, both in the one new pure module lib/copilot/prefetchQueue.js, both pinned by
+name by prefetchQueue.test.js and both read ONLY from inside their own module in
+production (so neither is dead, and neither is an orphan -- the suite imports them):
+  lib/copilot/prefetchQueue.js#PREFETCH_CONCURRENCY -- the owner-tunable in-flight
+    bound (3), the default of createPrefetchQueue;
+  lib/copilot/prefetchQueue.js#createPrefetchQueue -- the factory the shared singleton
+    is built from; the suite builds local queues with it to pin the concurrency bound
+    and the two-layer dedupe without touching module-scope state.
+Every other export the chunk added has a shipping importer and is in neither bucket:
+copilotPrefetchQueue (useAnswerExpansions.js and useTechTermDetails.js) and
+useWarmOnMount (ExpansionPanel.js and AnswerAids.js); the keyFor / prefetch methods are
+properties of the two apis, not exports. No new module is unreachable:
+ALLOWED_UNREACHABLE_MODULES and UNWIRED_MODULES unmoved at 14 and 5. ORPHAN_EXPORTS
+unmoved at 65. Measured by running the sweep's own scan (exportReachability.scan.js)
+over the post-change tree and listing every export of the two new modules and the files
+the chunk edited; the two names above are the complete symmetric difference against the
+N151b baseline.
 ```
 
 ---
 
-## 5. UNUSED_IN_SHIPPING_MODULES total (pinned at 487)
+## 5. UNUSED_IN_SHIPPING_MODULES total (pinned at 489)
 
 The sum of the two halves above (`TEST_REFERENCED + ORPHANS`); the test also
 asserts that identity directly, so the split is pinned and not only the total.
@@ -845,4 +863,9 @@ its shipping consumer in the library GET route, named at section 4; ORPHAN_EXPOR
 unmoved at 65). The total moving by exactly the TR-1 half's -1 with the orphan half
 frozen is what says a widened surface got its promised consumer, nothing was lost.
 TEST_REFERENCED 422 + ORPHANS 65.
+N153: 487 -> 489 (TEST_REFERENCED's +2, named at section 4: prefetchQueue.js's
+PREFETCH_CONCURRENCY and createPrefetchQueue; ORPHAN_EXPORTS unmoved at 65). The total
+moving by exactly the TR-1 half's +2 with the orphan half frozen is what says this was a
+widened export surface for a unit suite and not a feature built and never wired.
+TEST_REFERENCED 424 + ORPHANS 65.
 ```

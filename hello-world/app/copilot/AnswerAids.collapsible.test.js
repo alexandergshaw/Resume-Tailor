@@ -310,18 +310,22 @@ describe("A7: the tech live region is inside the body and an opened term survive
       await new Promise((r) => setTimeout(r, 0));
     });
     expect(text()).toContain("An idempotency key makes a retried request safe.");
-    expect(fetchTechTermDetail).toHaveBeenCalledTimes(1);
+    // N153 ADOPTION: expanding the section mounts BOTH chips, which prefetch both
+    // terms' details (2 calls). Opening the clicked chip spends no further call.
+    // RED on HEAD: a mounted chip warmed nothing, so only the click fetched (1).
+    expect(fetchTechTermDetail).toHaveBeenCalledTimes(2);
 
     // Collapse: the body (and the open-term detail) unmounts.
     await click(header(TECH_LABEL));
     expect(text()).not.toContain("An idempotency key makes a retried request safe.");
 
     // Re-expand: the term is STILL open (its open state lived in the scope, not
-    // the chip), the detail returns, and nothing re-fetched.
+    // the chip), the detail returns, and nothing re-fetched — the remounted
+    // chips re-warm but the store's settled records dedupe every call.
     await click(header(TECH_LABEL));
     expect(text()).toContain("An idempotency key makes a retried request safe.");
     expect(container.querySelector('[aria-live="polite"]')).not.toBeNull();
-    expect(fetchTechTermDetail).toHaveBeenCalledTimes(1);
+    expect(fetchTechTermDetail).toHaveBeenCalledTimes(2);
   });
 });
 

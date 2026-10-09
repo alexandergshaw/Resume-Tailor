@@ -74,7 +74,7 @@
 // enforce; the table at the top of ./exportReachability.ledger.md is the
 // single place to read them if this prose has fallen behind.)
 //
-//   RULE TR-1 (422 symbols)  the export is unused by shipping code, but at
+//   RULE TR-1 (424 symbols)  the export is unused by shipping code, but at
 //       least one `.test.js` imports it BY NAME. This repo's dominant
 //       convention is to widen a module's export surface so a unit test can
 //       pin an internal helper or a threshold constant directly instead of
@@ -321,15 +321,15 @@ describe("every export of a shipping module is asked for, or is on a ledger with
     // check the new export is a helper being pinned, not a feature that was
     // built and never connected, then update the number.
     //
-    // Pinned at 422. Every movement (299 -> 422) is stated by name in
+    // Pinned at 424. Every movement (299 -> 424) is stated by name in
     // exportReachability.ledger.md, section 4; append the new delta there.
-    expect(TEST_REFERENCED.length).toBe(422);
+    expect(TEST_REFERENCED.length).toBe(424);
     // A classifier that swept everything into this bucket would make the
     // orphan ledger vacuous, so pin the split rather than only the total.
     expect(UNUSED_IN_SHIPPING_MODULES.length).toBe(TEST_REFERENCED.length + ORPHANS.length);
-    // Pinned at 487 = 422 + 65. Every movement (356 -> 487), with which half
+    // Pinned at 489 = 424 + 65. Every movement (356 -> 489), with which half
     // moved, is stated in exportReachability.ledger.md, section 5.
-    expect(UNUSED_IN_SHIPPING_MODULES.length).toBe(487);
+    expect(UNUSED_IN_SHIPPING_MODULES.length).toBe(489);
   });
 
   it("still reports the two symbol-level cases this sweep was built for", () => {

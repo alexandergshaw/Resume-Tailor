@@ -14,6 +14,7 @@ import { createChoiceStore } from "../../lib/copilot/choiceStore.js";
 import { PROJECT_PAGE_SOURCE } from "../../lib/copilot/projectStories.js";
 import CollapsibleAid from "./CollapsibleAid";
 import { useTechTermDetailApi } from "./useTechTermDetails";
+import { useWarmOnMount } from "./useWarmOnMount";
 
 // AC-K1.2/AC-K1.3: the two groups that sit UNDER a drafted answer's cues —
 // what the candidate actually has (the role and project their answer came
@@ -517,7 +518,16 @@ function TechTermDetail({ term, record, onRetry }) {
 // it is never a dangling reference. A term the scope cannot resolve (no scope
 // mounted, or no answer in it suggested the term) is disabled rather than a
 // button that silently does nothing.
+//
+// EACH CHIP WARMS ITS OWN DETAIL ON MOUNT, so opening it is instant. The chips
+// exist only inside the CollapsibleAid body, which unmounts while the section is
+// collapsed, so a collapsed section warms nothing: its terms are not on screen.
+// Expanding it mounts every chip together and they warm together (throttled by the
+// shared prefetch queue). Keyed on the resolved store key so a store write never
+// re-fires it; a stand-in api without keyFor/prefetch yields a null key, a no-op.
 function TechTermChip({ term, api, regionId }) {
+  const warmKey = typeof api?.keyFor === "function" ? api.keyFor(term) : null;
+  useWarmOnMount(warmKey, () => api?.prefetch?.(term));
   const interactive = !!api && api.resolves(term);
   const open = interactive && api.isOpen(term);
   return (

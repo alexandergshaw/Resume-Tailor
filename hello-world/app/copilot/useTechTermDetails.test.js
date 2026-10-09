@@ -78,21 +78,34 @@ async function click(el) {
 }
 
 describe("opening a chip", () => {
-  it("asks once with the explicit request fields, then shows the explanation", async () => {
+  it("prefetches each shown term on mount with the explicit fields, and a click opens a warmed term with no new call", async () => {
+    // N153 ADOPTION: the chips warm on mount now (desktop = section open, chips
+    // mounted), so by the time the candidate taps one, every shown term's detail
+    // has already been asked for — once each, with the explicit request fields
+    // the route needs. Opening a warmed term spends no further call. RED on HEAD:
+    // a rendered answer prefetched nothing, so the mount count was 0.
     fetchTechTermDetail.mockResolvedValue({ detail: "Idempotency keys let a retried request be recognised.", empty: false });
     await mount();
-    await click(chip("idempotency keys"));
 
-    expect(fetchTechTermDetail).toHaveBeenCalledTimes(1);
+    expect(fetchTechTermDetail).toHaveBeenCalledTimes(2); // both shown terms warmed
     expect(fetchTechTermDetail).toHaveBeenCalledWith({
       term: "idempotency keys",
       question: "How do you make retries safe?",
       applicationId: "app-1",
       engine: "gemini",
     });
+    expect(fetchTechTermDetail).toHaveBeenCalledWith({
+      term: "circuit breaker",
+      question: "How do you make retries safe?",
+      applicationId: "app-1",
+      engine: "gemini",
+    });
+
+    await click(chip("idempotency keys"));
+    expect(fetchTechTermDetail).toHaveBeenCalledTimes(2); // opening a warmed term asks nothing more
     expect(text()).toContain("Idempotency keys let a retried request be recognised.");
     expect(chip("idempotency keys").getAttribute("aria-expanded")).toBe("true");
-    // The other chip is untouched.
+    // The other chip is warmed but not opened.
     expect(chip("circuit breaker").getAttribute("aria-expanded")).toBe("false");
   });
 
@@ -120,15 +133,25 @@ describe("opening a chip", () => {
 
     await click(chip("idempotency keys"));
     expect(text()).toContain("Explanation text.");
-    expect(fetchTechTermDetail).toHaveBeenCalledTimes(1);
+    // N153 ADOPTION: both shown terms warmed once on mount (2 calls); every open,
+    // collapse and reopen after that asks nothing more. RED on HEAD: the only call
+    // was the first click, so the count was 1.
+    expect(fetchTechTermDetail).toHaveBeenCalledTimes(2);
   });
 });
 
 describe("a request that does not produce an explanation", () => {
   it("a failure reads as one, and Retry asks again", async () => {
+    // N153 ADOPTION: scoped to ONE resolvable term so the prefetch-on-mount warm
+    // and the retry are the only two calls, in that order — the second chip
+    // (circuit breaker) is unresolvable here, so it is a disabled chip that warms
+    // nothing. The warm fails (silent), the first open shows the failure, and
+    // Retry re-asks and succeeds.
     fetchTechTermDetail.mockRejectedValueOnce(Object.assign(new Error("x"), { code: "http" }));
     fetchTechTermDetail.mockResolvedValueOnce({ detail: "Second time works.", empty: false });
-    await mount();
+    await mount({
+      questions: [{ id: "q1", question: "How do you make retries safe?", techTerms: { status: "ready", terms: ["idempotency keys"] } }],
+    });
     await click(chip("idempotency keys"));
     expect(text()).toContain("Couldn't look that up.");
 

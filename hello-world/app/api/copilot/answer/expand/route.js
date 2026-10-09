@@ -3,9 +3,6 @@ import { getExpansionTimeoutMs, getServerEnv } from "@/lib/config/env";
 import { getGeminiClient } from "@/lib/llm/geminiClient";
 import { wantsEmbedded } from "@/lib/llm/featureEngine";
 import { parseModelJson } from "@/lib/llm/extractEmployment";
-// The shared bound. See the ordering note on `expandLimiter` below for the one
-// way to adopt this module catastrophically wrong.
-import { createRateLimiter, identify, rateLimitHeaders } from "@/lib/rateLimit/index";
 import { answerContextKey, loadAnswerContext } from "@/lib/copilot/answerContext";
 import { answerRequestFields, MAX_APPLICATION_ID_CHARS } from "@/lib/copilot/answerRequestPrologue";
 import { selectBestStory } from "@/lib/copilot/projectStories";
@@ -22,31 +19,6 @@ import { EXPANSION_SYSTEM, buildExpansionUserTurn } from "@/lib/copilot/expansio
 export const runtime = "nodejs";
 export const maxDuration = 30;
 
-// ---------------------------------------------------------------------------
-// THE SPEND CEILING.
-//
-// BUILT AT MODULE SCOPE, AND THAT IS LOAD-BEARING. A limiter constructed inside
-// the handler gets a brand-new store on every request, so every caller is
-// forever on its first request: it permits everything, counts nothing, and
-// passes a smoke test while doing it. This route's suite pins BOTH halves, a
-// behavioural case that fires past the bound and a static case that this
-// declaration precedes `POST`.
-//
-// 40 expansions per 10 minutes, per authenticated user. An answer carries at
-// most six bullets, so this is a handful of fully-expanded answers inside one
-// warm-context window (which is answerContextCache's own 10-minute TTL, so a
-// user's allowance and the window they spend it inside expire together). A
-// DENIED REQUEST STILL INCREMENTS: the bound is 40 ATTEMPTS, not 40 successes.
-//
-// HONEST ABOUT WHAT THIS BUYS: the memory store is per-instance, so on
-// serverless this bounds a caller to 40 x instanceCount, not 40. It is worth
-// having anyway, because it turns an unbounded loop against a model-calling
-// endpoint into a bounded one, but it is not a fleet-wide guarantee and must
-// not be described as one. Swapping in a Redis-backed store satisfying the
-// same two-method interface needs no change here.
-// ---------------------------------------------------------------------------
-const expandLimiter = createRateLimiter({ limit: 40, windowMs: 600_000, prefix: "copilot-expand" });
-
 // Mirrors the answer route's own ceiling on how many points an answer has. It
 // is private there, so this is a second copy; it is here rather than inlined
 // so the copy is at least named, and the route's suite pins the behaviour.
@@ -60,8 +32,6 @@ const MAX_SOURCE_CHARS = 4000;
 
 const DISABLED_MESSAGE =
   "More detail is switched off on this server right now. Nothing was sent and nothing was charged.";
-const RATE_LIMITED_MESSAGE =
-  "You have opened a lot of bullets in a short window. Wait a moment and try again.";
 const TIMEOUT_MESSAGE = "That took too long to look up.";
 const FAILED_MESSAGE = "Could not get more detail for this point.";
 const INVALID_MESSAGE = "That request did not describe a bullet of the current answer.";
@@ -107,17 +77,13 @@ export async function POST(request) {
       return fail("Invalid request body.", 400);
     }
 
-    // 3. THE BOUND, keyed on the id step 2 resolved to. Checked ahead of
-    //    validation on purpose: an invalid request is still a request, and a
-    //    caller hammering this endpoint with junk should exhaust its own
-    //    allowance rather than get an unmetered lane.
-    const decision = await expandLimiter.check(identify(request, { userId: user.id }));
-    if (!decision.allowed) {
-      return Response.json(
-        { error: RATE_LIMITED_MESSAGE },
-        { status: 429, headers: rateLimitHeaders(decision) },
-      );
-    }
+    // 3. NO PER-USER BOUND, ON PURPOSE. The copilot prefetches every bullet's
+    //    detail the moment an answer renders, so a cap here could only refuse a
+    //    real candidate mid-interview (an owner ruling, recorded in
+    //    lib/rateLimit/adoption.test.js). What keeps a render from bursting is
+    //    the client-side concurrency throttle and the store's dedupe. This is
+    //    the seam where a bound would sit, keyed on the id step 2 resolved to
+    //    and checked ahead of validation, if the owner sets a number later.
 
     // 4. VALIDATION, before a single Supabase data read and before any model
     //    client. Every field REFUSES rather than coerces: `.toString()` on an

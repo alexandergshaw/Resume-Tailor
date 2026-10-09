@@ -12,6 +12,7 @@ import { BREAK_LONG_WORDS_SX, TOUCH_TARGET_SX, WRAP_ROW_SX } from "@/app/theme/m
 import { EXPANSION_MIN_HEIGHT } from "@/lib/copilot/expansionContract";
 
 import { useExpansionApi } from "./useAnswerExpansions";
+import { useWarmOnMount } from "./useWarmOnMount";
 
 // ALL OF THE EXPANSION MARKUP, in one file that is 100% this feature's.
 //
@@ -104,6 +105,13 @@ export default function ExpansionPanel({ line, api }) {
   const generatedId = useId();
   const contextApi = useExpansionApi();
   const resolved = api ?? contextApi;
+
+  // WARM THE BULLET'S DETAIL AS SOON AS IT IS ON SCREEN, so opening it is instant.
+  // Keyed on the resolved store key (a stable string) so a store-write re-render
+  // never re-fires it. Optional access: a stand-in api without keyFor/prefetch
+  // yields a null key and the hook is a no-op. Sets no `open`, so nothing renders.
+  const warmKey = typeof resolved?.keyFor === "function" ? resolved.keyFor(line) : null;
+  useWarmOnMount(warmKey, () => resolved?.prefetch?.(line));
 
   // Every hook above this line runs unconditionally.
   if (!resolved) return null;
