@@ -21,12 +21,12 @@ Current pinned values, as of the last entry in each section:
 | `ALLOWED_UNREACHABLE_MODULES.length`        | 14     |
 | `UNWIRED_MODULES` (exact list of 5 files)   | 5      |
 | `ORPHAN_EXPORTS.length`                     | 65     |
-| `TEST_REFERENCED.length` (rule TR-1)        | 423    |
-| `UNUSED_IN_SHIPPING_MODULES.length`         | 488    |
+| `TEST_REFERENCED.length` (rule TR-1)        | 422    |
+| `UNUSED_IN_SHIPPING_MODULES.length`         | 487    |
 
 The identity that ties the last three together, and that the test asserts
 directly, is `UNUSED_IN_SHIPPING_MODULES = TEST_REFERENCED + ORPHANS`
-(423 + 65 = 488).
+(422 + 65 = 487).
 
 ---
 
@@ -182,7 +182,7 @@ it.
 
 ---
 
-## 4. TEST_REFERENCED, rule TR-1 (pinned at 423)
+## 4. TEST_REFERENCED, rule TR-1 (pinned at 422)
 
 Exports unused by shipping code that at least one `.test.js` imports BY NAME.
 A raise is a review event: check the new export is a helper being pinned, not
@@ -651,11 +651,24 @@ ALLOWED_UNREACHABLE_MODULES and UNWIRED_MODULES unmoved at 14 and 5. ORPHAN_EXPO
 unmoved at 65. Measured by running the sweep's own scan (exportReachability.scan.js)
 over the post-change tree and listing every export of the three new lib modules; the
 one name above is the complete symmetric difference against the N150 baseline.
+N151b: 423 -> 422 (+0, -1): the template switcher. OUT (-1), by name:
+lib/document/templateSelectionStore.js#getSelection -- the N151a entry above, which
+said its first shipping consumer would be the switcher: the library GET route now reads
+it (the response's selectedId), so it has a production importer and leaves the bucket.
+Nothing came in: every export the chunk added has a shipping importer and is in neither
+bucket -- useTemplateLibrary (page.js), TemplateLibraryPanel's default export
+(ApplyingControls.js), listLibraryTemplates / selectLibraryTemplate /
+deleteLibraryTemplate (useTemplateLibrary.js), and the library route's new PUT (a
+Next.js entry). No new module is unreachable: ALLOWED_UNREACHABLE_MODULES and
+UNWIRED_MODULES unmoved at 14 and 5. ORPHAN_EXPORTS unmoved at 65. Measured by running
+the sweep's own scan (exportReachability.scan.js) over the post-change tree and
+listing every export of the two new modules and the files the chunk edited; the one
+name above is the complete symmetric difference against the N151a baseline.
 ```
 
 ---
 
-## 5. UNUSED_IN_SHIPPING_MODULES total (pinned at 488)
+## 5. UNUSED_IN_SHIPPING_MODULES total (pinned at 487)
 
 The sum of the two halves above (`TEST_REFERENCED + ORPHANS`); the test also
 asserts that identity directly, so the split is pinned and not only the total.
@@ -827,4 +840,9 @@ section 4; ORPHAN_EXPORTS unmoved at 65). The total moving by exactly the TR-1 h
 with the orphan half frozen is what says this was a widened export surface for a unit
 suite (its N151b consumer is the switcher) and not a feature built and never wired.
 TEST_REFERENCED 423 + ORPHANS 65.
+N151b: 488 -> 487 (TEST_REFERENCED's -1, templateSelectionStore.js#getSelection gaining
+its shipping consumer in the library GET route, named at section 4; ORPHAN_EXPORTS
+unmoved at 65). The total moving by exactly the TR-1 half's -1 with the orphan half
+frozen is what says a widened surface got its promised consumer, nothing was lost.
+TEST_REFERENCED 422 + ORPHANS 65.
 ```

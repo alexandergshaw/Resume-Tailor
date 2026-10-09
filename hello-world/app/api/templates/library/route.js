@@ -5,7 +5,15 @@
 // authenticated session, never the request body. Storage-only: it imports no
 // model client, so it needs no rate-limit adoption entry.
 //
-// GET    ?kind=resume|cover          -> { templates: [...] }
+// GET    ?kind=resume|cover          -> { templates: [...], selectedId } --
+//   selectedId is the caller's EXPLICIT selection for the kind (the
+//   template_selections pointer), or null when there is none; the switcher
+//   panel reads it to show which template is active.
+// PUT    json {kind, templateId}     -> { ok: true } -- makes an EXISTING
+//   template the caller's selection. The template must be one the caller owns
+//   (id + user_id + kind): a foreign or stale id is refused with a 404 rather
+//   than stored, because a dangling pointer would resolve to no bytes and the
+//   next document would render native formatting while the UI showed a pick.
 // POST   multipart {file, kind, name?} -> { row, selected } -- registers the
 //   uploaded .docx as a named library template AND makes it the caller's
 //   selection for that kind (mark = add + activate, so one click means future
@@ -21,7 +29,7 @@ import {
   registerTemplate,
   deleteTemplate,
 } from "@/lib/document/templateLibraryStore.js";
-import { setSelection } from "@/lib/document/templateSelectionStore.js";
+import { getSelection, setSelection } from "@/lib/document/templateSelectionStore.js";
 
 export const runtime = "nodejs";
 
@@ -48,7 +56,48 @@ export async function GET(request) {
     return Response.json({ error: `Unsupported template kind: ${kind}.` }, { status: 400 });
   }
   const templates = await listTemplates(supabase, { userId: user.id, kind });
-  return Response.json({ templates });
+  const selection = await getSelection(supabase, { userId: user.id, kind });
+  return Response.json({ templates, selectedId: selection?.template_id ?? null });
+}
+
+export async function PUT(request) {
+  const supabase = await createClient();
+  const user = await requireUser(supabase);
+  if (!user) return Response.json({ error: "Unauthorized" }, { status: 401 });
+
+  let body;
+  try {
+    body = await request.json();
+  } catch {
+    return Response.json({ error: "Invalid request body." }, { status: 400 });
+  }
+  const kind = body?.kind;
+  const templateId = body?.templateId;
+  if (!VALID_KINDS.includes(kind)) {
+    return Response.json({ error: `Unsupported template kind: ${kind}.` }, { status: 400 });
+  }
+  if (typeof templateId !== "string" || !templateId) {
+    return Response.json({ error: "No template specified." }, { status: 400 });
+  }
+
+  // Ownership guard: the row must be the caller's own, for this kind.
+  const { data: owned, error: ownedError } = await supabase
+    .from("resume_templates")
+    .select("id")
+    .eq("id", templateId)
+    .eq("user_id", user.id)
+    .eq("kind", kind)
+    .maybeSingle();
+  if (ownedError) {
+    return Response.json({ error: "Couldn't look up that template." }, { status: 500 });
+  }
+  if (!owned) {
+    return Response.json({ error: "That template is not in your library." }, { status: 404 });
+  }
+
+  const selection = await setSelection(supabase, { userId: user.id, kind, templateId });
+  if (selection.error) return Response.json({ error: selection.error }, { status: 500 });
+  return Response.json({ ok: true });
 }
 
 export async function POST(request) {

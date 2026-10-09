@@ -146,7 +146,10 @@ describe("the extraction is ADOPTED, not merely added", () => {
     // loads a signed-in user's stored files, and every upload silently falls
     // into the in-memory branch and is lost on reload. `chat: {}` throws only
     // when the user clicks "Ask AI about this file".
-    expect(PAGE_CODE).toMatch(/\} = useMaterialsLocker\(\{ currentUser, chat \}\);/);
+    // N151b added the optional onTemplatesChanged callback (the switcher panel's
+    // refresh) to this call; currentUser and chat must still be handed through
+    // as the real shorthand bindings.
+    expect(PAGE_CODE).toMatch(/\} = useMaterialsLocker\(\{ currentUser, chat(?:, onTemplatesChanged: [\w.]+)? \}\);/);
     expect(PAGE_CODE).not.toMatch(/useMaterialsLocker\(\{[^}]*currentUser:/);
     expect(PAGE_CODE).not.toMatch(/useMaterialsLocker\(\{[^}]*chat:/);
   });

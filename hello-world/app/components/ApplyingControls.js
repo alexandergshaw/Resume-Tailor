@@ -12,6 +12,7 @@ import { isDocxResume } from "../../lib/document/docx";
 import { createClient } from "../../lib/supabase/client";
 import styles from "../page.module.css";
 import ProfileListSection from "./applying/ProfileListSection";
+import TemplateLibraryPanel from "./applying/TemplateLibraryPanel";
 import {
   REFERENCES_SECTION,
   EDUCATION_SECTION,
@@ -60,6 +61,8 @@ export default function ApplyingControls({
   removeMaterialFile,
   askAiAboutMaterial,
   markMaterialAsTemplate,
+  // useTemplateLibrary() result (N151b): the saved-template switcher's state.
+  templateLibrary = null,
   currentUserPresent,
 }) {
   // The sixth (Ideal) stop appears only while the Ideal-level gate is on.
@@ -315,6 +318,10 @@ export default function ApplyingControls({
         renderCopyButton={renderCopyButton}
         importUI={{ status: employmentImport, onImport: importEmploymentFromResume }}
       />
+
+      {templateLibrary ? (
+        <TemplateLibraryPanel kind="resume" currentUser={currentUser} library={templateLibrary} />
+      ) : null}
 
       <div className={styles.fieldGroup}>
         <span className={styles.label}>Supplementary materials</span>

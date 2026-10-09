@@ -59,6 +59,7 @@ import { useApplicationProjectPool } from "./hooks/useApplicationProjectPool";
 import { useLayoutPrefs } from "./hooks/useLayoutPrefs";
 import { useEmploymentImport } from "./hooks/useEmploymentImport";
 import { useMaterialsLocker } from "./hooks/useMaterialsLocker";
+import { useTemplateLibrary } from "./hooks/useTemplateLibrary";
 import {
   REFERENCE_CONFIG,
   EDUCATION_CONFIG,
@@ -975,6 +976,9 @@ export default function Home() {
   // Instantiated HERE, at the exact source position its load-on-sign-in
   // effect already occupied, so the extraction cannot move that effect
   // relative to any other effect in this component -- see the hook header.
+  // The template switcher's state is mounted just above it so a successful
+  // "Add to template library" can refresh the panel (onTemplatesChanged).
+  const templateLibrary = useTemplateLibrary({ currentUser, kind: "resume" });
   const {
     materials,
     materialsBusy,
@@ -985,7 +989,7 @@ export default function Home() {
     removeMaterialFile,
     askAiAboutMaterial,
     markMaterialAsTemplate,
-  } = useMaterialsLocker({ currentUser, chat });
+  } = useMaterialsLocker({ currentUser, chat, onTemplatesChanged: templateLibrary.refresh });
 
   // Per-field copy helper for references / education TextFields.
   const [fieldCopyKey, setFieldCopyKey] = useState(null);
@@ -2658,6 +2662,7 @@ export default function Home() {
           removeMaterialFile={removeMaterialFile}
           askAiAboutMaterial={askAiAboutMaterial}
           markMaterialAsTemplate={markMaterialAsTemplate}
+          templateLibrary={templateLibrary}
           currentUserPresent={!!currentUser}
           renderCopyButton={renderCopyButton}
         />

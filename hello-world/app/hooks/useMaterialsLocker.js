@@ -20,11 +20,15 @@ import {
 // askAiAboutMaterial opens the panel and hands it an attachment, and there is
 // only ever one chat.
 //
+// `onTemplatesChanged` (optional) is called after a SUCCESSFUL "Add to template
+// library", so the switcher panel (useTemplateLibrary.refresh) shows the new
+// template without a reload. A no-op by default.
+//
 // WHY THIS IS ORDER-PRESERVING. page.js calls this hook at the exact source
 // position its single effect already occupied, so that effect keeps its index
 // among the component's effects; the three useState calls move down to meet
 // it. See app/hooks/useMaterialsLocker.extraction.test.js.
-export function useMaterialsLocker({ currentUser, chat }) {
+export function useMaterialsLocker({ currentUser, chat, onTemplatesChanged = () => {} }) {
   // Supplementary materials locker (transcripts etc.). Each item:
   // { name, size, source: "remote"|"local", file? }. Persisted to Supabase for
   // signed-in users; in-memory for the session otherwise. Download-only.
@@ -176,6 +180,7 @@ export function useMaterialsLocker({ currentUser, chat }) {
           : `Added "${name}" to your template library, but it couldn't be set as your active template.`,
       );
       setTimeout(() => setMaterialsNotice(""), 6000);
+      onTemplatesChanged();
     } catch (err) {
       setMaterialsError(err?.message || "Could not add that file to your template library.");
     } finally {
