@@ -7,6 +7,9 @@ import Stack from "@mui/material/Stack";
 import Switch from "@mui/material/Switch";
 import Typography from "@mui/material/Typography";
 import { fmtClock } from "@/lib/copilot/clock";
+import { normalizeAidChoice } from "@/lib/copilot/aidDisclosure";
+import { createChoiceStore } from "@/lib/copilot/choiceStore";
+import CollapsibleAid from "./CollapsibleAid";
 import StatusPill from "./StatusPill";
 import { TOUCH_TARGET_SX, TOUCH_SWITCH_SX } from "@/app/theme/mobileSx";
 
@@ -33,6 +36,35 @@ import { TOUCH_TARGET_SX, TOUCH_SWITCH_SX } from "@/app/theme/mobileSx";
 // ARRAYS rather than as pre-computed booleans for the same reason: it keeps
 // the two `disabled` expressions identical to the ones that used to sit
 // inline, instead of restating them one level up.
+//
+// N144b: on a phone (`compact`) while live, the post-session / destructive
+// trio — Copy, Clear and Download session log, plus the caption — tucks behind
+// ONE reused CollapsibleAid, so Clear (which wipes the transcript, every
+// detected question and the confirm gate with no confirmation and no undo) is
+// not a stray-tap target mid-session. Stop/Start, the pill, the clock and Auto-draft stay
+// inline in every state, and the trio is defined ONCE below and placed in
+// exactly one of two spots, so a duplicated control row cannot exist. The
+// component itself still holds nothing: the disclosure's open state is the
+// module-scope choice store below, read by CollapsibleAid, not state here.
+
+// Remembered across sessions (null = not chosen = collapsed on a phone), the
+// same shape AnswerAids.js uses for its own disclosures. Hydrated at module
+// scope; the store guards on a missing localStorage, so a server render is safe.
+const sessionActionsCollapse = createChoiceStore({
+  storageKey: "copilot-session-actions",
+  defaultValue: null,
+  normalize: normalizeAidChoice,
+  crossWindow: true,
+});
+sessionActionsCollapse.hydrate();
+
+// The header names what is inside, including the destructive item, rather than
+// a vague "More".
+const SESSION_ACTIONS_LABEL = "Copy, clear and download";
+
+// The tucked body's row: the same wrap rhythm as the inline row it replaces.
+const WRAP_ROW_SX = { alignItems: "center", flexWrap: "wrap", rowGap: 1 };
+
 export default function SessionControls({
   live,
   stop,
@@ -48,51 +80,14 @@ export default function SessionControls({
   questions,
   downloadLog,
   sessionLogHasEvents,
+  compact = false,
 }) {
-  return (
-    <Stack
-      direction="row"
-      spacing={1.5}
-      sx={{ mb: 2, alignItems: "center", flexWrap: "wrap", rowGap: 1 }}
-    >
-      {live ? (
-        <Button variant="outlined" color="error" onClick={stop} sx={TOUCH_TARGET_SX}>
-          Stop
-        </Button>
-      ) : (
-        // BUG-3: onStartSession, not the bare `start` — see its own
-        // comment for why the bar's announcement must not survive
-        // into a new session.
-        <Button variant="contained" onClick={onStartSession} sx={TOUCH_TARGET_SX}>
-          Start session
-        </Button>
-      )}
-      <StatusPill status={status} />
-      {startedAt ? (
-        <Typography
-          variant="body2"
-          sx={{ color: "var(--text-muted)", fontVariantNumeric: "tabular-nums" }}
-        >
-          {fmtClock(elapsed)}
-        </Typography>
-      ) : null}
-      <Box sx={{ flex: 1, display: { xs: "none", sm: "block" } }} />
-      <FormControlLabel
-        control={
-          <Switch
-            size="small"
-            checked={autoDraft}
-            onChange={(e) => setAutoDraft(e.target.checked)}
-            sx={TOUCH_SWITCH_SX}
-          />
-        }
-        label={
-          <Typography variant="body2" sx={{ color: "var(--text-secondary)" }}>
-            Auto-draft
-          </Typography>
-        }
-        sx={{ mr: 0.5 }}
-      />
+  // The tuck needs BOTH: idle on a phone shows everything inline (Auto-draft is
+  // a pre-start choice, Download and Copy matter right after Stop).
+  const tuck = compact && live;
+
+  const actions = (
+    <>
       <Button
         size="small"
         variant="text"
@@ -141,6 +136,73 @@ export default function SessionControls({
           Available once the session has recorded something.
         </Typography>
       ) : null}
+    </>
+  );
+
+  const controlRow = (
+    <Stack
+      direction="row"
+      spacing={1.5}
+      sx={{ mb: tuck ? 0.5 : 2, alignItems: "center", flexWrap: "wrap", rowGap: 1 }}
+    >
+      {live ? (
+        <Button variant="outlined" color="error" onClick={stop} sx={TOUCH_TARGET_SX}>
+          Stop
+        </Button>
+      ) : (
+        // BUG-3: onStartSession, not the bare `start` — see its own
+        // comment for why the bar's announcement must not survive
+        // into a new session.
+        <Button variant="contained" onClick={onStartSession} sx={TOUCH_TARGET_SX}>
+          Start session
+        </Button>
+      )}
+      <StatusPill status={status} />
+      {startedAt ? (
+        <Typography
+          variant="body2"
+          sx={{ color: "var(--text-muted)", fontVariantNumeric: "tabular-nums" }}
+        >
+          {fmtClock(elapsed)}
+        </Typography>
+      ) : null}
+      <Box sx={{ flex: 1, display: { xs: "none", sm: "block" } }} />
+      <FormControlLabel
+        control={
+          <Switch
+            size="small"
+            checked={autoDraft}
+            onChange={(e) => setAutoDraft(e.target.checked)}
+            sx={TOUCH_SWITCH_SX}
+          />
+        }
+        label={
+          <Typography variant="body2" sx={{ color: "var(--text-secondary)" }}>
+            Auto-draft
+          </Typography>
+        }
+        sx={{ mr: 0.5 }}
+      />
+      {tuck ? null : actions}
     </Stack>
+  );
+
+  // The Stack stays the first child in every state, so the Start/Stop button
+  // is the same DOM node across the idle-to-live flip (focus survives, WCAG
+  // 2.4.3). The disclosure is a sibling AFTER it: reading order is the
+  // rendered order, nothing is reordered with CSS.
+  return (
+    <>
+      {controlRow}
+      {tuck ? (
+        <Box sx={{ mb: 2 }}>
+          <CollapsibleAid label={SESSION_ACTIONS_LABEL} choiceStore={sessionActionsCollapse}>
+            <Stack direction="row" spacing={1.5} sx={WRAP_ROW_SX}>
+              {actions}
+            </Stack>
+          </CollapsibleAid>
+        </Box>
+      ) : null}
+    </>
   );
 }

@@ -16,6 +16,7 @@ import { ExpansionScope } from "./useAnswerExpansions";
 import { TechTermDetailScope } from "./useTechTermDetails";
 import { GlossaryProvider } from "./GlossaryProvider";
 import { useIsMobile } from "@/app/hooks/useResponsive";
+import { TOUCH_ICON_SX } from "@/app/theme/mobileSx";
 import TabHeader from "@/app/components/TabHeader";
 import LiveHearingStrip from "./LiveHearingStrip";
 import TranscriptDisclosure from "./TranscriptDisclosure";
@@ -23,8 +24,7 @@ import ManualQuestion from "./ManualQuestion";
 import SessionControls from "./SessionControls";
 import SessionSetup from "./SessionSetup";
 import SpeakerBar from "./SpeakerBar";
-import VoiceCueSidebar from "./VoiceCueSidebar";
-import CompanyBriefPanel from "./CompanyBriefPanel";
+import LiveRail from "./LiveRail";
 import CopilotDashboard from "./dashboard/CopilotDashboard";
 import StickyQuestionStrip from "./dashboard/StickyQuestionStrip";
 import AskAiBox from "./dashboard/AskAiBox";
@@ -487,42 +487,17 @@ export default function CopilotClient() {
   // column needs bounding at all.
   const { liveWrapperRef, liveHeight } = useLiveColumnHeight(live && !isMobile);
 
-  // N18 delta review F1: the "pin"/"unpin" branches this handler used to
-  // carry (and the I10 comment explaining why a hold click never called
-  // announceCue) are retired along with the hold cue itself — "company" is
-  // the only action VOICE_CUES still recognizes (voiceCues.js).
-  const onCueActivate = useCallback(
-    (action) => {
-      if (action === "company") companyBrief.openBrief();
-    },
-    [companyBrief],
-  );
-
-  // I11: the brief panel takes over the rail's slot rather than opening beside it (no room for both — I1).
-  const railContent = companyBrief.open ? (
-    <CompanyBriefPanel
-      status={companyBrief.status}
-      articles={companyBrief.articles}
-      warnings={companyBrief.warnings}
-      error={companyBrief.error}
-      company={companyBrief.company}
-      onRefresh={companyBrief.refresh}
-      onBack={companyBrief.closeBrief}
-      isEmbedded={isEmbedded}
-    />
-  ) : (
-    <VoiceCueSidebar
+  // The rail's content (the company-brief / voice-cue ternary and the cue
+  // handler) lives in LiveRail.js — a headroom extraction, see its own doc.
+  // This file keeps `railCollapsed` and both placement sites below.
+  const railContent = (
+    <LiveRail
+      companyBrief={companyBrief}
       collapsed={railCollapsed}
       onToggleCollapsed={onToggleRailCollapsed}
-      onActivate={onCueActivate}
       isEmbedded={isEmbedded}
       hasCompany={hasCompany}
       speakerAttribution={speakerAttribution}
-      // AC-V2.8: the rail's disclosure is a permission statement, and the
-      // attribution flag alone under-claims (see cuePolicy.js's
-      // `effectiveAttribution`). The same snapshot TranscriptView and the
-      // correction bar already render is the evidence that keeps this rail
-      // from calling cues button-only in a session that can separate voices.
       speakerSnapshot={speakerSnapshot}
     />
   );
@@ -601,23 +576,28 @@ export default function CopilotClient() {
       <TabHeader
         title="Interview copilot"
         description={
-          mode === "roles"
-            ? roleModeDescription
-            : mode === "practice"
-              ? // "nothing else is recorded or shared" was false: on the Gemini
-                // engine, the answer transcript, posting details, and prep
-                // context all go to Google for the critique. The detailed
-                // notice below (PracticeClient) states exactly what leaves on
-                // the current engine — this one-liner defers to it rather
-                // than making its own (previously false) blanket claim.
-                // F2: the STT destination is only named once it's actually
-                // known (see the mount-time fetch above) — never guessed.
-                `Practice speaking out loud with your camera and mic — see the notice below for what's sent ${sttProviderName ? `to ${sttProviderName} or Gemini` : "to Gemini"}.`
-              : "Live transcription, question detection, and suggested answers during interviews."
+          live && isMobile
+            ? undefined
+            : mode === "roles"
+              ? roleModeDescription
+              : mode === "practice"
+                ? // "nothing else is recorded or shared" was false: on the Gemini
+                  // engine, the answer transcript, posting details, and prep
+                  // context all go to Google for the critique. The detailed
+                  // notice below (PracticeClient) states exactly what leaves on
+                  // the current engine — this one-liner defers to it rather
+                  // than making its own (previously false) blanket claim.
+                  // F2: the STT destination is only named once it's actually
+                  // known (see the mount-time fetch above) — never guessed.
+                  `Practice speaking out loud with your camera and mic — see the notice below for what's sent ${sttProviderName ? `to ${sttProviderName} or Gemini` : "to Gemini"}.`
+                : "Live transcription, question detection, and suggested answers during interviews."
         }
       />
 
-      <ModeSwitch value={mode} onChange={onModeChange} disabled={live} />
+      {/* N144b: a phone mid-session needs the screen for the answer, and the
+          mode cannot change while live anyway (the switch is disabled) — so
+          both are conditional renders at xs && live, never a reorder. */}
+      {live && isMobile ? null : <ModeSwitch value={mode} onChange={onModeChange} disabled={live} />}
 
       {/* AC-J1.5: the microphone selection is owned HERE, not per mode, and
           handed to both practice and roles mode as props — one piece of
@@ -720,19 +700,24 @@ export default function CopilotClient() {
               overflow: { xs: "visible", sm: live ? "hidden" : "visible" },
             }}
           >
-            {/* shareInstructions and the error/warning Alerts are ordinary
-                flex children, not folded into the measured height — the
-                ResizeObserver above re-measures if they change the top. */}
-            <Typography variant="body2" sx={{ color: "var(--text-secondary)", mb: 2 }}>
-              {shareInstructions} Both sides of the conversation are transcribed
-              live; the interviewer&apos;s questions are detected on the right and
-              answered automatically.
-              {/* AC-M1.5.3: mic-only capture is getUserMedia, which every
-                  modern browser supports — the tab/system Chrome-or-Edge
-                  caveat (screen/tab capture) does not apply and must not
-                  render for "inperson". */}
-              {source === "inperson" ? "" : " Chrome or Edge only."}
-            </Typography>
+            {/* shareInstructions (while it renders) and the error/warning
+                Alerts are ordinary flex children, not folded into the
+                measured height — the ResizeObserver above re-measures if
+                they change the top. N144b: the paragraph is a pre-session
+                instruction ("detected on the right" names a column a phone
+                does not have), so it is not rendered while live at xs. */}
+            {live && isMobile ? null : (
+              <Typography variant="body2" sx={{ color: "var(--text-secondary)", mb: 2 }}>
+                {shareInstructions} Both sides of the conversation are transcribed
+                live; the interviewer&apos;s questions are detected on the right and
+                answered automatically.
+                {/* AC-M1.5.3: mic-only capture is getUserMedia, which every
+                    modern browser supports — the tab/system Chrome-or-Edge
+                    caveat (screen/tab capture) does not apply and must not
+                    render for "inperson". */}
+                {source === "inperson" ? "" : " Chrome or Edge only."}
+              </Typography>
+            )}
 
             <SessionSetup
               live={live}
@@ -771,7 +756,11 @@ export default function CopilotClient() {
               </Alert>
             ) : null}
             {warning ? (
-              <Alert severity="warning" sx={{ mb: 2 }} onClose={() => setWarning("")}>
+              <Alert
+                severity="warning"
+                sx={{ mb: 2, "& .MuiAlert-action .MuiIconButton-root": { ...TOUCH_ICON_SX } }}
+                onClose={() => setWarning("")}
+              >
                 {warning}
               </Alert>
             ) : null}
@@ -796,6 +785,7 @@ export default function CopilotClient() {
               questions={questions}
               downloadLog={downloadLog}
               sessionLogHasEvents={sessionLogHasEvents}
+              compact={isMobile}
             />
 
             {/* AC-M1.5.9/AC-X1: the speaker-correction bar — split out to

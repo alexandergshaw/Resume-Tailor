@@ -26,6 +26,17 @@ function silenceHint(source) {
   return "Check that the shared tab or screen is still playing audio.";
 }
 
+// The four co-operating declarations of the two-line bound (`display:
+// -webkit-box` is what makes `-webkit-line-clamp` mean anything at all), kept
+// together so a caller applies all of them or none — see the sx comment below
+// for which states take it at which widths.
+const TWO_LINE_CLAMP = {
+  display: "-webkit-box",
+  WebkitLineClamp: 2,
+  WebkitBoxOrient: "vertical",
+  overflow: "hidden",
+};
+
 // D5: rendered on EVERY pass — CopilotClient.js now mounts this component
 // unconditionally inside the bounded live wrapper (D1's fix put it there,
 // above the dashboard, rather than behind `{live ? ... : ...}`), so the
@@ -84,6 +95,14 @@ export default function LiveHearingStrip({ live, finals, interims, startedAt, li
             // AC-S3.6: bounded to about two lines — live mode must still not
             // need scrolling to see whether the copilot is hearing anything.
             //
+            // N144b A3: the NON-silent states ("waiting", "heard") clamp at
+            // every width. Their text is an interim transcript that changes on
+            // each STT frame, so an unclamped strip grew 1-5 lines per partial
+            // word and jittered everything below it on a phone; two lines is
+            // stable and never cuts anything actionable (the screen-reader
+            // region below carries the full string either way). The SILENT
+            // branch keeps the `sm`-and-up scoping that follows, unchanged.
+            //
             // Scoped to `sm` and up (MOBILE-G F-05). Two lines is a generous
             // bound at a desktop width and a destructive one on a phone: the
             // clamp is a hard `overflow: hidden` with no affordance to read
@@ -120,14 +139,9 @@ export default function LiveHearingStrip({ live, finals, interims, startedAt, li
             // `-webkit-line-clamp` mean anything at all), so switching one of
             // them off per breakpoint leaves the other three applying at
             // every width. The whole block has to be behind one bound.
-            [theme.breakpoints.up("sm")]: {
-              "& .MuiAlert-message": {
-                display: "-webkit-box",
-                WebkitLineClamp: 2,
-                WebkitBoxOrient: "vertical",
-                overflow: "hidden",
-              },
-            },
+            ...(isSilent
+              ? { [theme.breakpoints.up("sm")]: { "& .MuiAlert-message": TWO_LINE_CLAMP } }
+              : { "& .MuiAlert-message": TWO_LINE_CLAMP }),
           })}
         >
           {withHint}
