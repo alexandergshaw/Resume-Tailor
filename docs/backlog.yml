@@ -1788,6 +1788,30 @@
   verify_proof: null
   blocked_by: []
 
+- id: "N153"
+  state: "actionable"
+  title: "**OWNER 2026-10-08: PREFETCH the expandable LLM details as soon as the triggers appear on screen (before click) so opening is instant — the per-bullet 'More detail' (N149 expand) AND the per-buzzword detail (N150). Reuses the existing dedupe/cache stores (expansionStore/techTermDetailStore) — just trigger beginExpansion/fetchTechTermDetail on RENDER, not only on click. OWNER RULING (2026-10-08): REMOVE the 40/10-min caps — drop expandLimiter + the tech-term-detail limiter (adoption.test.js -> DEFERRED, like N150 Row-2 cap removal); keep a small CLIENT concurrency throttle so prefetch doesn't burst and a real click gets priority. Collapse ruling (N144a): buzzword chips unmount when collapsed, so prefetch when on-screen/open; bullets always visible -> prefetch on answer render. No-poison/dedupe unchanged; never blocks the answer. Design the prefetch as a REUSABLE primitive so N154 (ideal-project bullets) plugs in. Design in progress (N153.design.r1.md).**"
+  owed_by: "Design -> plan/TDD -> implement (prefetch primitive + wire 2 expandables + remove 2 limiters + adoption reconcile) -> full-suite gate"
+  evidence: ["Owner 2026-10-08: prefetch show-more-details + buzzword details on render; remove 40/10 cap"]
+  blocked_reason: null
+  instrument: null
+  owns: null
+  verify: null
+  verify_proof: null
+  blocked_by: []
+
+- id: "N154"
+  state: "actionable"
+  title: "**OWNER 2026-10-08: each BULLET of the generated ideal-project example rows (N143 Row 1 + Row 2) gets a 'dive into more detail' (LLM call), PREFETCHED (via N153's primitive). NEW capability — the example rows have no per-bullet expander yet. Reuses N150 tech-term-detail (route/store/sanitize/prompt pattern — these are INVENTED examples, general elaboration NOT grounded, mandatory output gate) + N149 expander UX + N143 ExampleProjectsGroup + N153 prefetch. SAFETY: lighter than N149 (the project is already hypothetical/'invented'-labeled, not a candidate claim) BUT the detail stays illustrative/third-person, no scripted first-person 'I did X', keeps the invented labeling. NEW route (project-bullet-detail), prompt (PROJECT_BULLET_DETAIL_SYSTEM), store, hook, per-bullet UI on both rows + 4 mounts; embedded refuses; no cap (owner). Design in progress (N154.design.r1.md).**"
+  owed_by: "Design -> check (anti-fabrication/labeling) -> plan/TDD -> implement -> gate; content quality owner/Gemini-env"
+  evidence: ["Owner 2026-10-08: per-bullet more-detail on the ideal project, LLM, prefetched"]
+  blocked_reason: null
+  instrument: null
+  owns: null
+  verify: null
+  verify_proof: null
+  blocked_by: ["N153"]
+
 # VERIFICATION (1)
 - id: "V1"
   state: "verification"
