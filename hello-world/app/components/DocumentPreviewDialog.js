@@ -34,7 +34,7 @@ import pageSx from "./documentPreviewPageSx";
 import SpacingControl from "./SpacingControl";
 import EditorToolbar from "./preview/EditorToolbar";
 import CombineDocumentsControl from "./preview/CombineDocumentsControl";
-import SetDefaultTemplateControl from "./preview/SetDefaultTemplateControl";
+import TemplateControlsRow from "./preview/TemplateControlsRow";
 import ReviseStrip from "./preview/ReviseStrip";
 import VersionControl from "./preview/VersionControl";
 import HighlightToggle from "./preview/HighlightToggle";
@@ -111,6 +111,7 @@ export default function DocumentPreviewDialog({
   documentVersions = {},
   currentVersionId = {},
   onSelectVersion,
+  currentUser = null, onRegenerateIntoTemplate, // N151c: "Switch template…" (signed-in gate; (scope, file) => regenerate)
   // Wave 6A: `useDriveDocuments`'s full return value, mounted one level up
   // in DocumentPreviewMount.js (not here, and not in page.js — ARCH.md
   // §4.3/§12). REQUIRED, deliberately with no default (see the invariant at
@@ -881,9 +882,8 @@ export default function DocumentPreviewDialog({
           invalidating that pin. Structurally absent on the email tab -- there
           is no email template path (resume_templates.kind excludes 'email'). */}
       {DOCX_SCOPES.includes(tab) && available(tab) ? (
-        <Box sx={{ px: { xs: 1.25, sm: 2 }, pt: 1 }}>
-          <SetDefaultTemplateControl scope={tab} disabled={busyActive} onClick={handleSetAsDefaultTemplate} />
-        </Box>
+        <TemplateControlsRow scope={tab} busy={busyActive} onSetDefault={handleSetAsDefaultTemplate} currentUser={currentUser}
+          hasVersions={(documentVersions?.[tab] || []).length > 0} commitDraft={commitDraft} onRegenerate={onRegenerateIntoTemplate} />
       ) : null}
 
       {/* UX.md rev 2 §3/§13: a SIBLING of DialogActions, in the slot

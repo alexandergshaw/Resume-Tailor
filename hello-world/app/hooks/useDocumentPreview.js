@@ -34,6 +34,7 @@ import { createClient } from "../../lib/supabase/client";
 import { persistGeneratedDocuments } from "../../lib/supabase/persistGeneration";
 import { pointApplicationAtVersion } from "../../lib/supabase/documentVersions";
 import { resolvePositionId, fetchVersionScopes } from "../../lib/document/documentVersionLoad";
+import { regenerateActiveIntoTemplate as regenerateIntoTemplate } from "../../lib/document/regenerateIntoTemplate";
 import { fireDuplicateCheckSafely } from "../../lib/tailor/duplicateCheckFire";
 import { previewScopeAvailable, resolvePreviewEntry } from "../../lib/tracking/applicationPreviewEntry";
 
@@ -530,6 +531,15 @@ export function useDocumentPreview({
     if (!resumePreview.jobId || scope === "email") return;
     const blob = await buildPreviewBlob(tailoringMapRef.current[resumePreview.jobId] || {}, scope, { resumeFile, coverLetterFile, text: typeof payload === "string" ? payload : payload?.text || "" });
     setScopeFlags(scope, await promoteDefaultTemplateBlob(blob, scope)); }
+  // N151c: re-pour the LATEST entry into a chosen template as a new version, no model call; body + guards in lib/document/regenerateIntoTemplate.js (line-capped hook).
+  function regenerateActiveIntoTemplate(scope, templateFile) {
+    const jobId = resumePreview.jobId;
+    return regenerateIntoTemplate({
+      scope, templateFile, jobId, entry: tailoringMapRef.current[jobId] || {}, positionId: positionIdRef.current,
+      userId: currentUser?.id, supabase: createClient(), updateTailoringJob, setPreviewReloadKey, persistGeneratedDocuments,
+      refreshDocumentVersions, versionsRequestId: versionsRequestIdRef.current, sourceResumePath: `${currentUser?.id}/resume`,
+    });
+  }
 
   // Re-run the Gemini tailor for the previewed document using the free-text
   // steering instructions the user typed in the preview. Updates only the
@@ -908,7 +918,7 @@ export function useDocumentPreview({
     saveDocumentPreview,
     renameDocument,
     setDocumentSpacing,
-    downloadDocumentPreview, setDefaultTemplateFromPreview,
+    downloadDocumentPreview, setDefaultTemplateFromPreview, regenerateActiveIntoTemplate,
     resubmitDocumentPreview,
     applyFocusArea,
     finishByOpeningPreview,

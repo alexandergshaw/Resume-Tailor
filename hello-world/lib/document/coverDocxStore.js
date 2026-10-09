@@ -12,14 +12,10 @@
 //    yet. Keys by a fresh `${userId}/generated/cover-<uuid>.docx` instead,
 //    still under the same prefix a future retention sweep would enumerate.
 
+import { bytesToBase64 } from "./docxBytes.js";
+
 const DOCX_MIME =
   "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
-
-// Chunk size for the base64-encode loop below, matching
-// lib/copilot/stt/elevenlabs.js's arrayBufferToBase64 -- large enough that a
-// typical document needs only a handful of iterations, small enough to stay
-// well under engines' call-argument limits for String.fromCharCode.apply.
-const BASE64_CHUNK_SIZE = 0x8000;
 
 // Decode a base64 string into bytes in both the browser and Node (mirrors
 // saveGeneratedResume.js's base64ToBytes).
@@ -31,18 +27,6 @@ function base64ToBytes(base64) {
     return bytes;
   }
   return new Uint8Array(Buffer.from(base64, "base64"));
-}
-
-// Encode bytes back into a base64 string in both the browser and Node.
-function bytesToBase64(bytes) {
-  if (typeof btoa === "function") {
-    let binary = "";
-    for (let i = 0; i < bytes.length; i += BASE64_CHUNK_SIZE) {
-      binary += String.fromCharCode.apply(null, bytes.subarray(i, i + BASE64_CHUNK_SIZE));
-    }
-    return btoa(binary);
-  }
-  return Buffer.from(bytes).toString("base64");
 }
 
 // K12: crypto.randomUUID with a fallback for a runtime that has no webcrypto

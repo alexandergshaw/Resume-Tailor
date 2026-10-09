@@ -70,6 +70,32 @@ export async function listTemplates(supabase, { userId, kind }) {
   }
 }
 
+/** One library template's docx bytes BY ID (N151c regenerate-into-template),
+ *  not just the active selection's. Owner-scoped: the row read is gated on id
+ *  AND user_id AND kind, so a foreign or kind-mismatched id resolves null
+ *  rather than another tenant's bytes. Never throws.
+ *  @returns {Promise<{ bytes: Uint8Array } | null>} */
+export async function getTemplateBytesById(supabase, { userId, id, kind }) {
+  if (!id || !userId || !VALID_KINDS.includes(kind)) return null;
+  try {
+    const { data: row } = await supabase
+      .from("resume_templates")
+      .select("storage_path")
+      .eq("id", id)
+      .eq("user_id", userId)
+      .eq("kind", kind)
+      .maybeSingle();
+    if (!row?.storage_path) return null;
+    const { data, error } = await supabase.storage.from(BUCKET).download(row.storage_path);
+    if (error || !data) return null;
+    const buffer = await data.arrayBuffer();
+    if (!buffer || buffer.byteLength === 0) return null;
+    return { bytes: new Uint8Array(buffer) };
+  } catch {
+    return null;
+  }
+}
+
 /** Upload the bytes to a fresh per-id path FIRST, then insert the named row --
  *  ordering is load-bearing: a row never names a path with no bytes behind
  *  it. A name collision (the unique (user_id,kind,lower(name)) index) is

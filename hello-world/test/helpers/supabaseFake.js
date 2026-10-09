@@ -635,8 +635,59 @@ export function makeStatefulSupabase(seed = {}, opts = {}) {
     return builder;
   }
 
+  // Storage objects live in a single mutable map seeded from opts.storage, so
+  // an upload is visible to a later download exactly as a real bucket round-
+  // trips. download KEEPS its prior contract (an Error entry resolves to
+  // { error }, an absent path is "not found"); upload/remove are ADDED (both
+  // absent before N151c) so saveGeneratedResume.js's
+  // `.upload(path, bytes)` then `.update({docx_path})` sequence can be driven
+  // end to end instead of silently swallowed by the missing method. An
+  // uploaded Uint8Array/ArrayBuffer is wrapped as a Blob-like with its own
+  // `arrayBuffer()`, the shape documentSelection/coverDocx download readers
+  // expect.
+  const storageObjects = new Map(Object.entries(opts.storage || {}));
+  function toDownloadable(body) {
+    if (body instanceof Uint8Array) {
+      const copy = body.slice();
+      return { arrayBuffer: async () => copy.buffer.slice(copy.byteOffset, copy.byteOffset + copy.byteLength), _bytes: copy };
+    }
+    if (body instanceof ArrayBuffer) {
+      return { arrayBuffer: async () => body.slice(0), _bytes: new Uint8Array(body) };
+    }
+    return body;
+  }
+  const storageApi = {
+    from: vi.fn((bucket) => ({
+      download: vi.fn(async (path) => {
+        if (storageObjects.has(path)) {
+          const entry = storageObjects.get(path);
+          if (entry instanceof Error) return { data: null, error: entry };
+          return { data: entry, error: null };
+        }
+        return { data: null, error: { message: "not found" } };
+      }),
+      upload: vi.fn(async (path, body /*, uploadOpts */) => {
+        calls.push({ table: null, verb: "storage.upload", bucket, path });
+        storageObjects.set(path, toDownloadable(body));
+        return { data: { path }, error: null };
+      }),
+      remove: vi.fn(async (paths) => {
+        for (const p of Array.isArray(paths) ? paths : [paths]) storageObjects.delete(p);
+        return { data: {}, error: null };
+      }),
+    })),
+  };
+
   return {
     from: vi.fn((table) => builderFor(table)),
+    // Read an uploaded/seeded object's bytes back for an assertion (null when
+    // absent). Lets an integration test decode the stored .docx a regen wrote.
+    storedBytes: async (path) => {
+      if (!storageObjects.has(path)) return null;
+      const entry = storageObjects.get(path);
+      if (entry instanceof Error || !entry || typeof entry.arrayBuffer !== "function") return null;
+      return new Uint8Array(await entry.arrayBuffer());
+    },
     // Read the store back. Returns clones: mutating them cannot corrupt state.
     rows: (table) => (store.get(table) || []).map(clone),
     row: (table, predicate) => (store.get(table) || []).map(clone).find(predicate) ?? null,
@@ -658,18 +709,6 @@ export function makeStatefulSupabase(seed = {}, opts = {}) {
           ? { data: null, error: null }
           : { data: { claims: opts.claims }, error: null }),
     },
-    storage: {
-      from: vi.fn(() => ({
-        download: vi.fn(async (path) => {
-          const bucket = opts.storage || {};
-          if (Object.prototype.hasOwnProperty.call(bucket, path)) {
-            const entry = bucket[path];
-            if (entry instanceof Error) return { data: null, error: entry };
-            return { data: entry, error: null };
-          }
-          return { data: null, error: { message: "not found" } };
-        }),
-      })),
-    },
+    storage: storageApi,
   };
 }

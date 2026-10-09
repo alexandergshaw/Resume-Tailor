@@ -8,9 +8,16 @@
 //    listLibraryTemplates, selectLibraryTemplate (activate an existing
 //    template) and deleteLibraryTemplate, over the same route.
 //
+//  - N151c, fetchLibraryTemplateFile: one saved template's bytes by id, as the
+//    docx File the regenerate-into-template control hands to the doc builder.
+//
 // Every failure mode (signed out, the network, a refusal, the substrate not
 // deployed -- BL-A) resolves to { ok: false, error } rather than throwing, so
 // a caller can show the message without a try/catch of its own.
+// (fetchLibraryTemplateFile alone resolves null instead: its caller has
+// nothing to show beyond "couldn't use that template".)
+
+import { DOCX_MIME } from "@/lib/drive/driveMime";
 
 const ROUTE = "/api/templates/library";
 
@@ -74,6 +81,28 @@ export async function listLibraryTemplates(kind) {
     templates: Array.isArray(out.body?.templates) ? out.body.templates : [],
     selectedId: out.body?.selectedId ?? null,
   };
+}
+
+/** One saved template's docx bytes as a File, or null when the id is not the
+ *  caller's, the fetch fails, or the response is not a docx. Only a response
+ *  that declares itself wordprocessingml is trusted: an unrelated 200 (an error
+ *  page, a JSON body) handed on as a template would rebuild onto garbage.
+ *  @returns {Promise<File | null>} */
+export async function fetchLibraryTemplateFile(kind, id) {
+  if (!id || (kind !== "resume" && kind !== "cover")) return null;
+  try {
+    const res = await fetch(
+      `${ROUTE}?kind=${encodeURIComponent(kind)}&id=${encodeURIComponent(id)}&bytes=1`,
+      { credentials: "include", signal: AbortSignal.timeout(15000) },
+    );
+    if (!res.ok) return null;
+    if (!(res.headers.get("content-type") || "").includes("wordprocessingml")) return null;
+    const buffer = await res.arrayBuffer();
+    if (!buffer || buffer.byteLength === 0) return null;
+    return new File([buffer], `${kind}-template.docx`, { type: DOCX_MIME });
+  } catch {
+    return null;
+  }
 }
 
 /** Make an EXISTING saved template the active one for `kind`.

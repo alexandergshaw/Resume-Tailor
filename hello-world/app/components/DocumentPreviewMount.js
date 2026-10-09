@@ -832,6 +832,8 @@ export default function DocumentPreviewMount({
       documentVersions={preview.documentVersions}
       currentVersionId={preview.currentVersionId}
       onSelectVersion={preview.selectDocumentVersion}
+      currentUser={currentUser}
+      onRegenerateIntoTemplate={preview.regenerateActiveIntoTemplate}
       drive={drive}
       onActiveScopeChange={setActiveScope}
     />

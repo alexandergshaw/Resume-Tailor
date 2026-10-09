@@ -9,7 +9,10 @@
 //   selectedId is the caller's EXPLICIT selection for the kind (the
 //   template_selections pointer), or null when there is none; the switcher
 //   panel reads it to show which template is active.
-// PUT    json {kind, templateId}     -> { ok: true } -- makes an EXISTING
+// GET    ?kind=&id=<id>&bytes=1      -> that OWNED template's .docx bytes (or
+//   404): the regenerate-into-template picker's read path for a library
+//   template that is not the active one (N151c). id + user_id + kind gated.
+// PUT   json {kind, templateId}     -> { ok: true } -- makes an EXISTING
 //   template the caller's selection. The template must be one the caller owns
 //   (id + user_id + kind): a foreign or stale id is refused with a 404 rather
 //   than stored, because a dangling pointer would resolve to no bytes and the
@@ -24,10 +27,12 @@
 // DELETE ?id=<template id>           -> { ok: true }
 
 import { createClient } from "@/lib/supabase/server";
+import { DOCX_MIME } from "@/lib/drive/driveMime";
 import {
   listTemplates,
   registerTemplate,
   deleteTemplate,
+  getTemplateBytesById,
 } from "@/lib/document/templateLibraryStore.js";
 import { getSelection, setSelection } from "@/lib/document/templateSelectionStore.js";
 
@@ -51,7 +56,20 @@ export async function GET(request) {
   const user = await requireUser(supabase);
   if (!user) return Response.json({ error: "Unauthorized" }, { status: 401 });
 
-  const kind = new URL(request.url).searchParams.get("kind");
+  const params = new URL(request.url).searchParams;
+  const kind = params.get("kind");
+
+  // N151c: one owned template's bytes by id. Handled BEFORE the metadata
+  // response (a branch after it would never be reached); userId is the
+  // session's, so a foreign id resolves 404 rather than another tenant's file.
+  if (params.get("bytes") === "1") {
+    const id = params.get("id");
+    if (!id || !VALID_KINDS.includes(kind)) return new Response(null, { status: 404 });
+    const found = await getTemplateBytesById(supabase, { userId: user.id, id, kind });
+    if (!found) return new Response(null, { status: 404 });
+    return new Response(found.bytes, { status: 200, headers: { "Content-Type": DOCX_MIME } });
+  }
+
   if (!VALID_KINDS.includes(kind)) {
     return Response.json({ error: `Unsupported template kind: ${kind}.` }, { status: 400 });
   }
