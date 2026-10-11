@@ -175,6 +175,12 @@ const BOUNDED = [
     windowMs: 600_000,
     why: "N60 second chunk -- one chat-derived configuration turn per ten minutes, matching interview-prep's human-paced bound above for the same reason: a single generation per user-triggered turn. app/api/feed-config/apply/route.js (the sibling write path) reaches no model and deliberately does NOT appear here.",
   },
+  {
+    route: "app/api/study-plan/route.js",
+    limit: 12,
+    windowMs: 600_000,
+    why: "N157 -- the study-plan generation route makes one non-grounded Gemini generateContent call per plan build, so it is module-scope rate-limited at 12 per ten minutes per user, matching interview-prep's cadence (build, look at the result, maybe retry once). It ships no spend ledger, so this limiter is its only bound",
+  },
   // N150 bounded app/api/copilot/answer/tech-term-detail/route.js here (40/10min);
   // N153 (owner ruling, 2026-10-08) removed that cap alongside /expand's for the
   // same reason (prefetch-on-render), so it is accounted DEFERRED below.

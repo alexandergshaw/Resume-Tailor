@@ -19,14 +19,14 @@ Current pinned values, as of the last entry in each section:
 | Assertion                                   | Pinned |
 | ------------------------------------------- | ------ |
 | `ALLOWED_UNREACHABLE_MODULES.length`        | 14     |
-| `UNWIRED_MODULES` (exact list of 11 files)  | 11     |
+| `UNWIRED_MODULES` (exact list of 7 files)   | 7      |
 | `ORPHAN_EXPORTS.length`                     | 65     |
-| `TEST_REFERENCED.length` (rule TR-1)        | 427    |
-| `UNUSED_IN_SHIPPING_MODULES.length`         | 492    |
+| `TEST_REFERENCED.length` (rule TR-1)        | 439    |
+| `UNUSED_IN_SHIPPING_MODULES.length`         | 504    |
 
 The identity that ties the last three together, and that the test asserts
 directly, is `UNUSED_IN_SHIPPING_MODULES = TEST_REFERENCED + ORPHANS`
-(427 + 65 = 492).
+(439 + 65 = 504).
 
 ---
 
@@ -58,7 +58,7 @@ pipeline. ONE entry added, none removed; same shape as predictionCorpus.js.
 
 ---
 
-## 2. UNWIRED_MODULES (pinned at 11, exact file list)
+## 2. UNWIRED_MODULES (pinned at 7, exact file list)
 
 Findings, not allow-listed: modules built and tested but not yet imported by
 anything that ships. Wiring one up (or removing it) fails the exact module
@@ -121,6 +121,19 @@ named (the store, the evidence module) now exist, but are themselves
 unwired, so those two remain unreachable until a surface wires the chain.
 The other four pinned counts did not move (14 / 65 / 427 / 492): these are
 whole-file entries, not symbol-bucket changes.
+
+11 -> 7 (N157 SC-gen): the first surface that calls the study-plan modules landed;
+the computed graph (not a predicted figure) moved four of the eleven out.
+app/api/study-plan/route.js imports studyPlanGenerate.js (new), which imports
+studyPlanPrompt.js (new), studyPlanEvidence.js, studyPlanSchema.js and
+studyPlanStore.js; the store imports studyPlanContract.js. FOUR removed, none
+added, by name: lib/studyPlan/studyPlanContract.js, studyPlanSchema.js,
+studyPlanStore.js, studyPlanEvidence.js. Two stay, because the route imports
+neither: studyPlanProgressStore.js (SC-C walkthrough) and ensureStudyDigest.js
+(SC-C's StudyPlanClient, SC-D refresh). Unlike the whole-file entries above, THIS
+change moves symbol buckets (exports are classified per symbol once a module is
+reachable): TR-1 427 -> 439 (section 4), total 492 -> 504 (section 5). ORPHAN
+unmoved (section 3); ALLOWED_UNREACHABLE_MODULES stays 14.
 ```
 
 ---
@@ -207,11 +220,16 @@ caption from it); none in.
 was deleted with the rest of the ideal-project / ready-example feature. ONE
 entry removed, none added; its entry in exportReachability.ledger.js went with
 it.
+65 -> 65 (N157 SC-gen): UNMOVED, measured with the sweep's own scan. None of the six
+newly classified study-plan modules exports an orphan: every export with no shipping
+importer is imported by a test and lands in TR-1 (section 4). Near miss:
+studyPlanGenerate.js#buildEmbeddedStudyPlan, called only in-module until
+studyPlanGenerate.embedded.test.js imported it; without it, the 66th entry here.
 ```
 
 ---
 
-## 4. TEST_REFERENCED, rule TR-1 (pinned at 427)
+## 4. TEST_REFERENCED, rule TR-1 (pinned at 439)
 
 Exports unused by shipping code that at least one `.test.js` imports BY NAME.
 A raise is a review event: check the new export is a helper being pinned, not
@@ -750,11 +768,35 @@ IN (+1), by name:
     so it is test-referenced, not an orphan. No feature was built-and-never-connected: the
     window governs behaviour the component already uses. ORPHAN_EXPORTS unmoved at 65;
     ALLOWED_UNREACHABLE_MODULES / UNWIRED_MODULES unmoved at 14 / 5.
+N157 SC-gen: 427 -> 439 (+12, -0): the generation route wires the study-plan modules into
+the shipping graph, so their exports are classified per symbol for the first time (a wholly
+unreachable module sits in no symbol bucket). Measured with the sweep's own scan over the
+post-change tree: the twelve names below are every lib/studyPlan/ entry in TEST_REFERENCED,
+and the count moved by exactly twelve, so no other module's exports moved.
+IN (+12), by name, each read only by its own module or a test, or awaiting a named consumer:
+  studyPlanContract.js#STUDY_PLAN_COLUMNS (the store reads the joined PROJECTION, not the list);
+  studyPlanEvidence.js#adaptDigestToEvidence and #evidenceCitations (called by gatherEvidence
+    and adaptDigestToEvidence in-module; studyPlanEvidence.test.js pins both);
+  studyPlanGenerate.js#parseGeneratedPlan and #buildEmbeddedStudyPlan (called by
+    generateStudyPlan in-module; studyPlanGenerate.test.js and
+    studyPlanGenerate.embedded.test.js pin them);
+  studyPlanSchema.js#DEFAULT_KNOBS and #STUDY_PLAN_VERSION (read by the schema's own
+    normalizers), #isPartialPlan and #unsourcedTopicIds (read helpers the SC-C render will
+    call), #buildProgressDelta (its only non-test importer is studyPlanProgressStore.js,
+    itself unwired, section 2);
+  studyPlanStore.js#readStudyPlan (the route writes a plan, it never reads one) and
+    #writeStudyPlanProgress (SC-C injects it into studyPlanProgressStore.js).
+Every other export of the six reachable modules has a shipping importer and is in neither
+bucket: STUDY_PLANS_TABLE, MERGE_STUDY_PLAN_PROGRESS_FN, STUDY_PLAN_PROJECTION,
+normalizeKnobs, normalizePlan, normalizeProgress, itemKey, isSingleItemSeenDelta,
+writeStudyPlan, gatherEvidence, STUDY_PLAN_SYSTEM, buildStudyPlanUserTurn,
+generateStudyPlan, and the route's POST (a Next.js entry). ORPHAN_EXPORTS unmoved at 65;
+ALLOWED_UNREACHABLE_MODULES / UNWIRED_MODULES at 14 / 7.
 ```
 
 ---
 
-## 5. UNUSED_IN_SHIPPING_MODULES total (pinned at 492)
+## 5. UNUSED_IN_SHIPPING_MODULES total (pinned at 504)
 
 The sum of the two halves above (`TEST_REFERENCED + ORPHANS`); the test also
 asserts that identity directly, so the split is pinned and not only the total.
@@ -948,4 +990,10 @@ SessionControls.js#CLEAR_CONFIRM_WINDOW_MS; ORPHAN_EXPORTS unmoved at 65). The t
 moving by exactly the TR-1 half's +1 with the orphan half frozen is what says this was a
 single widened export for its unit suite (the Clear-confirm window, used internally by the
 component) and not a feature built and never wired. TEST_REFERENCED 427 + ORPHANS 65.
+N157 SC-gen: 492 -> 504 (TEST_REFERENCED's +12, the twelve study-plan symbols named at
+section 4; ORPHAN_EXPORTS unmoved at 65, section 3). The total moving by exactly the TR-1
+half's +12 with the orphan half frozen says this was a widened export surface for unit
+suites and named later consumers, not a feature built and never wired. It moves now, not at
+the earlier study-plan sub-chunks, because those modules were wholly unreachable (section
+2) and such a module's exports are in neither half. TEST_REFERENCED 439 + ORPHANS 65.
 ```

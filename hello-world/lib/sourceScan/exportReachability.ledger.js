@@ -161,6 +161,20 @@ export const ALLOWED_UNREACHABLE_MODULES = [
 // they named (the store, the evidence module) now exist, but are themselves
 // unwired, so studyPlanContract.js and studyPlanSchema.js stay unreachable
 // until a surface wires the chain. Their findings are reworded to say so.
+//
+// 11 -> 7, N157 SC-gen. The first of those surfaces landed, and it wired four of
+// the six: app/api/study-plan/route.js imports lib/studyPlan/studyPlanGenerate.js
+// (new, reachable from birth), which imports studyPlanPrompt.js (new), the
+// evidence module, the schema and the store, and the store imports the
+// contract. So studyPlanContract.js, studyPlanSchema.js, studyPlanStore.js and
+// studyPlanEvidence.js became reachable and FOUR lines were deleted, none added.
+// Two stay: studyPlanProgressStore.js (a client record store, wired by the SC-C
+// walkthrough) and ensureStudyDigest.js (a client fetch wrapper, wired by SC-C's
+// StudyPlanClient and the SC-D refresh control); the route imports neither.
+// Unlike the earlier whole-file entries, THIS change moves symbol buckets too:
+// once a module is reachable its exports are classified per symbol, and twelve
+// study-plan exports landed in TEST_REFERENCED (427 -> 439). ORPHAN_EXPORTS did
+// not move. exportReachability.ledger.md sections 2-5 state each movement by name.
 export const UNWIRED_MODULES = [
   {
     file: "lib/interviewPrep/prepLog.js",
@@ -183,24 +197,8 @@ export const UNWIRED_MODULES = [
     finding: "the digest name screen (isWithheldDigestLine/withholdDigestLines), proven against digestRoleScreen.test.js including the 800-real-name superset property. Its shipping call sites -- DigestPanel.js's three presentation paths, applicationDigest.js's digestSummaryLine -- are N49's plan.r4.md section 8.4 step, not yet built",
   },
   {
-    file: "lib/studyPlan/studyPlanContract.js",
-    finding: "STUDY_PLANS_TABLE, MERGE_STUDY_PLAN_PROGRESS_FN and the frozen 12-column STUDY_PLAN_COLUMNS/STUDY_PLAN_PROJECTION, pinned by studyPlanContract.test.js against the study_plans migration's column list. Its call site -- studyPlanStore.js's .from(STUDY_PLANS_TABLE).select(STUDY_PLAN_PROJECTION) reads and its .rpc(MERGE_STUDY_PLAN_PROGRESS_FN) progress write -- is now BUILT (N157 SC-B-persist) but is itself unwired (see its own entry below), so this module stays unreachable from every entry point until SC-C or plan generation wires a surface that imports the store",
-  },
-  {
-    file: "lib/studyPlan/studyPlanSchema.js",
-    finding: "the plan/progress/knobs normalizers, DEFAULT_KNOBS, the content-derived itemKey and the single-entry progress-delta contract (buildProgressDelta/isSingleItemSeenDelta), proven against studyPlanSchema.test.js including the reorder/insert key-stability canary and the one-key delta canary. Its call sites -- studyPlanStore.js normalizing rows on read and write, and studyPlanProgressStore.js building and merging the one-card progress delta -- are now BUILT (N157 SC-B-persist) but are themselves unwired (see their own entries below), so this module stays unreachable from every entry point; the plan-generation module that will build a plan with it is a later sub-chunk, not yet built, and SC-C is what wires the stores to a surface",
-  },
-  {
-    file: "lib/studyPlan/studyPlanStore.js",
-    finding: "the study_plans data layer: readStudyPlan (a tenant-scoped .from(STUDY_PLANS_TABLE).select(STUDY_PLAN_PROJECTION) read that normalizes plan/knobs/progress and never throws), writeStudyPlan (the column-wise upsert, with progress deliberately not a writable column) and writeStudyPlanProgress (the only progress write path, .rpc(MERGE_STUDY_PLAN_PROGRESS_FN) with a fail-closed one-card check), pinned by studyPlanStore.test.js. Every function takes the caller's own supabase client, so a shipping call site must bind one: the plan-creation and rebuild orchestration (plan generation, a later N157 sub-chunk, plus StudyPlanClient.js in SC-C) calling readStudyPlan/writeStudyPlan, and the SC-C walkthrough binding writeStudyPlanProgress as the writer studyPlanProgressStore.js injects. None of those exists yet, so nothing imports this module but its test",
-  },
-  {
     file: "lib/studyPlan/studyPlanProgressStore.js",
-    finding: "the client-side study-plan record store (subscribe/getSnapshot for useSyncExternalStore, loadStudyPlanRecord, getStudyPlanRecord, recordProgress's read-modify-render of one card), bounded at STUDY_PLAN_RECORD_STORE_MAX records and pinned by studyPlanProgressStore.test.js. Its reader and writer are INJECTED (a bound readStudyPlan and a bound writeStudyPlanProgress), so the module is complete without them, but no surface yet supplies either: its shipping call site is the SC-C walkthrough UI (StudyPlanClient.js loading the record, StudyWalkthrough.js applying a reveal or grade), which is not yet built; nothing imports this module but its test",
-  },
-  {
-    file: "lib/studyPlan/studyPlanEvidence.js",
-    finding: "the research REUSE seam: evidenceCitations (safeExternalHref plus the grounding-redirect drop, deduped by url), adaptDigestToEvidence (the no-research / unsourced / complete three-way branch) and gatherEvidence (an injected readDigest, never rejects), proven against studyPlanEvidence.test.js. It issues no grounded call and does no IO of its own, so what consumes its EvidenceSet is the plan-generation sub-chunk (studyPlanGenerate.js, deps.readDigest bound to the application_digests read), which is not yet built; nothing imports this module but its test",
+    finding: "the client-side study-plan record store (subscribe/getSnapshot for useSyncExternalStore, loadStudyPlanRecord, getStudyPlanRecord, recordProgress's read-modify-render of one card), bounded at STUDY_PLAN_RECORD_STORE_MAX records and pinned by studyPlanProgressStore.test.js. Its reader and writer are INJECTED (a bound readStudyPlan and a bound writeStudyPlanProgress, both now shipping exports of the reachable studyPlanStore.js), so the module is complete without them, but no surface yet supplies either: its shipping call site is the SC-C walkthrough UI (StudyPlanClient.js loading the record, StudyWalkthrough.js applying a reveal or grade), which is not yet built; nothing imports this module but its test. The generation route (app/api/study-plan/route.js) deliberately does not import it: it is phase 2 of plan creation and touches no progress",
   },
   {
     file: "lib/studyPlan/ensureStudyDigest.js",
