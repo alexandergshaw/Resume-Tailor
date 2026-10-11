@@ -94,11 +94,11 @@
 //       before cutting. docx.js#buildDocxFromUploadedTemplate is the worked
 //       example of exactly that near-miss.
 //
-//   ALLOWED_UNREACHABLE_MODULES (14) / UNWIRED_MODULES (7)  whole files no
+//   ALLOWED_UNREACHABLE_MODULES (14) / UNWIRED_MODULES (11)  whole files no
 //       entry point can reach. The fourteen are sweep and test infrastructure
 //       (including this sweep's own ledger and scan modules -- see their
 //       self-entries there) and are justified one by one. The findings bucket
-//       holds seven modules whose production call sites are later, named steps
+//       holds eleven modules whose production call sites are later, named steps
 //       of the chunk that landed them; its earlier entries were reviewed and
 //       deleted or wired up -- see the block comment above UNWIRED_MODULES in
 //       ./exportReachability.ledger.js.
@@ -265,7 +265,7 @@ describe("every module is reachable from something that ships, or is on a ledger
     // These are NOT allow-listed. They are findings held in a named bucket so
     // that they cannot quietly become "just how it is". Wiring one up (or
     // removing it) fails the exact match above, which is the prompt to delete
-    // its line here. History ([] -> 2 -> 1 -> 5 -> 7): exportReachability.ledger.md, section 2.
+    // its line here. History ([] -> 2 -> 1 -> 5 -> 7 -> 11): exportReachability.ledger.md, section 2.
     expect(UNWIRED_MODULES.map((e) => e.file)).toEqual([
       "lib/interviewPrep/prepLog.js",
       "lib/interviewPrep/interviewProcessGrammar.js",
@@ -274,6 +274,10 @@ describe("every module is reachable from something that ships, or is on a ledger
       "lib/tracking/digestRoleScreen.js",
       "lib/studyPlan/studyPlanContract.js",
       "lib/studyPlan/studyPlanSchema.js",
+      "lib/studyPlan/studyPlanStore.js",
+      "lib/studyPlan/studyPlanProgressStore.js",
+      "lib/studyPlan/studyPlanEvidence.js",
+      "lib/studyPlan/ensureStudyDigest.js",
     ]);
     for (const entry of UNWIRED_MODULES) {
       expect(entry.finding.length, `${entry.file} is recorded as unwired with no description`).toBeGreaterThan(60);

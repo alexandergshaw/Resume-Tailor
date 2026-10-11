@@ -149,6 +149,18 @@ export const ALLOWED_UNREACHABLE_MODULES = [
 // and a test file is not a caller, so both are wholly unreachable. Each
 // finding names the module that will wire it; delete the line the day that
 // import lands.
+//
+// 7 -> 11, N157 SC-A + SC-B-persist. The same shape a third time, four more:
+// SC-A landed lib/studyPlan/studyPlanEvidence.js and ensureStudyDigest.js, and
+// SC-B-persist landed lib/studyPlan/studyPlanStore.js and
+// studyPlanProgressStore.js, each with its suite, ahead of the surfaces that
+// call them (the SC-C walkthrough shell, plan generation, the SC-D refresh
+// control). Their only importers are their own .test.js siblings, and a test
+// file is not a caller, so all four are wholly unreachable. This ALSO
+// changes what the two older study-plan findings above mean: the call sites
+// they named (the store, the evidence module) now exist, but are themselves
+// unwired, so studyPlanContract.js and studyPlanSchema.js stay unreachable
+// until a surface wires the chain. Their findings are reworded to say so.
 export const UNWIRED_MODULES = [
   {
     file: "lib/interviewPrep/prepLog.js",
@@ -172,11 +184,27 @@ export const UNWIRED_MODULES = [
   },
   {
     file: "lib/studyPlan/studyPlanContract.js",
-    finding: "STUDY_PLANS_TABLE, MERGE_STUDY_PLAN_PROGRESS_FN and the frozen 12-column STUDY_PLAN_COLUMNS/STUDY_PLAN_PROJECTION, pinned by studyPlanContract.test.js against the study_plans migration's column list. Its shipping call site -- studyPlanStore.js's .from(STUDY_PLANS_TABLE).select(STUDY_PLAN_PROJECTION) reads and its .rpc(MERGE_STUDY_PLAN_PROGRESS_FN) progress write -- is N157's SC-B-persist sub-chunk, not yet built",
+    finding: "STUDY_PLANS_TABLE, MERGE_STUDY_PLAN_PROGRESS_FN and the frozen 12-column STUDY_PLAN_COLUMNS/STUDY_PLAN_PROJECTION, pinned by studyPlanContract.test.js against the study_plans migration's column list. Its call site -- studyPlanStore.js's .from(STUDY_PLANS_TABLE).select(STUDY_PLAN_PROJECTION) reads and its .rpc(MERGE_STUDY_PLAN_PROGRESS_FN) progress write -- is now BUILT (N157 SC-B-persist) but is itself unwired (see its own entry below), so this module stays unreachable from every entry point until SC-C or plan generation wires a surface that imports the store",
   },
   {
     file: "lib/studyPlan/studyPlanSchema.js",
-    finding: "the plan/progress/knobs normalizers, DEFAULT_KNOBS, the content-derived itemKey and the single-entry progress-delta contract (buildProgressDelta/isSingleItemSeenDelta), proven against studyPlanSchema.test.js including the reorder/insert key-stability canary and the one-key delta canary. Its shipping call sites -- studyPlanStore.js reading and writing rows, studyPlanEvidence.js and the plan-generation module building a plan -- are later named sub-chunks of N157 (SC-B-persist, SC-A, generation), not yet built",
+    finding: "the plan/progress/knobs normalizers, DEFAULT_KNOBS, the content-derived itemKey and the single-entry progress-delta contract (buildProgressDelta/isSingleItemSeenDelta), proven against studyPlanSchema.test.js including the reorder/insert key-stability canary and the one-key delta canary. Its call sites -- studyPlanStore.js normalizing rows on read and write, and studyPlanProgressStore.js building and merging the one-card progress delta -- are now BUILT (N157 SC-B-persist) but are themselves unwired (see their own entries below), so this module stays unreachable from every entry point; the plan-generation module that will build a plan with it is a later sub-chunk, not yet built, and SC-C is what wires the stores to a surface",
+  },
+  {
+    file: "lib/studyPlan/studyPlanStore.js",
+    finding: "the study_plans data layer: readStudyPlan (a tenant-scoped .from(STUDY_PLANS_TABLE).select(STUDY_PLAN_PROJECTION) read that normalizes plan/knobs/progress and never throws), writeStudyPlan (the column-wise upsert, with progress deliberately not a writable column) and writeStudyPlanProgress (the only progress write path, .rpc(MERGE_STUDY_PLAN_PROGRESS_FN) with a fail-closed one-card check), pinned by studyPlanStore.test.js. Every function takes the caller's own supabase client, so a shipping call site must bind one: the plan-creation and rebuild orchestration (plan generation, a later N157 sub-chunk, plus StudyPlanClient.js in SC-C) calling readStudyPlan/writeStudyPlan, and the SC-C walkthrough binding writeStudyPlanProgress as the writer studyPlanProgressStore.js injects. None of those exists yet, so nothing imports this module but its test",
+  },
+  {
+    file: "lib/studyPlan/studyPlanProgressStore.js",
+    finding: "the client-side study-plan record store (subscribe/getSnapshot for useSyncExternalStore, loadStudyPlanRecord, getStudyPlanRecord, recordProgress's read-modify-render of one card), bounded at STUDY_PLAN_RECORD_STORE_MAX records and pinned by studyPlanProgressStore.test.js. Its reader and writer are INJECTED (a bound readStudyPlan and a bound writeStudyPlanProgress), so the module is complete without them, but no surface yet supplies either: its shipping call site is the SC-C walkthrough UI (StudyPlanClient.js loading the record, StudyWalkthrough.js applying a reveal or grade), which is not yet built; nothing imports this module but its test",
+  },
+  {
+    file: "lib/studyPlan/studyPlanEvidence.js",
+    finding: "the research REUSE seam: evidenceCitations (safeExternalHref plus the grounding-redirect drop, deduped by url), adaptDigestToEvidence (the no-research / unsourced / complete three-way branch) and gatherEvidence (an injected readDigest, never rejects), proven against studyPlanEvidence.test.js. It issues no grounded call and does no IO of its own, so what consumes its EvidenceSet is the plan-generation sub-chunk (studyPlanGenerate.js, deps.readDigest bound to the application_digests read), which is not yet built; nothing imports this module but its test",
+  },
+  {
+    file: "lib/studyPlan/ensureStudyDigest.js",
+    finding: "the browser-side wrapper over POST /api/application-digest: requestStudyDigest plus the two named entry points of the create-time ordering contract, ensureStudyDigest (force:false, reuse a ready digest) and refreshStudyDigest (force:true, the only call that spends a fresh grounded search), proven against ensureStudyDigest.wire.test.js's assertions of what goes on the wire. It is a relative-URL fetch, so its shipping callers are client components: StudyPlanClient.js's create path calling ensureStudyDigest (SC-C) and the SC-D 'Refresh research' control calling refreshStudyDigest, neither yet built; nothing imports this module but its test",
   },
 ];
 

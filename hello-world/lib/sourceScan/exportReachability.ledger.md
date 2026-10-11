@@ -19,7 +19,7 @@ Current pinned values, as of the last entry in each section:
 | Assertion                                   | Pinned |
 | ------------------------------------------- | ------ |
 | `ALLOWED_UNREACHABLE_MODULES.length`        | 14     |
-| `UNWIRED_MODULES` (exact list of 7 files)   | 7      |
+| `UNWIRED_MODULES` (exact list of 11 files)  | 11     |
 | `ORPHAN_EXPORTS.length`                     | 65     |
 | `TEST_REFERENCED.length` (rule TR-1)        | 427    |
 | `UNUSED_IN_SHIPPING_MODULES.length`         | 492    |
@@ -58,7 +58,7 @@ pipeline. ONE entry added, none removed; same shape as predictionCorpus.js.
 
 ---
 
-## 2. UNWIRED_MODULES (pinned at 7, exact file list)
+## 2. UNWIRED_MODULES (pinned at 11, exact file list)
 
 Findings, not allow-listed: modules built and tested but not yet imported by
 anything that ships. Wiring one up (or removing it) fails the exact module
@@ -108,6 +108,19 @@ module's exports are reported at module granularity, so these modules'
 exports reach neither ORPHAN_EXPORTS nor TEST_REFERENCED. Each finding
 names the module that will wire it; delete the line the day that import
 lands.
+
+7 -> 11 (N157 SC-A + SC-B-persist): the same shape a third time, four more.
+SC-A landed lib/studyPlan/studyPlanEvidence.js and
+lib/studyPlan/ensureStudyDigest.js; SC-B-persist landed
+lib/studyPlan/studyPlanStore.js and lib/studyPlan/studyPlanProgressStore.js,
+each with its suite, ahead of the surfaces that call them (the SC-C
+walkthrough shell, plan generation, the SC-D refresh control). FOUR entries
+added, none removed. The two older study-plan findings (studyPlanContract.js,
+studyPlanSchema.js) stay on the list but were reworded: the call sites they
+named (the store, the evidence module) now exist, but are themselves
+unwired, so those two remain unreachable until a surface wires the chain.
+The other four pinned counts did not move (14 / 65 / 427 / 492): these are
+whole-file entries, not symbol-bucket changes.
 ```
 
 ---
