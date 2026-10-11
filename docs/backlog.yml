@@ -1836,6 +1836,30 @@
   verify_proof: null
   blocked_by: []
 
+- id: "N157"
+  state: "actionable"
+  title: "**OWNER 2026-10-11 (BIG new feature — needs full design): a NEW TAB on the interview PRACTICE page = a STUDY-PLAN tool that (1) heavily RESEARCHES THE WEB for evidence of what this interview will be like (company/role/stage — grounded web research), (2) OUTLINES A PLAN from that evidence, (3) WALKS THE USER THROUGH the plan interactively, ChatGPT/Quizlet-style (step-by-step, spaced, interactive). CUSTOMIZABLE: remediation plans, ratio of NEW material to OLD (review), and other study-plan knobs. Substantial: web-research pipeline (reuse the app's grounded-search / Gemini grounding + the research ledger; mind the grounding-redirect trap in [[gemini-grounding-redirects]]), a plan model + persistence (per-user/per-application study plan), an interactive walkthrough UI (new practice tab), and the customization controls. Needs: design (AC + 1b architecture: research pipeline, plan schema/storage, walkthrough UX 1c, customization) -> check -> chunking (likely several sub-chunks) -> plan/TDD/implement. Content/research quality owner/Gemini-env. Mobile-optimized (owner standing directive).**"
+  owed_by: "Full design (AC/1b/1c) + chunking -> per-sub-chunk plan/TDD/implement -> gates; research+content quality owner/Gemini-env"
+  evidence: ["Owner 2026-10-11: new practice-page tab — web-research-backed study plan, interactive walkthrough (ChatGPT/Quizlet-like), customizable remediation + new/old ratio"]
+  blocked_reason: null
+  instrument: null
+  owns: null
+  verify: null
+  verify_proof: null
+  blocked_by: []
+
+- id: "N158"
+  state: "actionable"
+  title: "**N154 follow-up (low): the ideal-project bullet-detail outcome is logged on the LIVE copilot (CopilotClient logs projectExample.bulletDetail {status,code}) but NOT on PRACTICE (PracticeClient mounts ProjectBulletDetailScope without an onDetailOutcome callback) — feature-logs consistency gap. FIX: add the practice logging via usePracticeSessionLog (an onDetailOutcome logging {status,code} only, mirroring live), within the PracticeClient/usePracticeSessionLog line caps (PracticeClient was 957/1000). Not test-failing; the sites test passes without it.**"
+  owed_by: "Small: add practice onDetailOutcome logging mirroring live"
+  evidence: ["N154 impl 2026-10-11: practice scope mounted without onDetailOutcome; live logs it"]
+  blocked_reason: null
+  instrument: null
+  owns: null
+  verify: null
+  verify_proof: null
+  blocked_by: []
+
 # VERIFICATION (1)
 - id: "V1"
   state: "verification"
