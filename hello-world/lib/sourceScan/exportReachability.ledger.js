@@ -140,6 +140,15 @@ export const ALLOWED_UNREACHABLE_MODULES = [
 // call sites that would reach these four modules are later, named steps of
 // the SAME chunk (N49's own plan, sections 8.3-8.5), not yet built. Each
 // finding below names the specific call site.
+//
+// 5 -> 7, N157 SC-B. The same shape again, twice: the persistence-foundation
+// sub-chunk of N157 (the study plan) landed lib/studyPlan/studyPlanContract.js
+// and lib/studyPlan/studyPlanSchema.js, with their unit suites, ahead of the
+// later sub-chunks that import them (the store, the evidence module and plan
+// generation). Their only importers today are their own .test.js siblings,
+// and a test file is not a caller, so both are wholly unreachable. Each
+// finding names the module that will wire it; delete the line the day that
+// import lands.
 export const UNWIRED_MODULES = [
   {
     file: "lib/interviewPrep/prepLog.js",
@@ -160,6 +169,14 @@ export const UNWIRED_MODULES = [
   {
     file: "lib/tracking/digestRoleScreen.js",
     finding: "the digest name screen (isWithheldDigestLine/withholdDigestLines), proven against digestRoleScreen.test.js including the 800-real-name superset property. Its shipping call sites -- DigestPanel.js's three presentation paths, applicationDigest.js's digestSummaryLine -- are N49's plan.r4.md section 8.4 step, not yet built",
+  },
+  {
+    file: "lib/studyPlan/studyPlanContract.js",
+    finding: "STUDY_PLANS_TABLE, MERGE_STUDY_PLAN_PROGRESS_FN and the frozen 12-column STUDY_PLAN_COLUMNS/STUDY_PLAN_PROJECTION, pinned by studyPlanContract.test.js against the study_plans migration's column list. Its shipping call site -- studyPlanStore.js's .from(STUDY_PLANS_TABLE).select(STUDY_PLAN_PROJECTION) reads and its .rpc(MERGE_STUDY_PLAN_PROGRESS_FN) progress write -- is N157's SC-B-persist sub-chunk, not yet built",
+  },
+  {
+    file: "lib/studyPlan/studyPlanSchema.js",
+    finding: "the plan/progress/knobs normalizers, DEFAULT_KNOBS, the content-derived itemKey and the single-entry progress-delta contract (buildProgressDelta/isSingleItemSeenDelta), proven against studyPlanSchema.test.js including the reorder/insert key-stability canary and the one-key delta canary. Its shipping call sites -- studyPlanStore.js reading and writing rows, studyPlanEvidence.js and the plan-generation module building a plan -- are later named sub-chunks of N157 (SC-B-persist, SC-A, generation), not yet built",
   },
 ];
 

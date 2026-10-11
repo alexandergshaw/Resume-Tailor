@@ -19,7 +19,7 @@ Current pinned values, as of the last entry in each section:
 | Assertion                                   | Pinned |
 | ------------------------------------------- | ------ |
 | `ALLOWED_UNREACHABLE_MODULES.length`        | 14     |
-| `UNWIRED_MODULES` (exact list of 5 files)   | 5      |
+| `UNWIRED_MODULES` (exact list of 7 files)   | 7      |
 | `ORPHAN_EXPORTS.length`                     | 65     |
 | `TEST_REFERENCED.length` (rule TR-1)        | 427    |
 | `UNUSED_IN_SHIPPING_MODULES.length`         | 492    |
@@ -58,7 +58,7 @@ pipeline. ONE entry added, none removed; same shape as predictionCorpus.js.
 
 ---
 
-## 2. UNWIRED_MODULES (pinned at 5, exact file list)
+## 2. UNWIRED_MODULES (pinned at 7, exact file list)
 
 Findings, not allow-listed: modules built and tested but not yet imported by
 anything that ships. Wiring one up (or removing it) fails the exact module
@@ -92,6 +92,22 @@ interviewerRoles.test.js, plus the modules that satisfy them, ahead of
 this chunk's own later wiring steps (plan.r4.md sections 8.3-8.5) --
 see the ledger's own finding on each of the four for its named call
 site.
+
+5 -> 7 (N157 SC-B): the same shape, twice more. The study-plan chunk's
+persistence-foundation sub-chunk landed lib/studyPlan/studyPlanContract.js
+and lib/studyPlan/studyPlanSchema.js with their unit suites
+(studyPlanContract.test.js, studyPlanSchema.test.js) ahead of the later
+sub-chunks that import them -- the store (SC-B-persist), the evidence
+module (SC-A) and plan generation. Their only importers today are those
+test siblings, and a test file is not a caller, so both are wholly
+unreachable and belong here, not in ALLOWED_UNREACHABLE_MODULES (they are
+shipping code, not sweep or test infrastructure). TWO entries added, none
+removed. The other four pinned counts did not move: the migration .sql and
+the .test.js files never enter the JS graph, and a wholly unreachable
+module's exports are reported at module granularity, so these modules'
+exports reach neither ORPHAN_EXPORTS nor TEST_REFERENCED. Each finding
+names the module that will wire it; delete the line the day that import
+lands.
 ```
 
 ---
