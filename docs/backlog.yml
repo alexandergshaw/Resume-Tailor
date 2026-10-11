@@ -1860,6 +1860,30 @@
   verify_proof: null
   blocked_by: []
 
+- id: "N159"
+  state: "actionable"
+  title: "**Docs hygiene (low): lib/sourceScan/exportReachability.ledger.md is 1043 lines (>1000 standing-rule soft cap) after the N157 study-plan reconciles. FIX: extract the append-only movement history (sections 4 + 5) into a sibling file (e.g. exportReachability.ledger.history.md), leaving the current-values table + the live sections. No test enforces the cap, so this is hygiene, not a gate. Surfaced by the N157 C-a reconcile.**"
+  owed_by: "Small: extract ledger.md history to a sibling, keep current-values table"
+  evidence: ["N157 SC-C reconciles grew exportReachability.ledger.md past 1000 lines"]
+  blocked_reason: null
+  instrument: null
+  owns: null
+  verify: null
+  verify_proof: null
+  blocked_by: []
+
+- id: "N160"
+  state: "actionable"
+  title: "**N157 follow-ups (low): (1) wire the last-used-application restore in StudyPlanClient — the PostingPicker `initialId` prop exists + is tested but StudyPlanClient does not pass it (a persisted restore would auto-select across the landed copilot tests; design §5.4). Thread a persisted last-application id without perturbing those suites. (2) Clear the stale eslint warning: unused eslint-disable directive at app/api/copilot/answer/project-bullet-detail/route.test.js:172 (pre-existing from N154). Both low.**"
+  owed_by: "Small: pass a persisted initialId to StudyPlanClient's PostingPicker; remove the stale disable directive"
+  evidence: ["N157 SC-C C-c 2026-10-11: initialId tested but unpassed; eslint 1 warning in project-bullet-detail/route.test.js:172"]
+  blocked_reason: null
+  instrument: null
+  owns: null
+  verify: null
+  verify_proof: null
+  blocked_by: []
+
 # VERIFICATION (1)
 - id: "V1"
   state: "verification"

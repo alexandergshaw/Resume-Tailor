@@ -20,7 +20,9 @@
 //               this transport reads it; a bare second argument is discarded.
 //
 //   -> shape the model output (WITHOUT assigning any id) -> normalizePlan, which
-//   derives the content keys -> compute the status -> ALWAYS writeStudyPlan.
+//   derives the content keys -> compute the status -> writeStudyPlan, EXCEPT
+//   that an `unavailable` result is first checked against the stored row (see
+//   PRESERVE-LAST-GOOD below).
 //
 // IDS ARE NEVER ASSIGNED HERE. normalizePlan derives them from content
 // (itemKey et al.), so a rebuild that reorders cards leaves every surviving
@@ -39,10 +41,15 @@
 //   anything else (model reject, unparseable reply, no module, no evidence on
 //   the embedded path)                         -> "unavailable"
 //
-// A failed attempt still writes its row, with an empty-but-valid plan. That
-// replaces the plan column of an existing row, which is the specified behaviour;
-// the caller that wants to keep a previous plan across a failed rebuild has to
-// decide that before calling.
+// PRESERVE-LAST-GOOD (PD-1, design r2 section 4.3). A failed attempt writes its
+// row, with an empty-but-valid plan, ONLY when the stored row is positively
+// known to hold no good plan (no row, an `unavailable` row, or zero modules).
+// A good stored plan, or a stored row the injected `readExistingPlan` seam could
+// not confirm (a read error, a rejecting seam, an absent seam), is left alone:
+// the write is skipped and the result says so (`preserved`). The guard runs only
+// for a computed `unavailable`; a `ready` or `partial` result never reads and
+// always writes. A browser cannot make this decision, because by the time any
+// response arrives the row is already overwritten.
 
 import { gatherEvidence } from "./studyPlanEvidence.js";
 import { STUDY_PLAN_SYSTEM, buildStudyPlanUserTurn } from "./studyPlanPrompt.js";
@@ -315,14 +322,55 @@ async function produce({ engine, evidence, knobs, generateContent, model, compan
   return { plan, error: plan.modules.length > 0 ? null : NO_CARDS_ERROR };
 }
 
+// --- preserve-last-good guard --------------------------------------------------
+
+// A stored record (the shape readStudyPlan returns) that holds a plan worth
+// protecting: a clean read of a ready or partial row with at least one module.
+function hasGoodPlan(existing) {
+  return (
+    isObject(existing) &&
+    existing.error === null &&
+    (existing.status === "ready" || existing.status === "partial") &&
+    isObject(existing.plan) &&
+    Array.isArray(existing.plan.modules) &&
+    existing.plan.modules.length >= 1
+  );
+}
+
+// The stored record, or null when it cannot be had. readStudyPlan never throws,
+// but the seam is injected, so a rejection or an absent seam must not escape.
+async function readExisting(readExistingPlan, ids) {
+  if (typeof readExistingPlan !== "function") return null;
+  try {
+    return await readExistingPlan(ids);
+  } catch {
+    return null;
+  }
+}
+
+// Why an `unavailable` write must be withheld, or null when it may proceed.
+// PRESERVE ON UNCERTAINTY: the write proceeds only on a POSITIVE absence (a clean
+// read, `error === null`, that finds no good plan). A read error, a non-object
+// record and a missing seam all leave the stored row alone.
+function preserveReason(existing) {
+  if (hasGoodPlan(existing)) return "good-plan";
+  if (isObject(existing) && existing.error === null) return null;
+  return "unconfirmed";
+}
+
 /**
  * Builds and persists the study plan for one application.
  *
  * `engine` is already resolved by the route ("embedded" or anything else, which
- * is the model path). `generateContent` and `readDigest` are injected; `supabase`
- * goes straight to writeStudyPlan. The row is written on EVERY outcome.
+ * is the model path). `generateContent`, `readDigest` and `readExistingPlan`
+ * are injected; `readExistingPlan` is ({ applicationId, userId }) =>
+ * Promise<{ status, plan, error }>, the shape readStudyPlan returns. `supabase`
+ * goes straight to writeStudyPlan. The row is written on every outcome EXCEPT a computed
+ * `unavailable` over a stored plan that is good or unconfirmed (see
+ * PRESERVE-LAST-GOOD above), which returns `written: false, preserved: true`.
+ * Every other result carries `preserved: false`.
  *
- * @returns {Promise<{ status: string, plan: object, evidence: object, written: boolean, error: string | null }>}
+ * @returns {Promise<{ status: string, plan: object, evidence: object, written: boolean, preserved: boolean, preservedReason?: "good-plan" | "unconfirmed", error: string | null }>}
  */
 export async function generateStudyPlan(args) {
   const a = isObject(args) ? args : {};
@@ -351,6 +399,16 @@ export async function generateStudyPlan(args) {
   const plan = made.plan ?? assemblePlan({ engine, evidence, modules: [] });
   const status = statusFor({ engine, evidence, plan });
 
+  // Only an `unavailable` result can destroy a good plan, so only it consults
+  // the stored row; a successful rebuild pays no extra read.
+  if (status === "unavailable") {
+    const existing = await readExisting(a.readExistingPlan, { applicationId: a.applicationId, userId: a.userId });
+    const preservedReason = preserveReason(existing);
+    if (preservedReason !== null) {
+      return { status, plan, evidence, written: false, preserved: true, preservedReason, error: made.error };
+    }
+  }
+
   const write = await writeStudyPlan(a.supabase, {
     applicationId: a.applicationId,
     userId: a.userId,
@@ -368,6 +426,7 @@ export async function generateStudyPlan(args) {
     plan,
     evidence,
     written: write.written === true,
+    preserved: false,
     error: write.written === true ? made.error : write.error || made.error,
   };
 }

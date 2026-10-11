@@ -1,9 +1,10 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Autocomplete from "@mui/material/Autocomplete";
 import TextField from "@mui/material/TextField";
 import { fetchPracticePostings } from "@/lib/copilot/postings";
+import { STUDY_COPY } from "@/lib/studyPlan/studyPlanCopy";
 import { TOUCH_FIELD_SX, TOUCH_ICON_SX } from "@/app/theme/mobileSx";
 
 const DEFAULT_LABEL = "Practice for";
@@ -31,16 +32,28 @@ function lowerFirst(text) {
 // `blankHint` let each mode word the field for what leaving it blank
 // actually means there. Both default to exactly today's strings, so
 // practice mode's rendering stays byte-identical.
+//
+// N157 SC-C: two more OPTIONAL props, with the same byte-identical defaults,
+// for the study-plan view, where a posting is not optional.
+//   `required`  marks the field required and, for an account with no tracked
+//               postings, replaces the "You can also ..." tail (false advice
+//               when there is no blank alternative) with the one pinned message.
+//   `initialId` restores a previously chosen posting: once, after the options
+//               have loaded, `onChange` fires with the option whose id matches.
+//               No match means no call, and an already-chosen value is kept.
 export default function PostingPicker({
   value,
   onChange,
   disabled,
   label = DEFAULT_LABEL,
   blankHint = DEFAULT_BLANK_HINT,
+  required = false,
+  initialId = null,
 }) {
   const [options, setOptions] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const restoredRef = useRef(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -59,14 +72,24 @@ export default function PostingPicker({
     };
   }, []);
 
+  useEffect(() => {
+    if (restoredRef.current || loading || !initialId) return;
+    restoredRef.current = true;
+    const match = options.find((option) => option.id === initialId);
+    if (match && !value) onChange(match);
+  }, [loading, options, initialId, value, onChange]);
+
   let helperText = "";
   if (error) {
     helperText = error;
   } else if (!value) {
-    helperText =
-      !loading && options.length === 0
-        ? `No tracked postings yet — add one from the Tracking tab. You can also ${lowerFirst(blankHint)}`
-        : blankHint;
+    if (!loading && options.length === 0) {
+      helperText = required
+        ? STUDY_COPY.picker.emptyAccount
+        : `No tracked postings yet — add one from the Tracking tab. You can also ${lowerFirst(blankHint)}`;
+    } else {
+      helperText = blankHint;
+    }
   }
 
   // A load failure is not the same fact as "you have no tracked postings" —
@@ -96,6 +119,7 @@ export default function PostingPicker({
           {...params}
           size="small"
           label={label}
+          required={required}
           placeholder="Search your postings…"
           helperText={helperText}
           error={!!error}

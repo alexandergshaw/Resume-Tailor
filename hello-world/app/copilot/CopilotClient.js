@@ -29,7 +29,7 @@ import LiveRail from "./LiveRail";
 import CopilotDashboard from "./dashboard/CopilotDashboard";
 import StickyQuestionStrip from "./dashboard/StickyQuestionStrip";
 import AskAiBox from "./dashboard/AskAiBox";
-import PracticeClient from "./practice/PracticeClient";
+import PracticeSurface from "./practice/PracticeSurface";
 import RoleDrillClient from "./roles/RoleDrillClient";
 import ModeSwitch from "./ModeSwitch";
 import { usePrepContext } from "./usePrepContext";
@@ -630,7 +630,7 @@ export default function CopilotClient() {
           onMicDeviceChange={onMicDeviceChange}
         />
       ) : mode === "practice" ? (
-        <PracticeClient
+        <PracticeSurface
           sttProviderName={sttProviderName}
           micDeviceId={micDeviceId}
           onMicDeviceChange={onMicDeviceChange}

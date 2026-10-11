@@ -199,6 +199,65 @@ describe("POST /api/study-plan -- identity off the wire + phase-2-only (S9 / R5)
   });
 });
 
+describe("POST /api/study-plan -- C-0 preserve-last-good route delta (O9/O10, DES-N157-C22)", () => {
+  // The route amends SC-gen for PD-1: it must (a) pass the injected
+  // readExistingPlan seam to generateStudyPlan, and (b) check `result.preserved`
+  // BEFORE `!result.written`. A preserved outcome is a DELIBERATE withheld write,
+  // not a save failure -- so it is a 200, never the 500 "Could not save the
+  // study plan.", and it must NOT console.error (a 500 here would turn the
+  // protective outcome into a retry-storm signal). A not-preserved written:false
+  // keeps today's 500 + console.error unchanged (O10, the green control).
+  //
+  // RED ON HEAD: the route does not pass readExistingPlan (seam test reds) and
+  // routes every written:false to 500 + console.error (O9 reds on 200 / no
+  // console.error / the preserved body). O10 is GREEN on HEAD and on the C-0
+  // build -- it pins that the new branch does not steal the genuine 500 path;
+  // it is the control against a mutant that treats all written:false as
+  // preserved. Mutant M4 (500 / console.error for a preserved result) reds O9.
+
+  it("passes the injected readExistingPlan seam to generateStudyPlan (DES-N157-C22)", async () => {
+    await POST(request({ applicationId: APP_ID }));
+    const arg = generateStudyPlan.mock.calls[0][0];
+    expect(typeof arg.readExistingPlan).toBe("function"); // RED on HEAD: not passed today
+  });
+
+  it("O9: a PRESERVED result -> 200 { preserved:true, preservedReason }, NO console.error, never 500", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    generateStudyPlan.mockResolvedValue({
+      status: "unavailable",
+      written: false,
+      preserved: true,
+      preservedReason: "good-plan",
+      evidence: { reason: null },
+      error: "the model returned no plan",
+    });
+    const res = await POST(request({ applicationId: APP_ID }));
+    expect(res.status).toBe(200); // RED on HEAD: a written:false becomes a 500
+    const body = await res.json();
+    expect(body).toMatchObject({
+      status: "unavailable",
+      partial: false,
+      preserved: true,
+      preservedReason: "good-plan",
+    });
+    expect(errorSpy).not.toHaveBeenCalled(); // RED on HEAD: HEAD console.errors the persist "failure"
+  });
+
+  it("O10 (green control): a NOT-preserved written:false keeps the 500 + console.error", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    generateStudyPlan.mockResolvedValue({
+      status: "unavailable",
+      written: false,
+      preserved: false,
+      evidence: { reason: null },
+      error: "boom",
+    });
+    const res = await POST(request({ applicationId: APP_ID }));
+    expect(res.status).toBe(500);
+    expect(errorSpy).toHaveBeenCalled();
+  });
+});
+
 describe("the study-plan spend ceiling actually bites (module-scope limiter)", () => {
   it("eventually denies a single caller with 429, and a denied request does not reach generate", async () => {
     // A per-handler limiter gets a fresh store on every request and NEVER

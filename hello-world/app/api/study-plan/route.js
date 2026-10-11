@@ -37,6 +37,7 @@ import { createRateLimiter, identify, rateLimitHeaders } from "@/lib/rateLimit/i
 import { listDigests } from "@/lib/supabase/applicationDigests";
 import { postingFingerprint } from "@/lib/copilot/glossaryStore";
 import { generateStudyPlan } from "@/lib/studyPlan/studyPlanGenerate";
+import { readStudyPlan } from "@/lib/studyPlan/studyPlanStore";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -147,6 +148,11 @@ export async function POST(request) {
   const result = await generateStudyPlan({
     supabase,
     readDigest,
+    // The preserve-last-good guard's read seam (studyPlanGenerate.js). Passed
+    // explicitly: an omitted seam is treated as unconfirmed and withholds the
+    // write of an `unavailable` result, so a route that forgot it would never
+    // persist a first failure.
+    readExistingPlan: (args) => readStudyPlan(supabase, args),
     generateContent,
     model,
     engine,
@@ -158,6 +164,27 @@ export async function POST(request) {
     knobs: body?.knobs,
   });
 
+  // A preserved result is a DELIBERATELY withheld write (a good or unconfirmed
+  // stored plan was left alone), not a save failure, so it is checked BEFORE
+  // `!written`: a 500 here would turn the protective outcome into a retry
+  // signal. A not-preserved `written: false` is a genuine failure and keeps the
+  // 500 + console.error below.
+  if (result.preserved) {
+    console.warn("study-plan: generation unavailable", {
+      applicationId,
+      engine,
+      preservedReason: result.preservedReason,
+      error: result.error,
+    });
+    return Response.json({
+      status: "unavailable",
+      partial: false,
+      preserved: true,
+      preservedReason: result.preservedReason,
+      reason: result.evidence?.reason ?? null,
+      error: UNAVAILABLE_MESSAGE,
+    });
+  }
   if (!result.written) {
     console.error("study-plan: persist failed", { applicationId, status: result.status, error: result.error });
     return Response.json({ error: "Could not save the study plan." }, { status: 500 });

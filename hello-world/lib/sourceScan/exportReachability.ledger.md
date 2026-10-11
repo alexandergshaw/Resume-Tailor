@@ -19,14 +19,14 @@ Current pinned values, as of the last entry in each section:
 | Assertion                                   | Pinned |
 | ------------------------------------------- | ------ |
 | `ALLOWED_UNREACHABLE_MODULES.length`        | 14     |
-| `UNWIRED_MODULES` (exact list of 7 files)   | 7      |
+| `UNWIRED_MODULES` (exact list of 5 files)   | 5      |
 | `ORPHAN_EXPORTS.length`                     | 65     |
-| `TEST_REFERENCED.length` (rule TR-1)        | 439    |
-| `UNUSED_IN_SHIPPING_MODULES.length`         | 504    |
+| `TEST_REFERENCED.length` (rule TR-1)        | 441    |
+| `UNUSED_IN_SHIPPING_MODULES.length`         | 506    |
 
 The identity that ties the last three together, and that the test asserts
 directly, is `UNUSED_IN_SHIPPING_MODULES = TEST_REFERENCED + ORPHANS`
-(439 + 65 = 504).
+(441 + 65 = 506).
 
 ---
 
@@ -58,7 +58,7 @@ pipeline. ONE entry added, none removed; same shape as predictionCorpus.js.
 
 ---
 
-## 2. UNWIRED_MODULES (pinned at 7, exact file list)
+## 2. UNWIRED_MODULES (pinned at 5, exact file list)
 
 Findings, not allow-listed: modules built and tested but not yet imported by
 anything that ships. Wiring one up (or removing it) fails the exact module
@@ -134,6 +134,51 @@ neither: studyPlanProgressStore.js (SC-C walkthrough) and ensureStudyDigest.js
 change moves symbol buckets (exports are classified per symbol once a module is
 reachable): TR-1 427 -> 439 (section 4), total 492 -> 504 (section 5). ORPHAN
 unmoved (section 3); ALLOWED_UNREACHABLE_MODULES stays 14.
+
+7 -> 9 (N157 SC-C C-a): the same shape a fourth time, two more. The walkthrough
+sub-chunk's first step landed two pure modules with their suites ahead of the
+UI that imports them: lib/studyPlan/studyWalkthroughModel.js (GRADE, flattenPlan,
+isDone, nextCard, summarize, planSignature; wired by the C-b walkthrough UI) and
+lib/studyPlan/studyPlanCopy.js (the frozen STUDY_COPY strings; rendered by C-b and
+C-c). Their only importers today are studyWalkthroughModel.test.js and
+studyPlanCopy.test.js, and a test file is not a caller, so both are wholly
+unreachable (measured: the computed unreachable set went 21 -> 23, which is
+ALLOWED 14 + UNWIRED 9). TWO entries added, none removed, appended in that order.
+Neither module moves a symbol bucket: a wholly unreachable module's exports are
+reported at module granularity (the same reason as the 5 -> 7 and 7 -> 11 entries
+above), and the one symbol that did leave TR-1 in this tree was NOT caused by
+either of them -- see section 4. ORPHAN_EXPORTS unmoved at 65;
+ALLOWED_UNREACHABLE_MODULES stays 14.
+
+9 -> 5 (N157 SC-C C-c): the surface those four entries were waiting for landed, and
+the computed graph (not a predicted figure) moved all four out. CopilotClient.js now
+renders practice/PracticeSurface.js where it rendered PracticeClient; in its "Study
+plan" sub-view PracticeSurface.js mounts study/StudyPlanClient.js, which imports
+(directly, or through study/StudyWalkthrough.js, useStudyPlanRecord.js,
+useStudyPlanBuild.js, StudyCreatePanel.js and the C-b components) every study-plan lib
+module. FOUR removed, none added, by name: lib/studyPlan/studyPlanProgressStore.js
+(StudyPlanClient's record and StudyWalkthrough's recordProgress), ensureStudyDigest.js
+(StudyPlanClient's create path), studyWalkthroughModel.js (StudyWalkthrough,
+useStudyPlanRecord) and studyPlanCopy.js (rendered everywhere, and by PostingPicker.js).
+Measured by running the sweep's own scan twice over the same tree: as it stands, and
+with the one mount edit reverted in memory (CopilotClient.js importing PracticeClient
+again, PostingPicker.js not importing the copy registry). The reverted run reproduces
+the OLD TR-1 pin exactly (438), which is what makes its diff against the new tree
+trustworthy; its unreachable set is 37 against 19 now. Eighteen modules differ, and only
+four of them were ever on this list: the four above. The other fourteen were never
+entered here because they became reachable from birth in this change: the ten app/copilot
+modules (practice/PracticeSurface.js, and under study/ StudyPlanClient.js,
+StudyCreatePanel.js, useStudyPlanRecord.js, useStudyPlanBuild.js, StudyWalkthrough.js,
+useStudyWalkthrough.js, StudyPlanOverview.js, StudyEvidenceCitation.js,
+StudyProvenanceBanner.js) and the four new lib modules (studyPlanBuild.js,
+studyPlanBrowser.js, studyPlanBuildClient.js, studyPlanNotices.js). Five of those ten,
+the C-b components, were landed ahead of the mount with no line here, so the exact module
+match was red for exactly them (28 computed unreachable against 23 ledgered) between C-b
+and this change; it is green now (19 = ALLOWED 14 + UNWIRED 5). That 28 is the 37 less
+the nine files this change created, not a separate run. This change moves symbol buckets
+as well: TR-1 438 -> 441 (section 4), total 503 -> 506 (section 5). ORPHAN_EXPORTS
+unmoved (section 3); ALLOWED_UNREACHABLE_MODULES stays 14. The five that remain are the
+N49 modules, each awaiting its own wiring step.
 ```
 
 ---
@@ -229,7 +274,7 @@ studyPlanGenerate.embedded.test.js imported it; without it, the 66th entry here.
 
 ---
 
-## 4. TEST_REFERENCED, rule TR-1 (pinned at 439)
+## 4. TEST_REFERENCED, rule TR-1 (pinned at 441)
 
 Exports unused by shipping code that at least one `.test.js` imports BY NAME.
 A raise is a review event: check the new export is a helper being pinned, not
@@ -792,11 +837,73 @@ normalizeKnobs, normalizePlan, normalizeProgress, itemKey, isSingleItemSeenDelta
 writeStudyPlan, gatherEvidence, STUDY_PLAN_SYSTEM, buildStudyPlanUserTurn,
 generateStudyPlan, and the route's POST (a Next.js entry). ORPHAN_EXPORTS unmoved at 65;
 ALLOWED_UNREACHABLE_MODULES / UNWIRED_MODULES at 14 / 7.
+N157 SC-C C-a: 439 -> 438 (+0, -1): the study-plan route gained the read seam for the
+preserve-last-good guard. OUT (-1), by name, measured by running the sweep's own
+classification twice over the same tree -- once as it stands, once with the two modified
+files app/api/study-plan/route.js and lib/studyPlan/studyPlanGenerate.js (and their suites)
+reverted to HEAD and the two new modules dropped -- and diffing the TR-1 key sets:
+  lib/studyPlan/studyPlanStore.js#readStudyPlan -- recorded above as "the route writes a
+    plan, it never reads one". app/api/study-plan/route.js now imports it at module scope and
+    passes it as `readExistingPlan: (args) => readStudyPlan(supabase, args)`, the seam
+    studyPlanGenerate.js uses to decide whether a stored plan is worth preserving. A
+    shipping module (the route is reachable: it is a Next.js entry) asks for the name, so it
+    leaves both buckets. The symmetric difference against HEAD is exactly this one key:
+    nothing entered, and ORPHAN_EXPORTS is identical set-for-set.
+NOT the cause, by the same measurement: studyWalkthroughModel.js imports
+studyPlanSchema.js#itemKey, but (a) the scan credits only imports made by SHIPPING modules
+(exportGraph.js, the `for (const rel of shipping)` pass), and studyWalkthroughModel.js is
+unreachable (section 2); and (b) itemKey already had a shipping importer
+(studyPlanGenerate.js) and was never in TR-1. Dropping the two new modules alone leaves the
+TR-1 key set unchanged (438 either way). studyPlanStore.js#writeStudyPlanProgress stays in TR-1 (SC-C still injects
+it into studyPlanProgressStore.js, unwired). ORPHAN_EXPORTS unmoved at 65;
+ALLOWED_UNREACHABLE_MODULES / UNWIRED_MODULES at 14 / 9.
+N157 SC-C C-c: 438 -> 441 (+7, -4): the practice mount wires the whole study-plan chain
+(section 2), so the exports of every now-reachable module are classified per symbol for
+the first time. Measured with the sweep's own scan, run over the tree as it stands and over
+the same tree with the mount edit reverted in memory (that run reproduces 438 exactly); the
+symmetric difference of the two TR-1 key sets is the eleven names below, and ORPHAN_EXPORTS
+is identical set-for-set.
+IN (+7), by name, each read only by its own module or a test:
+  app/copilot/study/StudyEvidenceCitation.js#MAX_INLINE_SOURCES -- the inline-source cap,
+    used by that module's own slice; pinned by StudyWalkthrough.citation.test.js;
+  app/copilot/study/StudyPlanOverview.js#REBUILD_CONFIRM_WINDOW_MS -- the armed-rebuild
+    window, used by the component's own timer; imported by StudyPlanOverview.test.js;
+  app/copilot/study/useStudyWalkthrough.js#STUDY_ADVANCE_GUARD_MS -- the post-advance
+    inert window, used by the hook's own timer; imported by StudyWalkthrough.advanceGuard
+    .test.js and useStudyWalkthrough.navigation.test.js;
+  lib/studyPlan/ensureStudyDigest.js#requestStudyDigest -- the one POST that
+    ensureStudyDigest and refreshStudyDigest wrap (the shell calls those two); pinned by
+    ensureStudyDigest.wire.test.js;
+  lib/studyPlan/studyPlanBuild.js#resetStudyPlanBuildStore -- the test-only store reset,
+    imported by studyPlanBuild.test.js and the StudyPlanClient suites;
+  lib/studyPlan/studyPlanProgressStore.js#STUDY_PLAN_RECORD_STORE_MAX (the LRU bound,
+    pinned by studyPlanProgressStore.test.js) and #resetStudyPlanProgressStore (the
+    test-only reset, imported by that suite and the StudyPlanClient suites).
+OUT (-4), by name, each gaining its first shipping importer now that the importer is
+reachable:
+  lib/studyPlan/studyPlanSchema.js#buildProgressDelta -- studyPlanProgressStore.js
+    (recordProgress builds its one-card delta with it); section 4's SC-gen entry had
+    recorded it as "its only non-test importer is studyPlanProgressStore.js, itself
+    unwired";
+  lib/studyPlan/studyPlanSchema.js#isPartialPlan -- study/StudyProvenanceBanner.js;
+  lib/studyPlan/studyPlanSchema.js#unsourcedTopicIds -- study/StudyPlanOverview.js (the
+    "Unsourced" chip per topic); both recorded at SC-gen as "read helpers the SC-C render
+    will call";
+  lib/studyPlan/studyPlanStore.js#writeStudyPlanProgress -- lib/studyPlan/studyPlanBrowser.js
+    (the writer bound for recordProgress), recorded at SC-gen as "SC-C injects it into
+    studyPlanProgressStore.js".
+NOT in either list, because they have shipping importers from birth: the new modules'
+other exports (studyPlanBuild.js#BUILD_INTENTS, #run, #skipsResearch, #subscribe,
+#getSnapshot, #getBuildState; studyPlanBrowser.js#bindStudyPlan;
+studyPlanBuildClient.js#requestStudyPlanBuild; studyPlanNotices.js#buildStudyPlanNotice,
+#fillStudyCopy; studyWalkthroughModel.js and studyPlanCopy.js, every export). BUILD_INTENTS
+is an object whose members StudyPlanClient.js names, which is what keeps it out of this list.
+ORPHAN_EXPORTS unmoved at 65; ALLOWED_UNREACHABLE_MODULES / UNWIRED_MODULES at 14 / 5.
 ```
 
 ---
 
-## 5. UNUSED_IN_SHIPPING_MODULES total (pinned at 504)
+## 5. UNUSED_IN_SHIPPING_MODULES total (pinned at 506)
 
 The sum of the two halves above (`TEST_REFERENCED + ORPHANS`); the test also
 asserts that identity directly, so the split is pinned and not only the total.
@@ -996,4 +1103,24 @@ half's +12 with the orphan half frozen says this was a widened export surface fo
 suites and named later consumers, not a feature built and never wired. It moves now, not at
 the earlier study-plan sub-chunks, because those modules were wholly unreachable (section
 2) and such a module's exports are in neither half. TEST_REFERENCED 439 + ORPHANS 65.
+N157 SC-C C-a: 504 -> 503 (TEST_REFERENCED's -1, named at section 4:
+studyPlanStore.js#readStudyPlan, which gained a shipping importer when
+app/api/study-plan/route.js began passing it as the preserve-last-good guard's read seam;
+ORPHAN_EXPORTS unmoved at 65, section 3). The total moving by exactly the TR-1 half's -1
+with the orphan half frozen is what says a widened surface got its promised consumer
+(section 4 had recorded it as "the route writes a plan, it never reads one"), nothing was
+lost. The two new unwired modules (studyWalkthroughModel.js, studyPlanCopy.js, section 2)
+contribute NOTHING to either half: they are wholly unreachable, so their exports are in
+neither. TEST_REFERENCED 438 + ORPHANS 65.
+N157 SC-C C-c: 503 -> 506 (TEST_REFERENCED's +7 -4 = +3, the eleven symbols named at
+section 4: IN MAX_INLINE_SOURCES, REBUILD_CONFIRM_WINDOW_MS, STUDY_ADVANCE_GUARD_MS,
+requestStudyDigest, resetStudyPlanBuildStore, STUDY_PLAN_RECORD_STORE_MAX and
+resetStudyPlanProgressStore; OUT buildProgressDelta, isPartialPlan, unsourcedTopicIds and
+writeStudyPlanProgress, each gaining its first shipping importer; ORPHAN_EXPORTS unmoved
+at 65, section 3, identical set-for-set). The total moving by exactly the TR-1 half's net
++3 with the orphan half frozen is what says this was widened export surface for unit
+suites (the timing constants, the test-only resets, the wrapped POST) plus four widened
+helpers that got their promised consumers, and not a feature built and never wired. It
+moves now because the four study-plan modules on section 2's list became reachable, and a
+wholly unreachable module's exports are in neither half. TEST_REFERENCED 441 + ORPHANS 65.
 ```

@@ -94,7 +94,7 @@ const ITEM_B = { text: "Describe Acme's cold-storage depots", topicHint: "compan
 const ITEM_C = { text: "Kubernetes pod scheduling", topicHint: "infra", kind: "new" };
 
 function baseArgs(over = {}) {
-  return {
+  const args = {
     applicationId: APP_ID,
     userId: USER_ID,
     company: COMPANY,
@@ -104,6 +104,20 @@ function baseArgs(over = {}) {
     model: "gemini-2.5-flash",
     ...over,
   };
+  // C-0 (PD-1 / ledger DES-N157-C10, authorized data-only addition). The route
+  // now hands generateStudyPlan an injected `readExistingPlan` seam, and the
+  // preserve-on-uncertainty guard treats an ABSENT seam as UNCONFIRMED and skips
+  // the write. The landed fresh-store `unavailable` cases must therefore confirm
+  // POSITIVE absence to keep writing, so -- unless a case supplies its own seam
+  // (the `in` check lets the C-0 oracle inject an error/rejecting/undefined one)
+  // -- mirror the route and bind it to the SAME in-memory double's readStudyPlan.
+  // DATA ONLY: on HEAD generateStudyPlan ignores this arg and nothing changes;
+  // on the C-0 build it is what lets a fresh store still persist its row.
+  if (!("readExistingPlan" in args) && args.supabase) {
+    const client = args.supabase;
+    args.readExistingPlan = ({ applicationId, userId }) => readStudyPlan(client, { applicationId, userId });
+  }
+  return args;
 }
 
 let sb;
@@ -317,5 +331,257 @@ describe("persistence is non-decorative -- the REMOVAL ac (S11 / ARCH-N157-16)",
     const other = await readStudyPlan(sb.client, { applicationId: APP_ID, userId: "someone-else" });
     expect(other.status).toBe(null);
     expect(other.plan).toBe(null);
+  });
+});
+
+// ===========================================================================
+// C-0: the SERVER preserve-last-good guard (PD-1, design r2 section 4.3).
+//
+// This AMENDS a specified SC-gen behaviour: generateStudyPlan today ALWAYS
+// writes, even an empty `unavailable` plan over a good one (the file header's
+// "A failed attempt still writes its row"). The guard makes a COMPUTED
+// `unavailable` consult an injected `readExistingPlan` seam and PRESERVE ON
+// UNCERTAINTY -- it writes only when the read POSITIVELY confirms there is no
+// good plan to protect (`error === null` AND no ready/partial plan with >= 1
+// module). A read ERROR, a REJECTING/throwing seam, or an ABSENT seam is
+// UNCONFIRMED and SKIPS the write. A ready/partial result never consults the
+// read and always writes.
+//
+// SEAM SIGNATURE the implementer builds against (a NEW injected arg on
+// generateStudyPlan, beside readDigest and generateContent):
+//   readExistingPlan: ({ applicationId, userId }) => Promise<{ status, plan, error }>
+// -- the shape readStudyPlan returns. The route passes it explicitly as
+//   (args) => readStudyPlan(supabase, args).
+// The skip returns { status:"unavailable", plan, evidence, written:false,
+//   preserved:true, preservedReason, error }; every other result carries
+//   preserved:false.
+//
+// INSTRUMENT. These tests drive the REAL writeStudyPlan against a store double
+// whose `.upsert` is a vi.fn SPY, so "the write was withheld" is read off the
+// spy's call count AND off the seeded row still being byte-identical (same
+// object reference), never off a hand-mirrored flag. Where an oracle needs a
+// read ERROR or a REJECTING seam -- which the never-throwing in-memory double
+// cannot produce -- readExistingPlan is injected directly, exactly as the route
+// injects it.
+//
+// RED ON HEAD, by row. HEAD has no guard and no `preserved` field.
+//   * O2-O6, O11 red because HEAD CALLS upsert -- the destructive write the
+//     guard must withhold -- and the seeded good row is replaced.
+//   * O1, O7, O8 red because HEAD omits `preserved` (there is no field to equal
+//     false); their write-direction assertions pass on HEAD and are the control
+//     against a guard that over-fires (O1), blocks an idempotent rewrite (O7),
+//     or consults the read on the success branch (O8).
+// The no-op control is the unmodified source. Section 4.3 mutants M1 (treat a
+// read error as absence -> reds O4/O5/O6/O11), M2 (always write -> reds O2-O5),
+// M3 (consult the read on the success branch -> reds O8) and M5 (report a
+// skipped write as written:true -> reds O2) each red a row here; M4 is the route
+// mutant, exercised in app/api/study-plan/route.test.js.
+// ===========================================================================
+describe("C-0 preserve-last-good guard: PRESERVE ON UNCERTAINTY (section 4.3, O1-O8/O11)", () => {
+  // A store double whose upsert is a spy and whose read reproduces the
+  // column-wise, owner-scoped select readStudyPlan issues.
+  function makeGuardStore(seedRow = null) {
+    const store = new Map();
+    if (seedRow) store.set(seedRow.application_id, seedRow);
+    const upsert = vi.fn((row) => {
+      const key = row.application_id;
+      const merged = { ...(store.get(key) || {}), ...row };
+      store.set(key, merged);
+      return { select: () => ({ async maybeSingle() { return { data: merged, error: null }; } }) };
+    });
+    const client = {
+      from() {
+        return {
+          upsert,
+          select() {
+            const f = {};
+            const chain = {
+              eq(col, val) { f[col] = val; return chain; },
+              async maybeSingle() {
+                const row = store.get(f.application_id);
+                if (row && row.user_id === f.user_id) return { data: row, error: null };
+                return { data: null, error: null };
+              },
+            };
+            return chain;
+          },
+        };
+      },
+    };
+    return { client, store, upsert };
+  }
+
+  // A genuine normalized plan with >= 1 module, produced by the real pipeline so
+  // readStudyPlan + hasGoodPlan classify it exactly as production would.
+  async function aGoodPlan() {
+    const s = makeSupabase();
+    await generateStudyPlan(
+      baseArgs({ supabase: s.client, engine: "gemini", readDigest: readDigestReturning(SOURCED_DIGEST), generateContent: vi.fn(async () => modelPlan([ITEM_A, ITEM_B])) }),
+    );
+    const plan = s.store.get(APP_ID).plan;
+    if (!plan || plan.modules.length < 1) throw new Error("test setup: aGoodPlan produced no modules");
+    return plan;
+  }
+
+  const seededGoodRow = (plan, status) => ({
+    application_id: APP_ID, user_id: USER_ID, status, plan, engine: "gemini", marker: "ORIGINAL",
+  });
+
+  // Args that COMPUTE "unavailable" (gemini, unparseable reply -> zero modules),
+  // independent of whatever is stored -- generate recomputes from scratch.
+  function computesUnavailable(over) {
+    return baseArgs({
+      engine: "gemini",
+      readDigest: readDigestReturning(SOURCED_DIGEST),
+      generateContent: vi.fn(async () => ({ text: "not a plan {" })),
+      ...over,
+    });
+  }
+
+  it("O1 (fresh-unavailable canary): a fresh store + computed unavailable still WRITES -- the guard must not wedge a legitimate first unavailable", async () => {
+    // baseArgs binds readExistingPlan to this EMPTY store -> a POSITIVE absence.
+    // A guard that over-fires (skips even on confirmed absence) reds the
+    // upsert-called assertion. RED on HEAD via preserved:false (no field yet).
+    const g = makeGuardStore();
+    const out = await generateStudyPlan(computesUnavailable({ supabase: g.client }));
+    expect(out.status).toBe("unavailable");
+    expect(g.upsert).toHaveBeenCalledTimes(1);
+    expect(g.store.get(APP_ID).status).toBe("unavailable");
+    expect(out.written).toBe(true);
+    expect(out.preserved).toBe(false);
+  });
+
+  it("O2: a stored READY plan (>= 1 module) + computed unavailable -> NO write, row byte-identical, preserved 'good-plan'", async () => {
+    const plan = await aGoodPlan();
+    const seed = seededGoodRow(plan, "ready");
+    const g = makeGuardStore(seed);
+    const out = await generateStudyPlan(computesUnavailable({
+      supabase: g.client,
+      readExistingPlan: ({ applicationId, userId }) => readStudyPlan(g.client, { applicationId, userId }),
+    }));
+    expect(out.status).toBe("unavailable");
+    expect(g.upsert).not.toHaveBeenCalled();            // RED on HEAD (HEAD overwrites)
+    expect(g.store.get(APP_ID)).toBe(seed);             // same reference, untouched
+    expect(g.store.get(APP_ID).marker).toBe("ORIGINAL");
+    expect(out.written).toBe(false);                    // M5 (report written:true) reds this
+    expect(out.preserved).toBe(true);
+    expect(out.preservedReason).toBe("good-plan");
+  });
+
+  it("O3: a stored PARTIAL plan (>= 1 module) is protected the same as ready", async () => {
+    const plan = await aGoodPlan();
+    const seed = seededGoodRow(plan, "partial");
+    const g = makeGuardStore(seed);
+    const out = await generateStudyPlan(computesUnavailable({
+      supabase: g.client,
+      readExistingPlan: ({ applicationId, userId }) => readStudyPlan(g.client, { applicationId, userId }),
+    }));
+    expect(g.upsert).not.toHaveBeenCalled();
+    expect(g.store.get(APP_ID)).toBe(seed);
+    expect(out.preserved).toBe(true);
+    expect(out.preservedReason).toBe("good-plan");
+  });
+
+  it("O4 (preserve-on-uncertainty canary): a good plan + a TRANSIENT READ ERROR -> NO write, the plan survives, preserved 'unconfirmed'", async () => {
+    // readStudyPlan NEVER throws: on a PostgREST blip it returns
+    // { status:null, plan:null, error:"<msg>" }. r1's guard read that as "no
+    // good plan" and clobbered the plan (F-1, the MAJOR). The guard must PRESERVE
+    // here. Mutant M1 (treat a read error as absence) reds this exact row.
+    const plan = await aGoodPlan();
+    const seed = seededGoodRow(plan, "ready");
+    const g = makeGuardStore(seed);
+    const out = await generateStudyPlan(computesUnavailable({
+      supabase: g.client,
+      readExistingPlan: async () => ({ status: null, plan: null, error: "ETIMEDOUT reading study_plans" }),
+    }));
+    expect(out.status).toBe("unavailable");
+    expect(g.upsert).not.toHaveBeenCalled();            // RED on HEAD and under M1
+    expect(g.store.get(APP_ID)).toBe(seed);             // the good plan survives the blip
+    expect(out.preserved).toBe(true);
+    expect(out.preservedReason).toBe("unconfirmed");
+  });
+
+  it("O5: a REJECTING / throwing read seam -> NO write, preserved 'unconfirmed' (generateStudyPlan still does not throw)", async () => {
+    const plan = await aGoodPlan();
+    const seed = seededGoodRow(plan, "ready");
+    const g = makeGuardStore(seed);
+    let out;
+    await expect(
+      (async () => {
+        out = await generateStudyPlan(computesUnavailable({
+          supabase: g.client,
+          readExistingPlan: async () => { throw new Error("read rejected"); },
+        }));
+      })(),
+    ).resolves.toBeUndefined();
+    expect(out.status).toBe("unavailable");
+    expect(g.upsert).not.toHaveBeenCalled();            // RED on HEAD and under M1
+    expect(g.store.get(APP_ID)).toBe(seed);
+    expect(out.preserved).toBe(true);
+    expect(out.preservedReason).toBe("unconfirmed");
+  });
+
+  it("O6: a FRESH store + a read error -> fail CLOSED (NO write); status is still 'unavailable'", async () => {
+    // Nothing to protect, but the read could not confirm that, so the guard
+    // still withholds the write. The cost (the unavailable row is not persisted)
+    // is accepted in 4.3; the route reports unavailable anyway (route O-fresh).
+    const g = makeGuardStore();
+    const out = await generateStudyPlan(computesUnavailable({
+      supabase: g.client,
+      readExistingPlan: async () => ({ status: null, plan: null, error: "blip" }),
+    }));
+    expect(out.status).toBe("unavailable");
+    expect(g.upsert).not.toHaveBeenCalled();            // RED on HEAD and under M1
+    expect(out.preserved).toBe(true);
+    expect(out.preservedReason).toBe("unconfirmed");
+  });
+
+  it("O7: a stored UNAVAILABLE / zero-module row is NOT a good plan -> write PROCEEDS (idempotent)", async () => {
+    // Positive control for the skip: a mutant that treats ANY existing row as
+    // "good" would block this write; the upsert-called assertion reds it.
+    const seed = { application_id: APP_ID, user_id: USER_ID, status: "unavailable", plan: { modules: [] } };
+    const g = makeGuardStore(seed);
+    const out = await generateStudyPlan(computesUnavailable({
+      supabase: g.client,
+      readExistingPlan: ({ applicationId, userId }) => readStudyPlan(g.client, { applicationId, userId }),
+    }));
+    expect(out.status).toBe("unavailable");
+    expect(g.upsert).toHaveBeenCalledTimes(1);          // write not blocked
+    expect(out.written).toBe(true);
+    expect(out.preserved).toBe(false);                  // RED on HEAD (no field)
+  });
+
+  it("O8: a READY result NEVER consults the read seam -> seam spy has zero calls, write proceeds, preserved:false", async () => {
+    // Mutant M3 (consult the read on the success branch) makes readSpy fire ->
+    // reds here. On a ready path the guard is never entered, so a successful
+    // rebuild pays no extra read. RED on HEAD via preserved:false.
+    const g = makeGuardStore();
+    const readSpy = vi.fn(async () => ({ status: "ready", plan: { modules: [{ title: "x", topics: [{ title: "t", items: [] }] }] }, error: null }));
+    const out = await generateStudyPlan(baseArgs({
+      supabase: g.client, engine: "gemini", readDigest: readDigestReturning(SOURCED_DIGEST),
+      generateContent: vi.fn(async () => modelPlan([ITEM_A, ITEM_B])), readExistingPlan: readSpy,
+    }));
+    expect(out.status).toBe("ready");
+    expect(readSpy).not.toHaveBeenCalled();
+    expect(g.upsert).toHaveBeenCalledTimes(1);
+    expect(out.preserved).toBe(false);
+  });
+
+  it("O11: an ABSENT readExistingPlan seam is itself UNCONFIRMED -> NO write (fail closed), preserved 'unconfirmed'", async () => {
+    // The key is present with an `undefined` value, so baseArgs does NOT bind a
+    // default -- generateStudyPlan sees no seam. Mutant M1/M5-style rejection of
+    // "absent = unconfirmed" and HEAD's always-write both red the upsert check.
+    const plan = await aGoodPlan();
+    const seed = seededGoodRow(plan, "ready");
+    const g = makeGuardStore(seed);
+    const out = await generateStudyPlan(computesUnavailable({
+      supabase: g.client,
+      readExistingPlan: undefined,
+    }));
+    expect(out.status).toBe("unavailable");
+    expect(g.upsert).not.toHaveBeenCalled();            // RED on HEAD
+    expect(g.store.get(APP_ID)).toBe(seed);
+    expect(out.preserved).toBe(true);
+    expect(out.preservedReason).toBe("unconfirmed");
   });
 });

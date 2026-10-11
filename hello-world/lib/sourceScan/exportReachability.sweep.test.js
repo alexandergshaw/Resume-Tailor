@@ -74,7 +74,7 @@
 // enforce; the table at the top of ./exportReachability.ledger.md is the
 // single place to read them if this prose has fallen behind.)
 //
-//   RULE TR-1 (439 symbols)  the export is unused by shipping code, but at
+//   RULE TR-1 (441 symbols)  the export is unused by shipping code, but at
 //       least one `.test.js` imports it BY NAME. This repo's dominant
 //       convention is to widen a module's export surface so a unit test can
 //       pin an internal helper or a threshold constant directly instead of
@@ -94,11 +94,11 @@
 //       before cutting. docx.js#buildDocxFromUploadedTemplate is the worked
 //       example of exactly that near-miss.
 //
-//   ALLOWED_UNREACHABLE_MODULES (14) / UNWIRED_MODULES (7)  whole files no
+//   ALLOWED_UNREACHABLE_MODULES (14) / UNWIRED_MODULES (5)  whole files no
 //       entry point can reach. The fourteen are sweep and test infrastructure
 //       (including this sweep's own ledger and scan modules -- see their
 //       self-entries there) and are justified one by one. The findings bucket
-//       holds seven modules whose production call sites are later, named steps
+//       holds five modules whose production call sites are later, named steps
 //       of the chunk that landed them; its earlier entries were reviewed and
 //       deleted or wired up -- see the block comment above UNWIRED_MODULES in
 //       ./exportReachability.ledger.js.
@@ -265,15 +265,13 @@ describe("every module is reachable from something that ships, or is on a ledger
     // These are NOT allow-listed. They are findings held in a named bucket so
     // that they cannot quietly become "just how it is". Wiring one up (or
     // removing it) fails the exact match above, which is the prompt to delete
-    // its line here. History ([] -> 2 -> 1 -> 5 -> 7 -> 11 -> 7): exportReachability.ledger.md, section 2.
+    // its line here. History ([] -> 2 -> 1 -> 5 -> 7 -> 11 -> 7 -> 9 -> 5): exportReachability.ledger.md, section 2.
     expect(UNWIRED_MODULES.map((e) => e.file)).toEqual([
       "lib/interviewPrep/prepLog.js",
       "lib/interviewPrep/interviewProcessGrammar.js",
       "lib/interviewPrep/interviewerRoles.js",
       "lib/tracking/citationLineAgreement.js",
       "lib/tracking/digestRoleScreen.js",
-      "lib/studyPlan/studyPlanProgressStore.js",
-      "lib/studyPlan/ensureStudyDigest.js",
     ]);
     for (const entry of UNWIRED_MODULES) {
       expect(entry.finding.length, `${entry.file} is recorded as unwired with no description`).toBeGreaterThan(60);
@@ -323,15 +321,15 @@ describe("every export of a shipping module is asked for, or is on a ledger with
     // check the new export is a helper being pinned, not a feature that was
     // built and never connected, then update the number.
     //
-    // Pinned at 439. Every movement (299 -> 439) is stated by name in
+    // Pinned at 441. Every movement (299 -> 441) is stated by name in
     // exportReachability.ledger.md, section 4; append the new delta there.
-    expect(TEST_REFERENCED.length).toBe(439);
+    expect(TEST_REFERENCED.length).toBe(441);
     // A classifier that swept everything into this bucket would make the
     // orphan ledger vacuous, so pin the split rather than only the total.
     expect(UNUSED_IN_SHIPPING_MODULES.length).toBe(TEST_REFERENCED.length + ORPHANS.length);
-    // Pinned at 504 = 439 + 65. Every movement (356 -> 504), with which half
+    // Pinned at 506 = 441 + 65. Every movement (356 -> 506), with which half
     // moved, is stated in exportReachability.ledger.md, section 5.
-    expect(UNUSED_IN_SHIPPING_MODULES.length).toBe(504);
+    expect(UNUSED_IN_SHIPPING_MODULES.length).toBe(506);
   });
 
   it("still reports the two symbol-level cases this sweep was built for", () => {

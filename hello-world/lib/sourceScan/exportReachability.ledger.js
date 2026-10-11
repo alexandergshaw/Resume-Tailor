@@ -175,6 +175,34 @@ export const ALLOWED_UNREACHABLE_MODULES = [
 // once a module is reachable its exports are classified per symbol, and twelve
 // study-plan exports landed in TEST_REFERENCED (427 -> 439). ORPHAN_EXPORTS did
 // not move. exportReachability.ledger.md sections 2-5 state each movement by name.
+//
+// 7 -> 9, N157 SC-C C-a. The same built-ahead-of-its-surface shape, twice more:
+// the walkthrough sub-chunk's first step landed two pure modules with their
+// suites, lib/studyPlan/studyWalkthroughModel.js and lib/studyPlan/
+// studyPlanCopy.js, ahead of the walkthrough UI (C-b) and the plan-lifecycle
+// surfaces (C-c) that import them. Their only importers today are their own
+// .test.js siblings, and a test file is not a caller, so both are wholly
+// unreachable and, being unreachable, sit in no symbol bucket. TWO lines added,
+// none removed; those two modules moved no symbol bucket. (The one symbol that
+// DID leave TEST_REFERENCED in the same tree, studyPlanStore.js#readStudyPlan,
+// left because app/api/study-plan/route.js now imports it, not because of
+// either module above -- exportReachability.ledger.md, sections 4 and 5.)
+//
+// 9 -> 5, N157 SC-C C-c. The surface those four entries were waiting for landed:
+// CopilotClient.js now renders practice/PracticeSurface.js in place of
+// PracticeClient, and in its "Study plan" sub-view that mounts
+// study/StudyPlanClient.js, which imports (through study/StudyWalkthrough.js,
+// useStudyPlanRecord.js, useStudyPlanBuild.js and StudyCreatePanel.js)
+// studyPlanProgressStore.js, ensureStudyDigest.js, studyWalkthroughModel.js and
+// studyPlanCopy.js, plus the new studyPlanBuild.js, studyPlanBrowser.js,
+// studyPlanBuildClient.js and studyPlanNotices.js. FOUR lines deleted, none added,
+// by name: lib/studyPlan/studyPlanProgressStore.js, ensureStudyDigest.js,
+// studyWalkthroughModel.js, studyPlanCopy.js. (The ten app/copilot components and
+// the four new lib modules are reachable from birth and never needed a line.)
+// Unlike the whole-file entries above, THIS change moves symbol buckets, because
+// exports of a now-reachable module are classified per symbol: TR-1 438 -> 441
+// (+7, -4), total 503 -> 506, ORPHAN_EXPORTS unmoved at 65. Every moved symbol is
+// named in exportReachability.ledger.md, sections 4 and 5.
 export const UNWIRED_MODULES = [
   {
     file: "lib/interviewPrep/prepLog.js",
@@ -195,14 +223,6 @@ export const UNWIRED_MODULES = [
   {
     file: "lib/tracking/digestRoleScreen.js",
     finding: "the digest name screen (isWithheldDigestLine/withholdDigestLines), proven against digestRoleScreen.test.js including the 800-real-name superset property. Its shipping call sites -- DigestPanel.js's three presentation paths, applicationDigest.js's digestSummaryLine -- are N49's plan.r4.md section 8.4 step, not yet built",
-  },
-  {
-    file: "lib/studyPlan/studyPlanProgressStore.js",
-    finding: "the client-side study-plan record store (subscribe/getSnapshot for useSyncExternalStore, loadStudyPlanRecord, getStudyPlanRecord, recordProgress's read-modify-render of one card), bounded at STUDY_PLAN_RECORD_STORE_MAX records and pinned by studyPlanProgressStore.test.js. Its reader and writer are INJECTED (a bound readStudyPlan and a bound writeStudyPlanProgress, both now shipping exports of the reachable studyPlanStore.js), so the module is complete without them, but no surface yet supplies either: its shipping call site is the SC-C walkthrough UI (StudyPlanClient.js loading the record, StudyWalkthrough.js applying a reveal or grade), which is not yet built; nothing imports this module but its test. The generation route (app/api/study-plan/route.js) deliberately does not import it: it is phase 2 of plan creation and touches no progress",
-  },
-  {
-    file: "lib/studyPlan/ensureStudyDigest.js",
-    finding: "the browser-side wrapper over POST /api/application-digest: requestStudyDigest plus the two named entry points of the create-time ordering contract, ensureStudyDigest (force:false, reuse a ready digest) and refreshStudyDigest (force:true, the only call that spends a fresh grounded search), proven against ensureStudyDigest.wire.test.js's assertions of what goes on the wire. It is a relative-URL fetch, so its shipping callers are client components: StudyPlanClient.js's create path calling ensureStudyDigest (SC-C) and the SC-D 'Refresh research' control calling refreshStudyDigest, neither yet built; nothing imports this module but its test",
   },
 ];
 
