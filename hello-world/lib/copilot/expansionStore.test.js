@@ -234,7 +234,7 @@ describe("fetchExpansion", () => {
     const sent = JSON.parse(init.body);
     expect(sent.secretExtra).toBeUndefined();
     expect(Object.keys(sent).sort()).toEqual(
-      ["applicationId", "codeLanguage", "engine", "interviewType", "pointIndex", "parentPoint", "points", "profile", "question"].sort(),
+      ["applicationId", "codeLanguage", "engine", "interviewType", "pointIndex", "parentPoint", "points", "profile", "question", "userContext"].sort(),
     );
   });
 

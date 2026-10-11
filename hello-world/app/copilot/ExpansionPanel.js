@@ -9,8 +9,9 @@ import CircularProgress from "@mui/material/CircularProgress";
 import Typography from "@mui/material/Typography";
 
 import { BREAK_LONG_WORDS_SX, TOUCH_TARGET_SX, WRAP_ROW_SX } from "@/app/theme/mobileSx";
-import { EXPANSION_MIN_HEIGHT } from "@/lib/copilot/expansionContract";
+import { EXPANSION_MIN_HEIGHT, MAX_USER_CONTEXT_CHARS } from "@/lib/copilot/expansionContract";
 
+import RegenerateControl from "./RegenerateControl";
 import { useExpansionApi } from "./useAnswerExpansions";
 import { useWarmOnMount } from "./useWarmOnMount";
 
@@ -159,6 +160,24 @@ export default function ExpansionPanel({ line, api }) {
 
   if (!open) return <>{control}</>;
 
+  // THE ONE RE-ISSUE AFFORDANCE, for every terminal or stale OPEN state: done, empty,
+  // error, and idle. It is absent while loading (the click re-enters loading, so the
+  // control hides itself for the in-flight issue) and on the kill-switch state
+  // (re-issuing what an operator switched off would be a lie). It replaces the
+  // bespoke Retry: regenerating with no typed context is the old retry. It sits
+  // OUTSIDE the panel node and carries its own `data-regenerate`, so a test that wants
+  // "the bullet's own text" excludes it the same way it excludes `data-expansion`.
+  const regenerate =
+    status !== "loading" && record.code !== "disabled" ? (
+      <RegenerateControl
+        key="regenerate"
+        name={name}
+        disabled={record.code === "disabled"}
+        maxChars={MAX_USER_CONTEXT_CHARS}
+        onRegenerate={(context) => resolved.regenerate(line, { context })}
+      />
+    ) : null;
+
   if (status === "done" && record.subBullets.length > 0) {
     return (
       <>
@@ -204,6 +223,7 @@ export default function ExpansionPanel({ line, api }) {
             {record.caption}
           </Typography>
         ) : null}
+        {regenerate}
       </>
     );
   }
@@ -217,44 +237,24 @@ export default function ExpansionPanel({ line, api }) {
         key="panel"
         sx={{ minHeight: EXPANSION_MIN_HEIGHT }}
       >
-        {status === "error" ? (
-          <Alert
-            severity="error"
-            action={
-              record.code === "disabled" ? null : (
-                <Button
-                  type="button"
-                  size="small"
-                  color="inherit"
-                  onClick={() => resolved.retry(line)}
-                  aria-label={`Retry more detail for: ${name}`}
-                  // The same floor the disclosure control above already takes.
-                  // `size="small"` renders ~31px, and this is the control a
-                  // candidate reaches for when an expansion has ALREADY failed
-                  // -- the worst moment to hand them a target they miss.
-                  sx={TOUCH_TARGET_SX}
-                >
-                  Retry
-                </Button>
-              )
-            }
-            // All three treatments are needed TOGETHER at 320px: flex wrapping
-            // does nothing while the action keeps `margin-left: auto`, and
-            // wrapping never triggers while the message cannot shrink below its
-            // own content width. Measured inside a sub-bullet's container at
-            // 320px, an untreated Alert leaves roughly 66px for the message,
-            // about four characters per line.
-            //
-            // The two slot styles go through `slotProps` rather than a nested
-            // selector on the root. Measured: a nested override has to out-rank
-            // MUI's own class rule for the slot, and the doubled-ampersand form
-            // that usually does silently did not apply here at all.
-            sx={WRAP_ROW_SX}
-            slotProps={{
-              action: { sx: { marginLeft: 0, paddingLeft: 0 } },
-              message: { sx: { minWidth: 0 } },
-            }}
-          >
+        {status === "error" || status === "idle" ? (
+          // `idle` on an OPEN bullet means its record was evicted from the bounded
+          // store. It reads as a failure (never as the honest empty below, which
+          // would be a false "nothing more" over a record that was simply dropped),
+          // and the Regenerate control under the panel is how it is re-issued.
+          //
+          // There is no action slot any more: the bespoke Retry that lived there
+          // is replaced by Regenerate. What is left of the 320px treatment is the
+          // wrapping row and a message that may shrink below its own content
+          // width. Measured inside a sub-bullet's container at 320px, an untreated
+          // Alert leaves roughly 66px for the message, about four characters per
+          // line.
+          //
+          // The message style goes through `slotProps` rather than a nested
+          // selector on the root. Measured: a nested override has to out-rank
+          // MUI's own class rule for the slot, and the doubled-ampersand form
+          // that usually does silently did not apply here at all.
+          <Alert severity="error" sx={WRAP_ROW_SX} slotProps={{ message: { sx: { minWidth: 0 } } }}>
             {errorTextFor(record.code)}
           </Alert>
         ) : status === "loading" ? (
@@ -269,9 +269,9 @@ export default function ExpansionPanel({ line, api }) {
           </Typography>
         ) : (
           // The honest-empty state, and it is deliberately not painted as a
-          // failure: no alert, no severity, no icon, no list marker. There is
-          // also no Retry -- retrying an honest empty spends money to be told
-          // the same thing.
+          // failure: no alert, no severity, no icon, no list marker. Regenerate
+          // is still offered under it: with an optional steering note a second
+          // look can find something the first did not.
           <Typography
             component="p"
             variant="body2"
@@ -281,6 +281,7 @@ export default function ExpansionPanel({ line, api }) {
           </Typography>
         )}
       </Box>
+      {regenerate}
     </>
   );
 }

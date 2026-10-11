@@ -20,7 +20,9 @@
 //
 // THE KEY IS THE GENERATION GUARD. Keys carry the normalised parent sentence
 // (expansionContract.js), so a response settling under a key the UI no longer
-// computes is simply never read: no cancellation, no token, no bookkeeping.
+// computes is simply never read: no cancellation and no bookkeeping for a
+// DIFFERENT key. A SAME-key re-issue (a forced regenerate) is the one case the
+// key cannot disambiguate, and the per-key issue token below covers exactly that.
 //
 // NOTHING HERE IS PERSISTED. The payload derives from material the client is
 // deliberately never given, so writing it to browser storage would put
@@ -37,6 +39,14 @@ const IDLE = Object.freeze({ status: "idle", subBullets: [], caption: "", empty:
 // key -> { status, subBullets, caption, empty, code }
 const records = new Map();
 const listeners = new Set();
+
+// key -> the latest issue number. A terminal (done/empty/error) write is
+// accepted only from the issuer that owns the current number, so a superseded
+// in-flight request's late arrival is dropped instead of overwriting a newer
+// result. The synchronous loading write is NOT guarded: immediate feedback is
+// always wanted. Numbers only ever increase, so a stale issuer can never collide
+// with a later one.
+const issueToken = new Map();
 
 // useSyncExternalStore requires getSnapshot to return the SAME reference when
 // nothing has changed; one that allocates re-renders forever. The repo records
@@ -105,10 +115,15 @@ export function getExpansion(key) {
  * settled, and it only applies to a failure. Retrying an honest empty spends
  * money to be told the same thing.
  *
+ * `force: true` is the explicit regenerate. It re-issues over ANY existing
+ * record, settled or still loading, and re-enters loading synchronously. That is
+ * safe only because of the issue token: the older in-flight request, if any, is
+ * superseded and its late terminal write is dropped.
+ *
  * `loading` is never terminal: every path below settles the key, including the
  * one where the fetcher throws something shapeless.
  */
-export async function beginExpansion({ key, request } = {}, fetcher, { retry = false } = {}) {
+export async function beginExpansion({ key, request } = {}, fetcher, { retry = false, force = false } = {}) {
   if (!key || typeof fetcher !== "function") return;
 
   // THE LOADING RECORD IS THE IN-FLIGHT GUARD. There is deliberately no second
@@ -118,19 +133,29 @@ export async function beginExpansion({ key, request } = {}, fetcher, { retry = f
   // do anything this line does not already do, and a guard no test can kill is
   // a guard nobody can trust.
   const existing = records.get(key);
-  if (existing && !(retry && existing.status === "error")) return;
+  if (!force && existing && !(retry && existing.status === "error")) return;
+
+  // Claim this key. Every issue gets the next number; only the holder of the
+  // latest one may land a terminal write below.
+  const token = (issueToken.get(key) ?? 0) + 1;
+  issueToken.set(key, token);
 
   // SYNCHRONOUS, before any await. The reader gets feedback in the same frame
   // as the click, and no network or engine work stands in front of it.
   write(key, { status: "loading", subBullets: [], caption: "", empty: false, code: null });
 
+  const settle = (record) => {
+    if (issueToken.get(key) !== token) return;
+    write(key, record);
+  };
+
   try {
     const result = await fetcher(request);
     const subBullets = Array.isArray(result?.subBullets) ? result.subBullets : [];
     if (subBullets.length === 0) {
-      write(key, { status: "empty", subBullets: [], caption: "", empty: true, code: null });
+      settle({ status: "empty", subBullets: [], caption: "", empty: true, code: null });
     } else {
-      write(key, {
+      settle({
         status: "done",
         subBullets,
         caption: typeof result?.caption === "string" ? result.caption : "",
@@ -139,7 +164,7 @@ export async function beginExpansion({ key, request } = {}, fetcher, { retry = f
       });
     }
   } catch (err) {
-    write(key, {
+    settle({
       status: "error",
       subBullets: [],
       caption: "",

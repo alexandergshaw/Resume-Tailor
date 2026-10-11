@@ -85,12 +85,23 @@ const LINES = [
 
 // The one exclusion mechanism, used by every assertion that has to read "the
 // bullet's own text". Done by hand five different ways it would drift; here it
-// is one helper keyed on one attribute the panel puts on each of its roots.
+// is one helper keyed on the attributes the expansion puts on each of its roots:
+// `data-expansion` on the panel's own nodes, and `data-regenerate` on the shared
+// RegenerateControl (N155), which sits beside them and is not the bullet's text.
+// Dropping the second selector lets the control's "Regenerate" / "Add context"
+// words leak into every comparison below.
+const EXPANSION_NODES = "[data-expansion], [data-regenerate]";
 function bare(li) {
   const clone = li.cloneNode(true);
-  clone.querySelectorAll("[data-expansion]").forEach((n) => n.remove());
+  clone.querySelectorAll(EXPANSION_NODES).forEach((n) => n.remove());
   return clone.textContent;
 }
+
+// The buttons that are NOT the Regenerate control's: the bullets' own disclosure
+// controls. Any count or index over "the buttons in this <li>" reads through this,
+// because an open, non-loading, non-disabled region now carries two more.
+const disclosureButtons = (rootEl) => [...rootEl.querySelectorAll("li button")].filter((b) => !b.closest("[data-regenerate]"));
+const regenerateButton = (rootEl) => [...rootEl.querySelectorAll("button")].find((b) => /^regenerate/i.test(b.getAttribute("aria-label") || ""));
 
 // A controllable stand-in for what useAnswerExpansions returns, so the render
 // contract can be tested without a network or a store.
@@ -107,6 +118,7 @@ function fakeApi(initial = {}) {
       else open.add(line.point);
     },
     retry: (line) => calls.push(["retry", line.point]),
+    regenerate: (line, options) => calls.push(["regenerate", line.point, options?.context]),
   };
   for (const [point, record] of Object.entries(initial)) {
     records.set(point, record);
@@ -401,12 +413,15 @@ describe("state is announced, and the second click collapses", () => {
   it("flips aria-expanded and a non-colour glyph together", async () => {
     const { api } = fakeApi({ [LINES[0].point]: { status: "done", subBullets: [{ text: "x", pageSource: null }], caption: "" } });
     const el = await render(withApi(api));
-    const btn = el.querySelectorAll("li button")[0];
+    // The open bullet's Regenerate control sits between the first and second
+    // disclosure controls in document order, so index through the disclosures.
+    const controls = disclosureButtons(el);
+    const btn = controls[0];
     expect(btn.getAttribute("aria-expanded")).toBe("true");
     const glyph = btn.querySelector('[aria-hidden="true"]');
     expect(glyph).not.toBeNull();
     const openGlyph = glyph.textContent;
-    const collapsed = el.querySelectorAll("li button")[1];
+    const collapsed = controls[1];
     expect(collapsed.querySelector('[aria-hidden="true"]').textContent).not.toBe(openGlyph);
   });
 
@@ -514,55 +529,93 @@ describe("the three states that are not sub-bullets", () => {
     expect(li.querySelector(":scope > ul")).toBeNull(); // an empty <ul> announces "list, 0 items"
     expect(li.querySelector('[role="alert"]')).toBeNull();
     expect(li.querySelector(".MuiAlert-root")).toBeNull();
-    expect(li.textContent).not.toContain("Retry"); // retrying an honest empty buys the same answer twice
-    expect(li.querySelectorAll("button")).toHaveLength(1);
+    // No bespoke Retry (the AC15 unify). Regenerate IS offered under an honest
+    // empty since N155 (a steered second look can find what the first did not), so
+    // the disclosure-button count reads through disclosureButtons, which leaves the
+    // Regenerate control's own two buttons out of it.
+    expect(li.textContent).not.toContain("Retry");
+    expect(regenerateButton(li), "Regenerate is offered under an honest empty").toBeTruthy();
+    expect(disclosureButtons(li)).toHaveLength(1);
     expect(li.querySelector("button").getAttribute("aria-expanded")).toBe("true");
   });
 
-  it("shows a failure as an alert with a Retry that re-issues exactly one request", async () => {
+  it("shows a failure as an alert with a Regenerate that re-issues exactly one request", async () => {
     const { api, calls } = fakeApi({ [LINES[0].point]: { status: "error", subBullets: [], caption: "", code: "http" } });
     const el = await render(withApi(api));
     const li = topItems(el)[0];
     expect(li.querySelector('[role="alert"]')).not.toBeNull();
     expect(li.textContent).toContain("Could not get more detail");
-    const retry = [...li.querySelectorAll("button")].find((b) => b.textContent.includes("Retry"));
-    expect(retry).toBeTruthy();
-    expect(retry.getAttribute("aria-label")).toContain("Retry more detail for");
-    await act(async () => retry.click());
-    expect(calls.filter(([kind]) => kind === "retry")).toHaveLength(1);
+    // The bespoke Retry is gone (AC15): the one re-issue control is Regenerate.
+    expect([...li.querySelectorAll("button")].some((b) => /retry/i.test(b.textContent) || /retry/i.test(b.getAttribute("aria-label") || ""))).toBe(false);
+    const regenerate = regenerateButton(li);
+    expect(regenerate).toBeTruthy();
+    // WCAG 2.5.3: the accessible name begins with the visible word.
+    expect(regenerate.getAttribute("aria-label").startsWith("Regenerate")).toBe(true);
+    expect(regenerate.textContent.trim()).toBe("Regenerate");
+    // Zero typing: the old Retry's behaviour, a re-issue with no steering note.
+    await act(async () => regenerate.click());
+    expect(calls.filter(([kind]) => kind === "regenerate")).toEqual([["regenerate", LINES[0].point, ""]]);
+    expect(calls.filter(([kind]) => kind === "retry")).toHaveLength(0);
   });
 
-  it("gives the failure's Retry the shared touch floor, like every other control here", async () => {
+  it("gives the failure's Regenerate the shared touch floor, like every other control here", async () => {
     // ExpansionPanel.js already imports TOUCH_TARGET_SX and applies it to the
-    // disclosure control; this Retry was the one control in the file that never
-    // got it, so a candidate re-trying a failed expansion on a phone was aiming
-    // at ~31px. Found while retiring the mobileSx shim, which fixed the exact
-    // same shape one file over in practice/SampleAnswer.js -- a Button with
-    // `size="small"` inside an Alert `action` slot.
+    // disclosure control; the failure's re-issue control is the one a candidate
+    // reaches for when an expansion has ALREADY failed, and on a phone `size="small"`
+    // alone is ~31px. It used to be a Retry in an Alert action slot; it is now the
+    // shared Regenerate control, which must take the same floor.
     const { api } = fakeApi({ [LINES[0].point]: { status: "error", subBullets: [], caption: "", code: "http" } });
     const el = await render(withApi(api));
     const li = topItems(el)[0];
-    const retry = [...li.querySelectorAll("button")].find((b) => b.textContent.includes("Retry"));
-    expect(retry, "[instrument] no Retry rendered, so there is nothing to measure").toBeTruthy();
+    const regenerate = regenerateButton(li);
+    expect(regenerate, "[instrument] no Regenerate rendered, so there is nothing to measure").toBeTruthy();
 
-    expect(atWidth(375, () => window.getComputedStyle(retry).minHeight)).toBe(`${MOBILE_TAP_MIN}px`);
+    expect(atWidth(375, () => window.getComputedStyle(regenerate).minHeight)).toBe(`${MOBILE_TAP_MIN}px`);
     // A control, not a restatement: the floor must LIFT above the breakpoint.
     // Without this, an unconditional 44px would satisfy the line above and
     // silently change desktop too.
-    expect(atWidth(1000, () => window.getComputedStyle(retry).minHeight)).toBe("auto");
+    expect(atWidth(1000, () => window.getComputedStyle(regenerate).minHeight)).toBe("auto");
   });
 
   it("distinguishes a timeout from an ordinary failure, and a disabled feature from both", async () => {
     const timeout = fakeApi({ [LINES[0].point]: { status: "error", subBullets: [], caption: "", code: "timeout" } });
     let el = await render(withApi(timeout.api));
     expect(el.textContent).toContain("That took too long to look up.");
+    // A timeout is retryable, so it keeps a working re-issue.
+    expect(regenerateButton(topItems(el)[0])).toBeTruthy();
 
     const disabled = fakeApi({ [LINES[0].point]: { status: "error", subBullets: [], caption: "", code: "disabled" } });
     el = await render(withApi(disabled.api));
     const li = topItems(el)[0];
     expect(li.textContent).toContain("unavailable");
-    // Retrying something an operator switched off is a lie.
+    // Re-issuing something an operator switched off is a lie: neither the old
+    // Retry nor the new Regenerate may appear.
     expect([...li.querySelectorAll("button")].some((b) => b.textContent.includes("Retry"))).toBe(false);
+    expect(regenerateButton(li)).toBeUndefined();
+    expect(li.querySelector("[data-regenerate]")).toBeNull();
+  });
+
+  it("an evicted OPEN bullet (idle) reads as a failure, not as an honest empty, and keeps a Regenerate", async () => {
+    // An open region whose record was dropped from the bounded store reads back
+    // `idle`. It used to fall through to the honest-empty line ("Nothing more we
+    // can back up...") with no way to re-issue: a mislabel over a record that was
+    // never empty, and a dead end. AC14: it must offer Regenerate, and it must not
+    // wear the empty label.
+    const idle = fakeApi({ [LINES[0].point]: { status: "idle", subBullets: [], caption: "", code: null } });
+    const el = await render(withApi(idle.api));
+    const li = topItems(el)[0];
+    expect(li.textContent).not.toContain("Nothing more we can back up");
+    expect(li.textContent).toContain("Could not get more detail");
+    const regenerate = regenerateButton(li);
+    expect(regenerate, "idle-open must not be a dead end").toBeTruthy();
+    await act(async () => regenerate.click());
+    expect(idle.calls.filter(([kind]) => kind === "regenerate")).toHaveLength(1);
+  });
+
+  it("offers no Regenerate while loading (the click re-enters loading)", async () => {
+    const { api } = fakeApi({ [LINES[0].point]: { status: "loading", subBullets: [], caption: "" } });
+    const el = await render(withApi(api));
+    expect(el.querySelector("[data-regenerate]")).toBeNull();
   });
 
   it("never damages the parent bullet on a failure or an empty", async () => {
@@ -577,20 +630,22 @@ describe("the three states that are not sub-bullets", () => {
     }
   });
 
-  it("keeps the error alert usable at 320px", async () => {
-    // All three treatments are needed together: flexWrap does nothing while
-    // the action keeps `margin-left: auto`, and wrapping never triggers while
-    // the message cannot shrink below its content width. The APPEARANCE at
-    // 320px is a browser check -- jsdom does not lay out -- but the treatment
-    // is declared CSS and is readable here.
+  it("keeps the error alert and its re-issue row usable at 320px", async () => {
+    // The Alert no longer carries an action slot (its Retry was replaced by the
+    // Regenerate control beneath it), so what is left of the alert's own 320px
+    // treatment is a wrapping row and a message that may shrink below its content
+    // width; wrapping never triggers while the message cannot shrink. The
+    // Regenerate row takes over the other half of the job: its two buttons must
+    // wrap rather than squeeze below tap size. The APPEARANCE at 320px is a
+    // browser check -- jsdom does not lay out -- but the treatment is declared
+    // CSS and is readable here.
     const { api } = fakeApi({ [LINES[0].point]: { status: "error", subBullets: [], caption: "", code: "http" } });
     const el = await render(withApi(api));
     const alert = el.querySelector(".MuiAlert-root");
     expect(getComputedStyle(alert).flexWrap).toBe("wrap");
-    const action = el.querySelector(".MuiAlert-action");
-    expect(getComputedStyle(action).marginLeft).toBe("0px");
-    expect(getComputedStyle(action).paddingLeft).toBe("0px");
+    expect(el.querySelector(".MuiAlert-action"), "the bespoke Retry's action slot is gone").toBeNull();
     expect(getComputedStyle(el.querySelector(".MuiAlert-message")).minWidth).toBe("0px");
+    expect(getComputedStyle(el.querySelector('[data-regenerate="control"]')).flexWrap).toBe("wrap");
   });
 });
 

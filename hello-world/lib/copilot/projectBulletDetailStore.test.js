@@ -151,7 +151,7 @@ describe("fetchProjectBulletDetail", () => {
     const sent = JSON.parse(init.body);
     expect(sent.secretExtra).toBeUndefined();
     expect(Object.keys(sent).sort()).toEqual(
-      ["applicationId", "bullet", "bulletIndex", "engine", "question", "siblingBullets", "title"].sort(),
+      ["applicationId", "bullet", "bulletIndex", "engine", "question", "siblingBullets", "title", "userContext"].sort(),
     );
   });
 

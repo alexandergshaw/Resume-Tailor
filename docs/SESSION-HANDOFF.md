@@ -7,11 +7,12 @@ _Last updated: 2026-10-07 by the orchestrator._
 ---
 
 ## 1. In-flight uncommitted work (the dirty tree)
-- None. The big copilot+tracking batch (N149 + expansion-panel re-render fix + N150 + N152) is committed + pushed; combined full-suite gate 18968 green.
+- N155 built + full-suite green (19503), staged for commit (the commit follows this handoff write). 28 files, +568/−196, clean diff (no .orig/.bak/stray). AC r2, plan r1, test suites all committed with it.
 
 ## 2. Mid-flight waves / active dispatches
-- N144a TDD then implement (CollapsibleAid accordion in AnswerAids; plan docs/loop/N144a.plan.r1.md; owner: accordion, answer+points open, 600px, desktop open, resume group open). Touches copilot/AnswerAids — DISJOINT from N151b/c (templates/page.js). Mind the landed-test traps: only Examples group role=group; lib aidDisclosure + importer in ONE commit (sweep); mobile tests need a matchMedia stub.
-- QUEUED: N151b (template switcher) + N151c (regenerate-into, OR-5 owner call) — templates/page.js; N144b (control stack) + N144c (tokens) after N144a. SHIPPED today: N143,N148,N149,N150,N152,N151a + expansion re-render fix.
+- None active. N155 (regenerate + typed-context across all 3 detail families + shared RegenerateControl) is complete: AC r2 (M1 idle-open fix), plan r1 (3 waves), TDD landed 14 red files with both load-bearing mutants (issue-token drop, fence <>-strip) watched to die + a full reference-impl satisfiability proof; implemented in 3 disjoint waves + 2 adopted-test fixes; full suite 19503 green; export-reachability unchanged (RegenerateControl reachable via its 3 hosts).
+- **OWNER/Gemini-env OWED for N155:** (a) content quality of a context-STEERED regeneration, esp. adversarial context ("make it sound like I did it") — the gate strips first-person but the steer's usefulness is runtime-only; (b) AC12 phone geometry — ≥44px tap targets + collapsed one-row footprint + no 320px overflow for RegenerateControl + the Add-context field at 320–599px.
+- SHIPPED since last handoff: N143,N148,N149,N150,N152,N151a/b/c,N144a/b,N153,N154,N155 + expansion re-render fix.
 
 ## 3. Killed / stalled residue
 - None. (N134's first implementer was user-killed mid-work; the partial production edits were valid and were finished by a fresh implementer — N134 shipped.)

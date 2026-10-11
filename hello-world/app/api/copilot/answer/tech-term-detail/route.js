@@ -18,7 +18,7 @@ import { createClient as createSupabaseServerClient } from "@/lib/supabase/serve
 import { getServerEnv } from "@/lib/config/env";
 import { getGeminiClient } from "@/lib/llm/geminiClient";
 import { wantsEmbedded } from "@/lib/llm/featureEngine";
-import { TECH_TERM_MAX_CHARS } from "@/lib/copilot/techTermDetailContract";
+import { MAX_USER_CONTEXT_CHARS, TECH_TERM_MAX_CHARS } from "@/lib/copilot/techTermDetailContract";
 import { TECH_TERM_DETAIL_SYSTEM, buildTechTermDetailUserTurn } from "@/lib/copilot/techTermPrompt";
 import { sanitizeTechTermDetail } from "@/lib/copilot/techTermDetailHonesty";
 
@@ -129,6 +129,14 @@ export async function POST(request) {
     const applicationId = typeof rawApplicationId === "string" ? rawApplicationId.trim() : "";
     if (applicationId.length > MAX_APPLICATION_ID_CHARS) return fail(INVALID_MESSAGE, 400);
 
+    // OPTIONAL steering note the candidate typed for a regeneration. Absent or not
+    // a string means no note; a string whose TRIMMED length is over the bound is
+    // REFUSED here, never truncated and sent, and ahead of the embedded branch so
+    // no engine and no model client is reached with it. It only ever becomes a
+    // fenced block in the user turn; the output gate below stays unconditional.
+    const userContext = typeof body?.userContext === "string" ? body.userContext.trim() : "";
+    if (userContext.length > MAX_USER_CONTEXT_CHARS) return fail(INVALID_MESSAGE, 400);
+
     // 5. EMBEDDED has no general-knowledge faculty, so it gets an honest empty
     //    and NO model client. In practice the row is absent on embedded because
     //    generation returned null, so this is defence in depth; it still builds
@@ -146,7 +154,7 @@ export async function POST(request) {
     try {
       response = await client.models.generateContent({
         model: geminiModel,
-        contents: [{ role: "user", parts: [{ text: buildTechTermDetailUserTurn({ term, role }) }] }],
+        contents: [{ role: "user", parts: [{ text: buildTechTermDetailUserTurn({ term, role, userContext }) }] }],
         config: {
           systemInstruction: TECH_TERM_DETAIL_SYSTEM,
           // The single highest-likelihood way this feature ships slow. The answer

@@ -45,6 +45,7 @@ export async function fetchExpansion(request) {
     interviewType: request?.interviewType ?? "",
     codeLanguage: request?.codeLanguage ?? "",
     engine: request?.engine ?? "",
+    userContext: request?.userContext ?? "",
   };
 
   let response;

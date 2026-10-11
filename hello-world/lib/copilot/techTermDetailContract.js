@@ -13,6 +13,11 @@ import { normalizeQuestion } from "./questions.js";
 // will take.
 export const TECH_TERM_MAX_CHARS = 80;
 
+// The longest reader-typed steering note a regenerate request may carry. One
+// home for the bound: the route refuses anything longer and the prompt builder
+// slices to it, both importing it from here.
+export const MAX_USER_CONTEXT_CHARS = 600;
+
 function text(value) {
   return typeof value === "string" ? normalizeQuestion(value) : "";
 }

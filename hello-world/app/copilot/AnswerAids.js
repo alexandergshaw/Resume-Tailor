@@ -2,7 +2,6 @@
 
 import { useId } from "react";
 import Box from "@mui/material/Box";
-import Button from "@mui/material/Button";
 import Chip from "@mui/material/Chip";
 import Skeleton from "@mui/material/Skeleton";
 import Stack from "@mui/material/Stack";
@@ -12,8 +11,10 @@ import { BREAK_LONG_WORDS_SX, TOUCH_TARGET_SX } from "@/app/theme/mobileSx";
 import { normalizeAidChoice } from "../../lib/copilot/aidDisclosure.js";
 import { createChoiceStore } from "../../lib/copilot/choiceStore.js";
 import { PROJECT_PAGE_SOURCE } from "../../lib/copilot/projectStories.js";
+import { MAX_USER_CONTEXT_CHARS } from "../../lib/copilot/techTermDetailContract.js";
 import CollapsibleAid from "./CollapsibleAid";
 import ProjectBulletDetail from "./ProjectBulletDetail";
+import RegenerateControl from "./RegenerateControl";
 import { useTechTermDetailApi } from "./useTechTermDetails";
 import { useWarmOnMount } from "./useWarmOnMount";
 
@@ -470,12 +471,18 @@ function detailMessage(status, code) {
 
 // One open term's explanation, inline below the chips. The term is named again
 // above its text so several open at once stay attributable.
-function TechTermDetail({ term, record, onRetry }) {
+function TechTermDetail({ term, record, onRegenerate }) {
   const status = record?.status ?? "idle";
-  // `idle` on an OPEN term means its record was evicted from the bounded store;
-  // it reads as a failure with a Retry rather than a "looking" line that never
-  // ends.
-  const retryable = (status === "error" || status === "idle") && record?.code !== "disabled";
+  const code = record?.code;
+  // The ONE re-issue affordance, replacing the bespoke Retry. It shows on every
+  // terminal or stale state (done, empty, error, and idle -- an OPEN term whose
+  // record was evicted from the bounded store reads as a failure with a way to
+  // re-issue, never as a "looking" line that never ends), and is absent while
+  // loading (the click re-enters loading) and on the kill switch (re-issuing what
+  // an operator switched off is a lie). This region carries no `data-*` marker of
+  // its own, so the control's `data-regenerate` is the only handle a test has to
+  // exclude it from a read of the term's text.
+  const regenerable = status !== "loading" && code !== "disabled";
   return (
     <Box sx={{ borderLeft: "2px solid var(--border-strong)", pl: 1.25, ...BREAK_LONG_WORDS_SX }}>
       <Typography variant="caption" component="p" sx={{ m: 0, color: "var(--text-secondary)", fontWeight: 700 }}>
@@ -490,27 +497,18 @@ function TechTermDetail({ term, record, onRetry }) {
           {record.detail}
         </Typography>
       ) : (
-        <Stack direction="row" spacing={1} sx={{ alignItems: "center", flexWrap: "wrap" }} useFlexGap>
-          <Typography variant="body2" sx={{ color: "var(--text-secondary)" }}>
-            {detailMessage(status, record?.code)}
-          </Typography>
-          {retryable ? (
-            // No Retry on the kill switch (retrying what an operator switched
-            // off is a lie) and none on an honest empty (it would spend money to
-            // be told the same thing).
-            <Button
-              type="button"
-              size="small"
-              color="inherit"
-              onClick={onRetry}
-              aria-label={`Retry explaining ${term}`}
-              sx={TOUCH_TARGET_SX}
-            >
-              Retry
-            </Button>
-          ) : null}
-        </Stack>
+        <Typography variant="body2" sx={{ color: "var(--text-secondary)" }}>
+          {detailMessage(status, code)}
+        </Typography>
       )}
+      {regenerable ? (
+        <RegenerateControl
+          name={term}
+          disabled={code === "disabled"}
+          maxChars={MAX_USER_CONTEXT_CHARS}
+          onRegenerate={onRegenerate}
+        />
+      ) : null}
     </Box>
   );
 }
@@ -619,7 +617,12 @@ function TechTermsGroup({ view }) {
             leave an empty landmark for every answer on the page. */}
         <Stack id={regionId} aria-live="polite" spacing={LINE_GAP}>
           {openTerms.map((term) => (
-            <TechTermDetail key={term} term={term} record={api.get(term)} onRetry={() => api.retry(term)} />
+            <TechTermDetail
+              key={term}
+              term={term}
+              record={api.get(term)}
+              onRegenerate={(context) => api.regenerate(term, { context })}
+            />
           ))}
         </Stack>
       </Stack>

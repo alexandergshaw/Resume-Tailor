@@ -4,11 +4,12 @@ import { useId } from "react";
 
 import Box from "@mui/material/Box";
 import Button from "@mui/material/Button";
-import Stack from "@mui/material/Stack";
 import Typography from "@mui/material/Typography";
 
 import { BREAK_LONG_WORDS_SX, TOUCH_TARGET_SX } from "@/app/theme/mobileSx";
+import { MAX_USER_CONTEXT_CHARS } from "@/lib/copilot/projectBulletDetailContract";
 
+import RegenerateControl from "./RegenerateControl";
 import { useProjectBulletDetailApi } from "./useProjectBulletDetails";
 import { useWarmOnMount } from "./useWarmOnMount";
 
@@ -81,12 +82,13 @@ export default function ProjectBulletDetail({ title, bulletIndex, bullet }) {
   const record = api.get(descriptor) || IDLE_RECORD;
   const status = record.status;
   const name = shortName(bullet);
-  // `idle` on an OPEN bullet means its record was evicted from the bounded store;
-  // it reads as a failure with a Retry rather than a "writing" line that never
-  // ends. No Retry on the kill switch (retrying what an operator switched off is a
-  // lie) and none on an honest empty (it would spend money to be told the same
-  // thing).
-  const retryable = (status === "error" || status === "idle") && record.code !== "disabled";
+  // The ONE re-issue affordance, replacing the bespoke Retry. It shows on every
+  // terminal or stale state (done, empty, error, and idle -- an OPEN bullet whose
+  // record was evicted from the bounded store reads as a failure with a way to
+  // re-issue, never as a "writing" line that never ends), and is absent while
+  // loading (the click re-enters loading) and on the kill switch (re-issuing what
+  // an operator switched off is a lie).
+  const regenerable = status !== "loading" && record.code !== "disabled";
 
   const control = (
     <Box data-bullet-detail="control" sx={{ mt: 0.25 }}>
@@ -140,24 +142,18 @@ export default function ProjectBulletDetail({ title, bulletIndex, bullet }) {
             {record.detail}
           </Typography>
         ) : (
-          <Stack direction="row" spacing={1} sx={{ alignItems: "center", flexWrap: "wrap" }} useFlexGap>
-            <Typography component="p" variant="body2" sx={{ m: 0, color: "var(--text-secondary)" }}>
-              {messageFor(status, record.code)}
-            </Typography>
-            {retryable ? (
-              <Button
-                type="button"
-                size="small"
-                color="inherit"
-                onClick={() => api.retry(descriptor)}
-                aria-label={`Retry more detail for: ${name}`}
-                sx={TOUCH_TARGET_SX}
-              >
-                Retry
-              </Button>
-            ) : null}
-          </Stack>
+          <Typography component="p" variant="body2" sx={{ m: 0, color: "var(--text-secondary)" }}>
+            {messageFor(status, record.code)}
+          </Typography>
         )}
+        {regenerable ? (
+          <RegenerateControl
+            name={name}
+            disabled={record.code === "disabled"}
+            maxChars={MAX_USER_CONTEXT_CHARS}
+            onRegenerate={(context) => api.regenerate(descriptor, { context })}
+          />
+        ) : null}
       </Box>
     </>
   );

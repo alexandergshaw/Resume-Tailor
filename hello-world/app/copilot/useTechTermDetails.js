@@ -197,6 +197,20 @@ function useTechTermDetails({ questions, extraQuestions, request, onDetailOutcom
         if (!open.has(resolved.key)) start(term);
       },
       retry: (term) => start(term, { retry: true }),
+      // REGENERATE OVERWRITES THE CURRENT KEY; THE STEERING CONTEXT RIDES THE
+      // REQUEST. It resolves the term's EXISTING key (the same resolve toggle and
+      // retry use) and forces the fetch over whatever record is there, settled or
+      // warmed. `userContext` is added to the payload only, never to the key, so
+      // two different contexts overwrite one record rather than forking a sibling.
+      regenerate: (term, { context } = {}) => {
+        const resolved = resolve(term);
+        if (!resolved) return;
+        beginTechTermDetail(
+          { key: resolved.key, request: { ...resolved.payload, userContext: typeof context === "string" ? context : "" } },
+          fetchTechTermDetail,
+          { force: true },
+        );
+      },
       // Carried so a store write gives the api (and so the context value) a new
       // identity; nothing reads it.
       version: storeVersion.version,

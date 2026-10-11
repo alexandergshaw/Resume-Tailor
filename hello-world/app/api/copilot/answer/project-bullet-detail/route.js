@@ -21,6 +21,7 @@ import { getServerEnv } from "@/lib/config/env";
 import { getGeminiClient } from "@/lib/llm/geminiClient";
 import { wantsEmbedded } from "@/lib/llm/featureEngine";
 import {
+  MAX_USER_CONTEXT_CHARS,
   PROJECT_BULLET_MAX_CHARS,
   PROJECT_SIBLINGS_MAX,
   PROJECT_TITLE_MAX_CHARS,
@@ -162,6 +163,14 @@ export async function POST(request) {
     const applicationId = typeof rawApplicationId === "string" ? rawApplicationId.trim() : "";
     if (applicationId.length > MAX_APPLICATION_ID_CHARS) return fail(INVALID_MESSAGE, 400);
 
+    // OPTIONAL steering note the candidate typed for a regeneration. Absent or not
+    // a string means no note; a string whose TRIMMED length is over the bound is
+    // REFUSED here, never truncated and sent, and ahead of the embedded branch so
+    // no engine and no model client is reached with it. It only ever becomes a
+    // fenced block in the user turn; the output gate below stays unconditional.
+    const userContext = typeof body?.userContext === "string" ? body.userContext.trim() : "";
+    if (userContext.length > MAX_USER_CONTEXT_CHARS) return fail(INVALID_MESSAGE, 400);
+
     // 5. EMBEDDED has no general-knowledge faculty, so it gets an honest empty
     //    and NO model client. In practice the rows are absent on embedded because
     //    their generation returned nothing, so this is defence in depth; it still
@@ -182,7 +191,11 @@ export async function POST(request) {
         contents: [
           {
             role: "user",
-            parts: [{ text: buildProjectBulletDetailUserTurn({ title, bullet, siblingBullets, question, role }) }],
+            parts: [
+              {
+                text: buildProjectBulletDetailUserTurn({ title, bullet, siblingBullets, question, role, userContext }),
+              },
+            ],
           },
         ],
         config: {

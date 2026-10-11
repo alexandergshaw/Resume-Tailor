@@ -13,8 +13,10 @@
 //     green;
 //   • data-bullet-detail on the control (the exclusion the bullet-text test uses);
 //   • aria-controls set only while open (no dangling IDREF);
-//   • no Retry on disabled or empty (retrying those is a lie / a waste); Retry on
-//     error and timeout.
+//   • N155: the bespoke Retry is gone. The shared Regenerate control (carrying
+//     data-regenerate) is the one re-issue affordance, on every open state except
+//     loading and disabled: done, empty, error, timeout, and an evicted (idle)
+//     bullet. A kill-switch state offers neither.
 
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { createElement, act } from "react";
@@ -47,6 +49,7 @@ function makeApi({ record, open = false, resolves = true }) {
     get: () => record,
     toggle: vi.fn(),
     retry: vi.fn(),
+    regenerate: vi.fn(),
   };
 }
 
@@ -73,6 +76,15 @@ const detailButton = () =>
   [...container.querySelectorAll("button")].find((b) => (b.textContent || "").includes("More detail"));
 const retryButton = () =>
   [...container.querySelectorAll("button")].find((b) => /retry/i.test(b.textContent || "") || /retry/i.test(b.getAttribute("aria-label") || ""));
+const regenerateButton = () =>
+  [...container.querySelectorAll("button")].find((b) => /^regenerate/i.test(b.getAttribute("aria-label") || ""));
+// The region's own text with the Regenerate control taken out by its one marker,
+// so a read of "the detail prose" never captures "Regenerate" / "Add context".
+function regionText() {
+  const clone = container.cloneNode(true);
+  clone.querySelectorAll("[data-regenerate]").forEach((n) => n.remove());
+  return clone.textContent;
+}
 
 describe("renders nothing when it cannot be reached", () => {
   it("returns null with no scope mounted (byte-identical DOM)", async () => {
@@ -127,32 +139,62 @@ describe("the open region's states", () => {
     expect(container.querySelector('[aria-busy="true"]')).not.toBeNull();
   });
 
-  it("done: shows the sanitized detail prose", async () => {
+  it("done: shows the sanitized detail prose, with a Regenerate control the prose read excludes", async () => {
     await openWith({ status: "done", detail: "A strong candidate might describe tuning thresholds.", empty: false, code: null });
-    expect(container.textContent).toContain("A strong candidate might describe tuning thresholds.");
+    // The read excludes [data-regenerate], so it is the prose alone: if the
+    // control dropped its marker the words "Regenerate"/"Add context" would leak
+    // into it and the not.toContain lines below would redden.
+    const text = regionText();
+    expect(text).toContain("A strong candidate might describe tuning thresholds.");
+    expect(text).not.toContain("Regenerate");
+    expect(text).not.toContain("Add context");
+    expect(regenerateButton(), "Regenerate is offered under a settled detail").toBeTruthy();
   });
 
-  it("empty: shows a message and offers NO Retry", async () => {
+  it("empty: shows a message, offers NO Retry, and offers Regenerate", async () => {
     await openWith({ status: "empty", detail: "", empty: true, code: null });
     expect(retryButton()).toBeUndefined();
+    // N155: regenerating an honest empty is allowed (a steered second look).
+    expect(regenerateButton()).toBeTruthy();
   });
 
-  it("error: shows a message and a Retry that calls the scope", async () => {
+  it("error: shows a message and a Regenerate that calls the scope with no context", async () => {
     await openWith({ status: "error", detail: "", empty: false, code: "http" });
-    const retry = retryButton();
-    expect(retry, "a Retry button on error").toBeTruthy();
-    await act(async () => retry.dispatchEvent(new MouseEvent("click", { bubbles: true })));
-    expect(h.api.retry).toHaveBeenCalledTimes(1);
+    expect(retryButton(), "the bespoke Retry is removed").toBeUndefined();
+    const regenerate = regenerateButton();
+    expect(regenerate, "a Regenerate button on error").toBeTruthy();
+    await act(async () => regenerate.dispatchEvent(new MouseEvent("click", { bubbles: true })));
+    expect(h.api.regenerate).toHaveBeenCalledTimes(1);
+    expect(h.api.regenerate).toHaveBeenCalledWith({ title: PROPS.title, bulletIndex: PROPS.bulletIndex, bullet: PROPS.bullet }, { context: "" });
+    expect(h.api.retry).not.toHaveBeenCalled();
   });
 
-  it("timeout: offers Retry", async () => {
+  it("timeout: offers Regenerate", async () => {
     await openWith({ status: "error", detail: "", empty: false, code: "timeout" });
-    expect(retryButton()).toBeTruthy();
+    expect(regenerateButton()).toBeTruthy();
   });
 
-  it("disabled (kill switch): shows a message and offers NO Retry", async () => {
+  it("idle (an evicted open bullet): reads as a failure and keeps a Regenerate, never a dead end", async () => {
+    await openWith({ status: "idle", detail: "", empty: false, code: null });
+    expect(regionText()).toContain("Couldn't get more detail.");
+    expect(retryButton()).toBeUndefined();
+    const regenerate = regenerateButton();
+    expect(regenerate, "an evicted open bullet still offers a re-issue").toBeTruthy();
+    await act(async () => regenerate.dispatchEvent(new MouseEvent("click", { bubbles: true })));
+    expect(h.api.regenerate).toHaveBeenCalledTimes(1);
+  });
+
+  it("loading: offers NO Regenerate (the click re-enters loading)", async () => {
+    await openWith({ status: "loading", detail: "", empty: false, code: null });
+    expect(regenerateButton()).toBeUndefined();
+    expect(container.querySelector("[data-regenerate]")).toBeNull();
+  });
+
+  it("disabled (kill switch): shows a message and offers NEITHER Retry nor Regenerate", async () => {
     await openWith({ status: "error", detail: "", empty: false, code: "disabled" });
     expect(retryButton()).toBeUndefined();
+    expect(regenerateButton()).toBeUndefined();
+    expect(container.querySelector("[data-regenerate]")).toBeNull();
   });
 
   it("every top-level node carries data-bullet-detail", async () => {

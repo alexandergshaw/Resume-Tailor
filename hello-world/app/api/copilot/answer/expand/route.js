@@ -9,6 +9,7 @@ import { selectBestStory } from "@/lib/copilot/projectStories";
 import { stripStarLabel } from "@/lib/copilot/answerPoints";
 import {
   MAX_PARENT_POINT_CHARS,
+  MAX_USER_CONTEXT_CHARS,
   expansionCaption,
   normalizeSubBullets,
 } from "@/lib/copilot/expansionContract";
@@ -140,6 +141,15 @@ export async function POST(request) {
       return fail(INVALID_MESSAGE, 400);
     }
 
+    // OPTIONAL steering note the candidate typed for a regeneration. Absent or
+    // not a string means no note; a string whose TRIMMED length is over the bound
+    // is REFUSED here, never truncated and sent, and ahead of the embedded
+    // branch and of every Supabase data read so no engine and no model client is
+    // reached with it. It only ever becomes a fenced block in the user turn; the
+    // honesty filter below stays unconditional.
+    const userContext = typeof body?.userContext === "string" ? body.userContext.trim() : "";
+    if (userContext.length > MAX_USER_CONTEXT_CHARS) return fail(INVALID_MESSAGE, 400);
+
     const embedded = wantsEmbedded(body?.engine);
 
     // 5. THE FAN-OUT, through the answer route's own cached loader with the
@@ -213,6 +223,7 @@ export async function POST(request) {
                   // The resume is the SERVER's own copy (context.resume), never
                   // a body field. It is bounded and fenced inside the builder.
                   materialsContext: { label: "Your resume", text: context.resume },
+                  userContext,
                 }),
               },
             ],

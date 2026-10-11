@@ -69,6 +69,12 @@ export const EXPANSION_MIN_HEIGHT = 20;
 // into a prompt, so the prompt cost is unbounded with it.
 export const MAX_PARENT_POINT_CHARS = 400;
 
+// The longest reader-typed steering note a regenerate request may carry. One
+// home for the bound: the route refuses anything longer and the prompt builder
+// slices to it, both importing it from here. A LITERAL, for the cycle reason
+// above.
+export const MAX_USER_CONTEXT_CHARS = 600;
+
 // How much of a profile enters a cache key. The profile itself runs to 8000
 // characters and must never sit in a map key.
 const PROFILE_HASH_EDGE = 64;

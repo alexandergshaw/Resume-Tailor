@@ -35,6 +35,7 @@ export async function fetchProjectBulletDetail(request) {
     question: request?.question ?? "",
     applicationId: request?.applicationId ?? "",
     engine: request?.engine ?? "",
+    userContext: request?.userContext ?? "",
   };
 
   let response;

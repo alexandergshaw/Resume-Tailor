@@ -141,7 +141,7 @@ describe("fetchTechTermDetail", () => {
     expect(init.method).toBe("POST");
     const sent = JSON.parse(init.body);
     expect(sent.secretExtra).toBeUndefined();
-    expect(Object.keys(sent).sort()).toEqual(["applicationId", "engine", "question", "term"].sort());
+    expect(Object.keys(sent).sort()).toEqual(["applicationId", "engine", "question", "term", "userContext"].sort());
   });
 
   it("bounds the round trip at 6000ms, longer than the server's own 4000ms budget", () => {

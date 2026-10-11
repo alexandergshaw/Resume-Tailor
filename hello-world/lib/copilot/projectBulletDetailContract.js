@@ -21,6 +21,11 @@ export const PROJECT_TITLE_MAX_CHARS = 160;
 // it: this module stays pure and the route does not pull the generator in.
 export const PROJECT_SIBLINGS_MAX = 3;
 
+// The longest reader-typed steering note a regenerate request may carry. One
+// home for the bound: the route refuses anything longer and the prompt builder
+// slices to it, both importing it from here.
+export const MAX_USER_CONTEXT_CHARS = 600;
+
 function text(value) {
   return typeof value === "string" ? normalizeQuestion(value) : "";
 }

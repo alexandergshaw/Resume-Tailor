@@ -8,8 +8,10 @@
 // What this pins that the structural suites cannot:
 //   • a click asks exactly once with the explicit request fields, shows the
 //     loading line, then the explanation; collapse-then-reopen costs nothing;
-//   • a failure reads as a failure with a Retry that re-asks, an honest empty has
-//     no Retry (retrying it only spends money to be told the same thing);
+//   • a failure reads as a failure with a Regenerate that re-asks (N155 D4/AC15
+//     replaced the bespoke Retry with it), an honest empty offers Regenerate too
+//     (AC9), and the kill switch offers neither -- re-issuing what an operator
+//     switched off is a lie (AC10);
 //   • a term no answer in the scope suggested is an inert (disabled) chip, never a
 //     button that silently does nothing;
 //   • the outcome callback the session log hangs off fires once per issued
@@ -65,6 +67,10 @@ async function mount({ questions = QUESTIONS, onDetailOutcome } = {}) {
 
 const chip = (name) => [...document.body.querySelectorAll("button")].find((b) => (b.textContent || "").trim() === name);
 const retryButton = () => [...document.body.querySelectorAll("button")].find((b) => (b.textContent || "").trim() === "Retry");
+// The shared RegenerateControl's button: its accessible name is the aria-label
+// "Regenerate: <term>", so it is found by that name, not by the bare visible text.
+const regenerateButton = () =>
+  [...document.body.querySelectorAll("button")].find((b) => /^regenerate/i.test(b.getAttribute("aria-label") || b.textContent || ""));
 const text = () => document.body.textContent || "";
 
 // A macrotask flush after the click: the store settles a record a few microtasks
@@ -141,12 +147,16 @@ describe("opening a chip", () => {
 });
 
 describe("a request that does not produce an explanation", () => {
-  it("a failure reads as one, and Retry asks again", async () => {
+  it("a failure reads as one, and Regenerate asks again", async () => {
     // N153 ADOPTION: scoped to ONE resolvable term so the prefetch-on-mount warm
-    // and the retry are the only two calls, in that order — the second chip
+    // and the re-issue are the only two calls, in that order — the second chip
     // (circuit breaker) is unresolvable here, so it is a disabled chip that warms
     // nothing. The warm fails (silent), the first open shows the failure, and
-    // Retry re-asks and succeeds.
+    // Regenerate re-asks and succeeds.
+    // N155 ADOPTION (D4/AC15): the bespoke Retry is gone from the error branch; the
+    // shared Regenerate control (no context typed) is the re-issue, so the
+    // recoverable-failure claim is unchanged: a failed detail can be asked again and
+    // the second attempt lands.
     fetchTechTermDetail.mockRejectedValueOnce(Object.assign(new Error("x"), { code: "http" }));
     fetchTechTermDetail.mockResolvedValueOnce({ detail: "Second time works.", empty: false });
     await mount({
@@ -154,8 +164,9 @@ describe("a request that does not produce an explanation", () => {
     });
     await click(chip("idempotency keys"));
     expect(text()).toContain("Couldn't look that up.");
+    expect(retryButton()).toBeUndefined(); // the bespoke Retry no longer renders (AC15)
 
-    await click(retryButton());
+    await click(regenerateButton());
     expect(fetchTechTermDetail).toHaveBeenCalledTimes(2);
     expect(text()).toContain("Second time works.");
   });
@@ -167,19 +178,25 @@ describe("a request that does not produce an explanation", () => {
     expect(text()).toContain("That took too long to look up.");
   });
 
-  it("an honest empty says nothing more and offers no Retry", async () => {
+  it("an honest empty says nothing more, offers Regenerate (AC9) and no bespoke Retry", async () => {
     fetchTechTermDetail.mockResolvedValue({ detail: "", empty: true });
     await mount();
     await click(chip("idempotency keys"));
     expect(text()).toContain("Nothing useful to add for this one.");
+    // N155 AC9: an empty detail is a terminal open state, so the shared control
+    // renders on it, named for the term; the old Retry stays gone (AC15).
+    expect(regenerateButton()?.getAttribute("aria-label")).toBe("Regenerate: idempotency keys");
     expect(retryButton()).toBeUndefined();
   });
 
-  it("the kill switch offers no Retry either", async () => {
+  it("the kill switch offers neither Regenerate nor Retry", async () => {
     fetchTechTermDetail.mockRejectedValue(Object.assign(new Error("x"), { code: "disabled" }));
     await mount();
     await click(chip("idempotency keys"));
     expect(text()).toContain("unavailable on this server");
+    // N155 AC10: the region IS open and showing the disabled message (asserted
+    // above), and still no control -- re-issuing what an operator switched off.
+    expect(regenerateButton()).toBeUndefined();
     expect(retryButton()).toBeUndefined();
   });
 });

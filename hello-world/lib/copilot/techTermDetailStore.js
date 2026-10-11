@@ -15,8 +15,9 @@
 // not set `open`, it cannot reopen a chip the reader closed.
 //
 // THE KEY IS THE GENERATION GUARD. A response settling under a key the UI no
-// longer computes is simply never read: no cancellation, no token, no
-// bookkeeping.
+// longer computes is simply never read: no cancellation and no bookkeeping for a
+// DIFFERENT key. A SAME-key re-issue (a forced regenerate) is the one case the
+// key cannot disambiguate, and the per-key issue token below covers exactly that.
 //
 // NOTHING HERE IS PERSISTED. The detail is general knowledge, but it is also
 // keyed on the interview question, which is the user's own words; writing it to
@@ -33,6 +34,14 @@ const IDLE = Object.freeze({ status: "idle", detail: "", empty: false, code: nul
 // key -> { status, detail, empty, code }
 const records = new Map();
 const listeners = new Set();
+
+// key -> the latest issue number. A terminal (done/empty/error) write is
+// accepted only from the issuer that owns the current number, so a superseded
+// in-flight request's late arrival is dropped instead of overwriting a newer
+// result. The synchronous loading write is NOT guarded: immediate feedback is
+// always wanted. Numbers only ever increase, so a stale issuer can never collide
+// with a later one.
+const issueToken = new Map();
 
 // useSyncExternalStore requires getSnapshot to return the SAME reference when
 // nothing has changed; one that allocates re-renders forever. A counter that
@@ -100,10 +109,15 @@ export function getTechTermDetail(key) {
  * settled, and it only applies to a failure. Retrying an honest empty spends
  * money to be told the same thing.
  *
+ * `force: true` is the explicit regenerate. It re-issues over ANY existing
+ * record, settled or still loading, and re-enters loading synchronously. That is
+ * safe only because of the issue token: the older in-flight request, if any, is
+ * superseded and its late terminal write is dropped.
+ *
  * `loading` is never terminal: every path below settles the key, including the
  * one where the fetcher throws something shapeless.
  */
-export async function beginTechTermDetail({ key, request } = {}, fetcher, { retry = false } = {}) {
+export async function beginTechTermDetail({ key, request } = {}, fetcher, { retry = false, force = false } = {}) {
   if (!key || typeof fetcher !== "function") return;
 
   // THE LOADING RECORD IS THE IN-FLIGHT GUARD. There is deliberately no second
@@ -111,22 +125,32 @@ export async function beginTechTermDetail({ key, request } = {}, fetcher, { retr
   // SYNCHRONOUSLY, before any await, so every later call for the same key finds
   // it here and returns.
   const existing = records.get(key);
-  if (existing && !(retry && existing.status === "error")) return;
+  if (!force && existing && !(retry && existing.status === "error")) return;
+
+  // Claim this key. Every issue gets the next number; only the holder of the
+  // latest one may land a terminal write below.
+  const token = (issueToken.get(key) ?? 0) + 1;
+  issueToken.set(key, token);
 
   // SYNCHRONOUS, before any await: the reader gets feedback in the same frame as
   // the click.
   write(key, { status: "loading", detail: "", empty: false, code: null });
 
+  const settle = (record) => {
+    if (issueToken.get(key) !== token) return;
+    write(key, record);
+  };
+
   try {
     const result = await fetcher(request);
     const detail = typeof result?.detail === "string" ? result.detail.trim() : "";
     if (!detail || result?.empty === true) {
-      write(key, { status: "empty", detail: "", empty: true, code: null });
+      settle({ status: "empty", detail: "", empty: true, code: null });
     } else {
-      write(key, { status: "done", detail, empty: false, code: null });
+      settle({ status: "done", detail, empty: false, code: null });
     }
   } catch (err) {
-    write(key, {
+    settle({
       status: "error",
       detail: "",
       empty: false,
