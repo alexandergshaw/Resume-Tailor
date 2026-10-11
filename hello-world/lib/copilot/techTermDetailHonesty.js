@@ -62,7 +62,9 @@ const ABBREVIATION_TAIL_RE = /(?:\be\.g|\bi\.e|\bvs|\bcf|\bapprox)$/i;
 // fuse the claim to the clean sentence after it and drop both.
 const SENTENCE_END_RE = /[.!?]+["'”’)\]]*(?=\s|$)/g;
 
-function splitSentences(text) {
+// Exported so projectBulletDetailHonesty.js reuses the splitter rather than
+// copying it: one sentence boundary rule, one place to fix it.
+export function splitSentences(text) {
   const sentences = [];
   let start = 0;
   for (const match of text.matchAll(SENTENCE_END_RE)) {
@@ -84,7 +86,8 @@ function trailingPunctuation(match) {
 
 // Markdown, links, URLs and email addresses out, prose kept. The prompt asks for
 // none of them; this makes that a hard property of what reaches the screen.
-function stripMarkup(text) {
+// Exported for the same reason as splitSentences above.
+export function stripMarkup(text) {
   return (
     text
       // [label](url) -> label

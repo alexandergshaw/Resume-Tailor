@@ -291,6 +291,10 @@ const DEFERRED = [
     route: "app/api/copilot/answer/tech-term-detail/route.js",
     why: "N153 (owner ruling, 2026-10-08) -- the per-buzzword detail route's cap (40/10min, N150) was removed alongside /expand's for the same reason: the copilot prefetches every shown term's detail, and a cap could only refuse a real candidate mid-interview. The client-side concurrency throttle plus the store dedupe are the anti-burst controls instead. Hard-authenticated via getUser(), so the module-scope createRateLimiter seam is the ready insertion point if the owner sets a number later.",
   },
+  {
+    route: "app/api/copilot/answer/project-bullet-detail/route.js",
+    why: "N154 (owner ruling, 2026-10-08) -- the per-bullet 'More detail' route for the invented example projects, born unmetered. Prefetched on render like its two siblings above, so a cap could only refuse a real candidate mid-interview. The client-side concurrency throttle (lib/copilot/prefetchQueue.js) plus the store's in-flight/settled dedupe are the anti-burst controls instead. Hard-authenticated via getUser(), so the module-scope createRateLimiter seam is the ready insertion point if the owner sets a number later.",
+  },
 ];
 
 /**
@@ -844,5 +848,25 @@ describe("N153 — the two per-click expanders are now DEFERRED/unmetered (gen s
     expect(bounded).toMatch(/createRateLimiter/);
     expect(bounded).toMatch(/status:\s*429/);
     expect(bounded).toMatch(/@\/lib\/rateLimit/);
+  });
+});
+
+describe("N154 — the per-bullet DETAIL route is DEFERRED/unmetered (route+adoption landing pair)", () => {
+  // RED on HEAD: the DEFERRED entry for the project-bullet-detail route is not in
+  // the table yet, so the membership assertion below fails. The implementer adds
+  // that entry in the SAME wave as the route file (plan step 7 + step 13 landing
+  // pair): the moment the route exists and transitively reachModel()s, the
+  // it.each model-reach sweep above ALSO demands the entry, so a route landed
+  // without it reds twice. This explicit, named block is the hand-off; it depends
+  // only on the DEFERRED table, so it reds cleanly (no file read) until the entry
+  // lands.
+  const PROJECT_BULLET = "app/api/copilot/answer/project-bullet-detail/route.js";
+
+  it("is accounted DEFERRED with an owner-ruling reason, and not BOUNDED", () => {
+    expect(DEFERRED_ROUTES.has(PROJECT_BULLET)).toBe(true);
+    expect(BOUNDED_ROUTES.has(PROJECT_BULLET)).toBe(false);
+    const entry = DEFERRED.find((e) => e.route === PROJECT_BULLET);
+    expect(entry, "a DEFERRED entry for the per-bullet detail route").toBeTruthy();
+    expect(entry.why).toMatch(/owner ruling/i);
   });
 });

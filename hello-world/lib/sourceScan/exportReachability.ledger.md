@@ -21,12 +21,12 @@ Current pinned values, as of the last entry in each section:
 | `ALLOWED_UNREACHABLE_MODULES.length`        | 14     |
 | `UNWIRED_MODULES` (exact list of 5 files)   | 5      |
 | `ORPHAN_EXPORTS.length`                     | 65     |
-| `TEST_REFERENCED.length` (rule TR-1)        | 424    |
-| `UNUSED_IN_SHIPPING_MODULES.length`         | 489    |
+| `TEST_REFERENCED.length` (rule TR-1)        | 426    |
+| `UNUSED_IN_SHIPPING_MODULES.length`         | 491    |
 
 The identity that ties the last three together, and that the test asserts
 directly, is `UNUSED_IN_SHIPPING_MODULES = TEST_REFERENCED + ORPHANS`
-(424 + 65 = 489).
+(426 + 65 = 491).
 
 ---
 
@@ -182,7 +182,7 @@ it.
 
 ---
 
-## 4. TEST_REFERENCED, rule TR-1 (pinned at 424)
+## 4. TEST_REFERENCED, rule TR-1 (pinned at 426)
 
 Exports unused by shipping code that at least one `.test.js` imports BY NAME.
 A raise is a review event: check the new export is a helper being pinned, not
@@ -682,11 +682,41 @@ unmoved at 65. Measured by running the sweep's own scan (exportReachability.scan
 over the post-change tree and listing every export of the two new modules and the files
 the chunk edited; the two names above are the complete symmetric difference against the
 N151b baseline.
+N154: 424 -> 426 (+3, -1): the per-bullet "More detail" on the invented example-project
+rows. IN (+3), by name, each pinned by name by its module's own suite and each read ONLY
+from inside its own module in production (so none is dead, and none is an orphan -- a
+suite does import it):
+  lib/copilot/projectBulletDetailHonesty.js#PROJECT_BULLET_DETAIL_MAX_SENTENCES -- the
+    owner-tunable sentence cap (6), read by sanitizeProjectBulletDetail;
+  lib/copilot/projectBulletDetailStore.js#PROJECT_BULLET_DETAIL_STORE_MAX -- the LRU
+    bound (200), read by the store's own write;
+  lib/copilot/projectBulletDetailStore.js#resetProjectBulletDetailStore -- the store's
+    test-only reset, the same role resetTechTermDetailStore plays; never called from
+    application code.
+OUT (-1), by name: lib/copilot/techTermDetailHonesty.js#isFirstPersonClaim -- the N150
+entry above, which was test-referenced only; the new gate (projectBulletDetailHonesty.js,
+reached from the project-bullet-detail route) imports it, so it has a production importer
+and leaves the bucket. techTermDetailHonesty.js also gained two exports, stripMarkup and
+splitSentences, both imported by that same gate, so neither is in either bucket.
+Every other export the chunk added has a shipping importer and is in neither bucket:
+projectBulletDetailKey and the three bound constants (the route, the prompt and
+useProjectBulletDetails.js), PROJECT_BULLET_DETAIL_SYSTEM and
+buildProjectBulletDetailUserTurn (the route), sanitizeProjectBulletDetail (the route),
+fetchProjectBulletDetail (useProjectBulletDetails.js), subscribe / getSnapshot /
+getProjectBulletDetail / beginProjectBulletDetail (useProjectBulletDetails.js),
+ProjectBulletDetailScope / useProjectBulletDetailApi (CopilotClient.js, PracticeClient.js
+and ProjectBulletDetail.js), ProjectBulletDetail's default export (AnswerAids.js), and the
+new route's POST (a Next.js entry). No new module is unreachable:
+ALLOWED_UNREACHABLE_MODULES and UNWIRED_MODULES unmoved at 14 and 5. ORPHAN_EXPORTS
+unmoved at 65. Measured by running the sweep's own scan (exportReachability.scan.js) over
+the post-change tree and listing every export of the eight new modules and the files the
+chunk edited; the four names above are the complete symmetric difference against the N153
+baseline.
 ```
 
 ---
 
-## 5. UNUSED_IN_SHIPPING_MODULES total (pinned at 489)
+## 5. UNUSED_IN_SHIPPING_MODULES total (pinned at 491)
 
 The sum of the two halves above (`TEST_REFERENCED + ORPHANS`); the test also
 asserts that identity directly, so the split is pinned and not only the total.
@@ -868,4 +898,11 @@ PREFETCH_CONCURRENCY and createPrefetchQueue; ORPHAN_EXPORTS unmoved at 65). The
 moving by exactly the TR-1 half's +2 with the orphan half frozen is what says this was a
 widened export surface for a unit suite and not a feature built and never wired.
 TEST_REFERENCED 424 + ORPHANS 65.
+N154: 489 -> 491 (TEST_REFERENCED's +3 -1 = +2, named at section 4: IN
+PROJECT_BULLET_DETAIL_MAX_SENTENCES, PROJECT_BULLET_DETAIL_STORE_MAX and
+resetProjectBulletDetailStore; OUT techTermDetailHonesty.js#isFirstPersonClaim, which
+gained a shipping importer in projectBulletDetailHonesty.js; ORPHAN_EXPORTS unmoved at
+65). The total moving by exactly the TR-1 half's net +2 with the orphan half frozen is
+what says this was a widened export surface for unit suites and not a feature built and
+never wired. TEST_REFERENCED 426 + ORPHANS 65.
 ```

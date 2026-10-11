@@ -9,6 +9,7 @@ import { buildPrivacyNotice } from "@/lib/copilot/practiceNotices";
 import { useEngine } from "@/app/settings/engine";
 import { ExpansionScope } from "../useAnswerExpansions";
 import { TechTermDetailScope } from "../useTechTermDetails";
+import { ProjectBulletDetailScope } from "../useProjectBulletDetails";
 import { GlossaryProvider } from "../GlossaryProvider";
 import { useIsTablet } from "@/app/hooks/useResponsive";
 import TranscriptView from "../TranscriptView";
@@ -625,18 +626,14 @@ export default function PracticeClient({
     // question and the RAW points array the answer on screen came from.
     // GLOSSARY TERMS -- see CopilotClient.js's note above its own provider.
     <GlossaryProvider applicationId={posting?.id || ""}>
-    <ExpansionScope
-      questions={dashboardQuestions}
-      request={{ applicationId: posting?.id || "", profile, interviewType, codeLanguage, engine }}
-    >
-    {/* TECH BUZZWORD DETAILS: one scope, like the expansion scope around it,
-        which also lists the detected room questions so their chips resolve. */}
-    <TechTermDetailScope
-      questions={dashboardQuestions}
-      extraQuestions={roomQuestions.questions}
-      request={{ applicationId: posting?.id || "", engine }}
-      onDetailOutcome={sessionLog.logTechTermDetail}
-    >
+    {/* Three detail scopes nest around the page. Each subscribes once per
+        surface (expansion = per-bullet "More detail"; term + project-bullet =
+        detail controls, both listing the detected room questions so their
+        chips resolve). See useAnswerExpansions / useTechTermDetails /
+        useProjectBulletDetails for why they live here and not per card. */}
+    <ExpansionScope questions={dashboardQuestions} request={{ applicationId: posting?.id || "", profile, interviewType, codeLanguage, engine }}>
+    <TechTermDetailScope questions={dashboardQuestions} extraQuestions={roomQuestions.questions} request={{ applicationId: posting?.id || "", engine }} onDetailOutcome={sessionLog.logTechTermDetail}>
+    <ProjectBulletDetailScope questions={dashboardQuestions} extraQuestions={roomQuestions.questions} request={{ applicationId: posting?.id || "", engine }}>
     <Box>
       <PracticeSetup
         privacyNotice={privacyNotice}
@@ -939,6 +936,7 @@ export default function PracticeClient({
         <PracticeHistory refreshSignal={savedAnswerVersion} />
       </Box>
     </Box>
+    </ProjectBulletDetailScope>
     </TechTermDetailScope>
     </ExpansionScope>
     </GlossaryProvider>

@@ -13,6 +13,7 @@ import { normalizeAidChoice } from "../../lib/copilot/aidDisclosure.js";
 import { createChoiceStore } from "../../lib/copilot/choiceStore.js";
 import { PROJECT_PAGE_SOURCE } from "../../lib/copilot/projectStories.js";
 import CollapsibleAid from "./CollapsibleAid";
+import ProjectBulletDetail from "./ProjectBulletDetail";
 import { useTechTermDetailApi } from "./useTechTermDetails";
 import { useWarmOnMount } from "./useWarmOnMount";
 
@@ -337,6 +338,9 @@ function ExampleBody({ entry, withCompetency }) {
         {entry.bullets.map((bullet, i) => (
           <Typography key={i} component="li" variant="body2" sx={{ color: "var(--text-primary)" }}>
             {bullet}
+            {/* The per-bullet "More detail" control: prose inside this <li>, never
+                an <li> of its own, and null when no scope is mounted. */}
+            <ProjectBulletDetail title={entry.title} bulletIndex={i} bullet={bullet} />
           </Typography>
         ))}
       </Box>

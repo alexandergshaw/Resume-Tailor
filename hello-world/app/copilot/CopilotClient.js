@@ -14,6 +14,7 @@ import { visuallyHidden } from "@/lib/copilot/answerStatus";
 import { useEngine } from "@/app/settings/engine";
 import { ExpansionScope } from "./useAnswerExpansions";
 import { TechTermDetailScope } from "./useTechTermDetails";
+import { ProjectBulletDetailScope } from "./useProjectBulletDetails";
 import { GlossaryProvider } from "./GlossaryProvider";
 import { useIsMobile } from "@/app/hooks/useResponsive";
 import { TOUCH_ICON_SX } from "@/app/theme/mobileSx";
@@ -566,6 +567,17 @@ export default function CopilotClient() {
         logEvent("techTerms.detail", { term: detail.term, status: detail.status, code: detail.code ?? undefined })
       }
     >
+    {/* PROJECT BULLET DETAILS: the same single-scope arrangement, for the "More
+        detail" control under each bullet of the invented example projects. Each
+        opened bullet's outcome goes to the session log as its status and code
+        only -- never the bullet, the question or the elaboration. */}
+    <ProjectBulletDetailScope
+      questions={questions}
+      request={{ applicationId: posting?.id || "", engine }}
+      onDetailOutcome={(outcome) =>
+        logEvent("projectExample.bulletDetail", { status: outcome.status, code: outcome.code ?? undefined })
+      }
+    >
     <Box sx={{ maxWidth: 1180, mx: "auto", p: { xs: 1.5, sm: 3 } }}>
       {/* I8: consolidated pin/brief live region, mounted empty, never
           conditionally rendered — only its text ever changes. */}
@@ -927,6 +939,7 @@ export default function CopilotClient() {
         </>
       )}
     </Box>
+    </ProjectBulletDetailScope>
     </TechTermDetailScope>
     </ExpansionScope>
     </GlossaryProvider>
