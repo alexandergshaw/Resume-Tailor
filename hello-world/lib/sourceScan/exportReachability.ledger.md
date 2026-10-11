@@ -21,12 +21,12 @@ Current pinned values, as of the last entry in each section:
 | `ALLOWED_UNREACHABLE_MODULES.length`        | 14     |
 | `UNWIRED_MODULES` (exact list of 5 files)   | 5      |
 | `ORPHAN_EXPORTS.length`                     | 65     |
-| `TEST_REFERENCED.length` (rule TR-1)        | 426    |
-| `UNUSED_IN_SHIPPING_MODULES.length`         | 491    |
+| `TEST_REFERENCED.length` (rule TR-1)        | 427    |
+| `UNUSED_IN_SHIPPING_MODULES.length`         | 492    |
 
 The identity that ties the last three together, and that the test asserts
 directly, is `UNUSED_IN_SHIPPING_MODULES = TEST_REFERENCED + ORPHANS`
-(426 + 65 = 491).
+(427 + 65 = 492).
 
 ---
 
@@ -182,7 +182,7 @@ it.
 
 ---
 
-## 4. TEST_REFERENCED, rule TR-1 (pinned at 426)
+## 4. TEST_REFERENCED, rule TR-1 (pinned at 427)
 
 Exports unused by shipping code that at least one `.test.js` imports BY NAME.
 A raise is a review event: check the new export is a helper being pinned, not
@@ -712,11 +712,20 @@ unmoved at 65. Measured by running the sweep's own scan (exportReachability.scan
 the post-change tree and listing every export of the eight new modules and the files the
 chunk edited; the four names above are the complete symmetric difference against the N153
 baseline.
+N156: 426 -> 427 (+1, -0): the live-Clear two-step confirm (safety footgun fix).
+IN (+1), by name:
+  app/copilot/SessionControls.js#CLEAR_CONFIRM_WINDOW_MS -- the auto-revert window (4000ms)
+    for the inline "Confirm clear?" arm state; read ONLY inside SessionControls' own
+    setTimeout in production, and imported by SessionControls.compact.test.js (via a
+    namespace import, which the scan credits as a test consumer through the `file#*` edge),
+    so it is test-referenced, not an orphan. No feature was built-and-never-connected: the
+    window governs behaviour the component already uses. ORPHAN_EXPORTS unmoved at 65;
+    ALLOWED_UNREACHABLE_MODULES / UNWIRED_MODULES unmoved at 14 / 5.
 ```
 
 ---
 
-## 5. UNUSED_IN_SHIPPING_MODULES total (pinned at 491)
+## 5. UNUSED_IN_SHIPPING_MODULES total (pinned at 492)
 
 The sum of the two halves above (`TEST_REFERENCED + ORPHANS`); the test also
 asserts that identity directly, so the split is pinned and not only the total.
@@ -905,4 +914,9 @@ gained a shipping importer in projectBulletDetailHonesty.js; ORPHAN_EXPORTS unmo
 65). The total moving by exactly the TR-1 half's net +2 with the orphan half frozen is
 what says this was a widened export surface for unit suites and not a feature built and
 never wired. TEST_REFERENCED 426 + ORPHANS 65.
+N156: 491 -> 492 (TEST_REFERENCED's +1, named at section 4:
+SessionControls.js#CLEAR_CONFIRM_WINDOW_MS; ORPHAN_EXPORTS unmoved at 65). The total
+moving by exactly the TR-1 half's +1 with the orphan half frozen is what says this was a
+single widened export for its unit suite (the Clear-confirm window, used internally by the
+component) and not a feature built and never wired. TEST_REFERENCED 427 + ORPHANS 65.
 ```

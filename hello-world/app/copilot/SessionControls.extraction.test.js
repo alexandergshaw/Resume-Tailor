@@ -70,8 +70,12 @@ describe("the session control row moved to SessionControls.js", () => {
     // ...and that it really did remove the two comment occurrences the bans
     // below would otherwise trip on, rather than being an identity function.
     // These are not hypothetical: both were RED before the stripper existed.
-    expect(CONTROLS).toMatch(/\buseState\b/); // present, in this module's doc
-    expect(CONTROLS_CODE).not.toMatch(/\buseState\b/); // ...and only there
+    // N156: this used to name `useState`, but the module now legitimately calls
+    // useState (the Clear confirm guard, see the hooks test below), so the
+    // control names `useCallback` instead — a hook the module's doc mentions
+    // (to say it has none) and its code never calls.
+    expect(CONTROLS).toMatch(/\buseCallback\b/); // present, in this module's doc
+    expect(CONTROLS_CODE).not.toMatch(/\buseCallback\b/); // ...and only there
     expect(CLIENT).toMatch(/Download session log/); // present, in the mount's comment
     expect(CLIENT_CODE).not.toMatch(/Download session log/); // ...and only there
   });
@@ -97,18 +101,47 @@ describe("the session control row moved to SessionControls.js", () => {
     expect(CONTROLS_CODE).toMatch(/id="live-download-log-reason"/);
   });
 
-  it("holds no state of its own, which is what makes the move order-preserving", () => {
+  it("holds no SESSION state of its own, only the local Clear confirm guard (N156)", () => {
     // The load-bearing claim of a React extraction: hook call order is
     // positional, so an extraction that carried a useState or a useEffect
     // across this boundary would be a behaviour change rather than a
-    // relocation. This component has none — every value it renders is a prop.
-    // If a later feature genuinely needs local state here, AMEND this with the
-    // reason rather than deleting it; the guard is cheap and the property it
-    // names is the one that made this move safe.
-    expect(CONTROLS_CODE).not.toMatch(/\buseState\b/);
-    expect(CONTROLS_CODE).not.toMatch(/\buseEffect\b/);
-    expect(CONTROLS_CODE).not.toMatch(/\buseRef\b/);
-    expect(CONTROLS_CODE).not.toMatch(/\buseCallback\b/);
+    // relocation. Every value this component renders is still a prop.
+    //
+    // AMENDED for N156 (orchestrator ruling: local hooks are permitted here).
+    // The live Clear button wiped the whole session on one tap, so it now needs
+    // an inline two-step confirm: an armed flag, the timer handle that ends the
+    // armed state, and the cleanup of that timer on unmount. That is a NEW
+    // hook set inside this module, not one moved out of CopilotClient, so it
+    // cannot change CopilotClient's own hook call order — the property this
+    // test was written to protect. The ban is therefore narrowed rather than
+    // dropped: the module may call EXACTLY one useState (a boolean flag
+    // initialised to false), one useRef and one useEffect, and no other hook,
+    // so session state (a transcript, a question list, a pipeline ref) added
+    // here later still turns this red.
+    const calls = (hook) => (CONTROLS_CODE.match(new RegExp(`\\b${hook}\\(`, "g")) || []).length;
+    expect(calls("useState"), "exactly one useState: the Clear armed flag").toBe(1);
+    expect(CONTROLS_CODE, "...and it is a boolean flag, not session data").toMatch(
+      /const \[clearArmed, setClearArmed\] = useState\(false\)/,
+    );
+    expect(calls("useRef"), "exactly one useRef: the confirm-window timer handle").toBe(1);
+    expect(calls("useEffect"), "exactly one useEffect: clearing that timer on unmount").toBe(1);
+    // The timer the effect cleans up is really there, so the effect is not a
+    // no-op standing in for a leaked setTimeout.
+    expect(CONTROLS_CODE).toMatch(/\bsetTimeout\(/);
+    expect(CONTROLS_CODE).toMatch(/\bclearTimeout\(/);
+    // Every other React hook stays banned.
+    for (const hook of [
+      "useCallback",
+      "useMemo",
+      "useReducer",
+      "useContext",
+      "useLayoutEffect",
+      "useSyncExternalStore",
+      "useImperativeHandle",
+      "useId",
+    ]) {
+      expect(CONTROLS_CODE, `${hook} stays banned`).not.toMatch(new RegExp(`\\b${hook}\\b`));
+    }
   });
 
   it("is imported AND rendered by CopilotClient, which no longer holds the row itself", () => {

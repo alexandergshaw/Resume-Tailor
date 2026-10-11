@@ -1826,7 +1826,7 @@
 
 - id: "N156"
   state: "actionable"
-  title: "**N144b follow-up (safety footgun, low): the copilot live 'Clear' button wipes the whole transcript + every question + the confirm gate with NO confirmation, 12px from Copy/Download (SessionControls). A mistap destroys the session. FIX: a confirm (or an undo) on Clear. Surfaced by the N144b plan (OD-B3); desktop + mobile.**"
+  title: "**SHIPPED 2026-10-11 (Design A inline two-step confirm; full suite green 19514 + sweep reconciled): N144b follow-up (safety footgun, low): the copilot live 'Clear' button wipes the whole transcript + every question + the confirm gate with NO confirmation, 12px from Copy/Download (SessionControls). A mistap destroys the session. FIX: a confirm (or an undo) on Clear. Surfaced by the N144b plan (OD-B3); desktop + mobile.**"
   owed_by: "Small: add a confirm/undo to the destructive Clear"
   evidence: ["N144b plan 2026-10-08 OD-B3: Clear wipes everything unconfirmed, 12px from Copy"]
   blocked_reason: null

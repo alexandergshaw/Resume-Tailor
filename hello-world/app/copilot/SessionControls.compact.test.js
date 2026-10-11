@@ -44,6 +44,12 @@ import { ThemeProvider } from "@mui/material/styles";
 import { makeTheme } from "@/app/theme/index.js";
 import { resetAllChoiceStores } from "@/lib/copilot/choiceStore.js";
 import SessionControls from "./SessionControls.js";
+// N156: a namespace import (never a named import) so a build that has not yet
+// added the export does not fail the whole module at link time — it surfaces as
+// `undefined` inside the one test that needs it, where it fails as a readable
+// assertion, not a load error. Single-sources the arm-window duration from the
+// component so the test never hardcodes a bare number (orchestrator ruling).
+import * as SessionControlsModule from "./SessionControls.js";
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -149,6 +155,41 @@ const panelOf = (hdr) => {
 };
 async function click(el) {
   await act(async () => el.dispatchEvent(new MouseEvent("click", { bubbles: true })));
+}
+
+// ---------------------------------------------------------------------------
+// N156 helpers (shared by the two-step-confirm cases below).
+// ---------------------------------------------------------------------------
+// Find THE Clear control WITHOUT pinning the design-chosen armed label. In the
+// idle state it is named "Clear" (AC-6); once armed its accessible name changes
+// (e.g. "Confirm clear?"). Every OTHER button in the row has a stable name, so
+// "the one action button that is none of those" is the Clear control in either
+// state — a label-agnostic lookup that a user's eye performs too (they click
+// the same control in the same spot). Asserts uniqueness so an ambiguous match
+// fails loudly instead of silently driving the wrong node.
+const CLEAR_SIBLINGS = new Set(["Copy", "Download session log", "Stop", "Start session", ACTIONS_LABEL]);
+function clearControl() {
+  const candidates = buttons().filter((b) => !CLEAR_SIBLINGS.has(accessibleName(b)));
+  expect(candidates.length, "exactly one non-sibling action button (the Clear control)").toBe(1);
+  return candidates[0];
+}
+
+// The persistent polite live region (role=status implies aria-live=polite).
+function liveRegion(scope = container) {
+  return scope.querySelector('[aria-live="polite"], [role="status"]');
+}
+
+// Mount an ENABLED Clear on one of the two surfaces the AC names: desktop
+// inline (compact=false) or the compact tuck (compact && live, disclosure
+// opened first, exactly as the C-tests drive it). Takes a pre-built props
+// object so the caller holds the same clearAll spy it asserts on.
+async function mountEnabled(surface, props) {
+  if (surface === "inline") {
+    await mount({ ...props, compact: false, live: true }, DESKTOP);
+  } else {
+    await mount({ ...props, compact: true, live: true }, PHONE);
+    await click(header());
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -304,16 +345,26 @@ describe("C6: Clear disabled iff finals AND questions empty; handlers fire once,
     expect(byName("Clear").disabled).toBe(false);
   });
 
-  it("each action calls its own handler exactly once (tucked, all enabled)", async () => {
+  it("each action calls its own handler once; Clear now takes the two-step confirm (tucked, all enabled)", async () => {
+    // N156 BLAST RADIUS: this test used to click "Clear" ONCE and assert
+    // clearAll was called once. Design A (inline two-step confirm) makes a
+    // single activation ARM, not wipe, so that assertion is now false. It is
+    // restated here to the arm+confirm flow, preserving its intent — that a
+    // CONFIRMED clear still calls clearAll exactly once — not deleted, not
+    // weakened to accept either count. This red on HEAD is expected and correct
+    // (see docs/loop/N156.ac.r1.md "Blast radius").
     const props = baseProps({ compact: true, live: true, finals: [{ text: "x" }], questions: [{ id: 1 }], sessionLogHasEvents: true });
     await mount(props, PHONE);
     await click(header());
     await click(byName("Copy"));
-    await click(byName("Clear"));
-    await click(byName("Download session log"));
     expect(props.copyTranscript).toHaveBeenCalledTimes(1);
-    expect(props.clearAll).toHaveBeenCalledTimes(1);
+    await click(byName("Download session log"));
     expect(props.downloadLog).toHaveBeenCalledTimes(1);
+    // Clear: arm (no wipe), then confirm within the window (wipes once).
+    await click(clearControl());
+    expect(props.clearAll, "arming Clear alone does not wipe").toHaveBeenCalledTimes(0);
+    await click(clearControl());
+    expect(props.clearAll, "a confirmed Clear wipes exactly once").toHaveBeenCalledTimes(1);
   });
 });
 
@@ -406,4 +457,212 @@ describe("source scan: SessionControls wires CollapsibleAid and adds no Collapse
     expect(src).not.toMatch(/\border:\s*\d/);
     expect(src).not.toMatch(/aria-label/);
   });
+});
+
+// ===========================================================================
+// N156 — live "Clear" safety fix: inline two-step confirm (Design A).
+//
+// Failure direction (docs/loop/N156.ac.r1.md): the DANGEROUS error is wiping on
+// a single activation (irrecoverable loss); the SAFE error is asking to confirm
+// when the user did not strictly need to. Every CORE case below is written so
+// the PASSING direction is "one activation does NOT wipe", so any build that
+// lets a single activation through — including HEAD's direct onClick={clearAll}
+// (SessionControls.js:103), which is exactly the "restore direct onClick"
+// mutant — turns it red.
+//
+// RED-on-HEAD set: N1 (AC-1), N2 (AC-2), N3 (AC-3), N4 (AC-4).
+// GUARDS (green on HEAD, teeth on the mutant): N5 (AC-5), N6 (AC-6), N7 (AC-7).
+// The Clear control is driven BY RE-ACTIVATING THE SAME on-screen control a
+// user would click (clearControl(), label-agnostic) — never by calling a
+// handler directly — so these are reachability tests, not handler pokes.
+// ===========================================================================
+
+// ---------------------------------------------------------------------------
+// N1 (AC-1) [CORE] — one activation of Clear does NOT wipe. Both surfaces.
+// RED on HEAD: line 103 wires onClick={clearAll}, so one click calls it once
+// (got 1, want 0). This is the safety criterion; the "restore direct onClick"
+// mutant is HEAD itself, so the RED-on-HEAD run is that mutant's kill.
+// ---------------------------------------------------------------------------
+describe("N1 (AC-1): a single activation of Clear does NOT wipe the session", () => {
+  for (const surface of ["inline", "tucked"]) {
+    it(`one activation → clearAll called 0 times (${surface})`, async () => {
+      const props = baseProps({ finals: [{ text: "x" }], questions: [{ id: 1 }] });
+      await mountEnabled(surface, props);
+      await click(clearControl());
+      expect(props.clearAll, "a single activation must not wipe (RED on HEAD: HEAD wipes once)").toHaveBeenCalledTimes(0);
+      // Control vs. a vacuous 0: the Clear control is still mounted and
+      // reachable after arming (0 because the arm held, not because the
+      // control vanished or never mounted).
+      expect(clearControl(), "Clear control is still reachable after arming").toBeTruthy();
+    });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// N2 (AC-2) [CORE] — a completed confirm wipes EXACTLY once. Both surfaces.
+// RED on HEAD: two activations call clearAll twice (no arm gate) → got 2,
+// want 1. The single "exactly 1" assertion is its own over/under-fire control:
+// it fails for 0 (Clear unreachable) and for 2 (double-fire) alike.
+// ---------------------------------------------------------------------------
+describe("N2 (AC-2): arm then confirm within the window wipes exactly once", () => {
+  for (const surface of ["inline", "tucked"]) {
+    it(`arm + confirm → clearAll called exactly 1 time (${surface})`, async () => {
+      const props = baseProps({ finals: [{ text: "x" }], questions: [{ id: 1 }] });
+      await mountEnabled(surface, props);
+      await click(clearControl()); // arm
+      await click(clearControl()); // confirm, within the arm window
+      expect(
+        props.clearAll,
+        "arm+confirm wipes exactly once (RED on HEAD: two clicks give 2; also fails 0=unreachable)",
+      ).toHaveBeenCalledTimes(1);
+    });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// N3 (AC-3) [CORE] — the arm auto-reverts; an expired arm does NOT wipe and
+// re-arms on the next activation. RED on HEAD: there is no arm or timer, and
+// the first activation already wiped, so "uncalled after the window" is false.
+// Concurrency/async rule: proven with fake timers + an executed revert, never
+// a same-tick assertion.
+// ---------------------------------------------------------------------------
+describe("N3 (AC-3): the arm auto-reverts past the named window and re-arms", () => {
+  it("advancing past CLEAR_CONFIRM_WINDOW_MS cancels the arm; a later single activation re-arms, no wipe", async () => {
+    vi.useFakeTimers();
+    try {
+      const props = baseProps({ compact: false, finals: [{ text: "x" }], questions: [] });
+      await mount(props, DESKTOP);
+      expect(accessibleName(clearControl()), "idle name is Clear before arming").toBe("Clear");
+
+      // Arm. RED on HEAD: this first activation already called clearAll once,
+      // so the assertion fails here (got 1, want 0) BEFORE any timer math — the
+      // test never reaches the (undefined-on-HEAD) window constant.
+      await click(clearControl());
+      expect(props.clearAll, "arming must not wipe (RED on HEAD)").toHaveBeenCalledTimes(0);
+
+      // Advance past the NAMED, single-sourced window constant.
+      const WINDOW = SessionControlsModule.CLEAR_CONFIRM_WINDOW_MS;
+      expect(typeof WINDOW, "arm window must be an exported numeric constant the test can advance past").toBe("number");
+      await act(async () => {
+        vi.advanceTimersByTime(WINDOW + 100);
+      });
+
+      // Auto-reverted: idle affordance restored, live region cleared, no wipe.
+      expect(accessibleName(clearControl()), "idle name restored after revert").toBe("Clear");
+      const region = liveRegion();
+      expect(region && region.textContent.trim(), "live region empty after auto-revert").toBeFalsy();
+      expect(props.clearAll, "an expired arm never wipes").toHaveBeenCalledTimes(0);
+
+      // A subsequent SINGLE activation RE-ARMS (still no wipe) — the expiry did
+      // not leave a latent confirm that a lone click could trip.
+      await click(clearControl());
+      expect(props.clearAll, "re-arm after expiry does not wipe").toHaveBeenCalledTimes(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// N4 (AC-4) [A11y] — the armed state is announced via a PERSISTENT polite live
+// region: present (empty) while idle, the SAME node becomes non-empty when
+// armed, empty again after the confirmed wipe. RED on HEAD: no aria-live /
+// role=status exists in SessionControls today. Teeth on three mutants — remove
+// the region, newly-mount it on arm (copilot-mobile: a remounted region holding
+// text is never announced), or leave its armed text empty.
+// ---------------------------------------------------------------------------
+describe("N4 (AC-4): armed state announced via a persistent polite live region", () => {
+  it("region exists idle (empty), SAME node is non-empty when armed, empty after confirm", async () => {
+    const props = baseProps({ compact: false, finals: [{ text: "x" }], questions: [] });
+    await mount(props, DESKTOP);
+
+    const idleRegion = liveRegion();
+    expect(idleRegion, "a persistent polite live region exists while idle (RED on HEAD: none)").toBeTruthy();
+    expect(idleRegion.textContent.trim(), "idle region is empty").toBeFalsy();
+
+    // Arm: the SAME node (not a freshly-mounted one) gains the announcement.
+    await click(clearControl());
+    const armedRegion = liveRegion();
+    expect(armedRegion, "region still present when armed").toBeTruthy();
+    expect(
+      armedRegion.isSameNode(idleRegion),
+      "region is PERSISTENT, not remounted on arm (a remounted region holding text is never announced)",
+    ).toBe(true);
+    expect(armedRegion.textContent.trim(), "armed region announces the pending clear").toBeTruthy();
+    // The announcement IS the live region, not a Tooltip/title on the control.
+    expect(
+      armedRegion.getAttribute("aria-live") === "polite" || armedRegion.getAttribute("role") === "status",
+      "announcement is a polite live region",
+    ).toBe(true);
+
+    // Confirm wipes; the same region returns to empty.
+    await click(clearControl());
+    expect(props.clearAll, "confirm wipes once").toHaveBeenCalledTimes(1);
+    const afterRegion = liveRegion();
+    expect(afterRegion && afterRegion.isSameNode(idleRegion), "same region persists after confirm").toBe(true);
+    expect(afterRegion.textContent.trim(), "region empties after the confirmed wipe").toBeFalsy();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// N5 (AC-5) [guard — passes HEAD] — Clear is a native <button> with a single
+// onClick arm/confirm path; no pointer-only bypass. The "onClick arms, not
+// wipes" half is already the teeth in N1. Here: tagName + a mousedown-only
+// canary. Teeth on a non-button mutant and on an onMouseDown={clearAll} mutant.
+// ---------------------------------------------------------------------------
+describe("N5 (AC-5): native button, no pointer-only wipe (guard)", () => {
+  it("the Clear control is a native <button type=button> (guard; teeth on a non-button mutant)", async () => {
+    const props = baseProps({ compact: false, finals: [{ text: "x" }], questions: [] });
+    await mount(props, DESKTOP);
+    const btn = clearControl();
+    expect(btn.tagName, "native button element").toBe("BUTTON");
+    expect(btn.getAttribute("type"), "explicit type=button").toBe("button");
+  });
+
+  it("a bare mousedown does not wipe — no pointer-only bypass (guard)", async () => {
+    const props = baseProps({ compact: false, finals: [{ text: "x" }], questions: [] });
+    await mount(props, DESKTOP);
+    await act(async () => clearControl().dispatchEvent(new MouseEvent("mousedown", { bubbles: true })));
+    expect(props.clearAll, "mousedown alone must not wipe (teeth on an onMouseDown mutant)").toHaveBeenCalledTimes(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// N6 (AC-6) [guard — passes HEAD] — the IDLE accessible name stays exactly
+// "Clear" (existing byName("Clear") lookups keep resolving). Teeth on a rename
+// mutant and on a mutant that leaves the control permanently showing the armed
+// label. Does not catch a WRONG armed label (N4 carries the armed announcement).
+// ---------------------------------------------------------------------------
+describe("N6 (AC-6): idle accessible name stays exactly 'Clear' (guard)", () => {
+  for (const surface of ["inline", "tucked"]) {
+    it(`idle control is named exactly "Clear" (${surface})`, async () => {
+      const props = baseProps({ finals: [{ text: "x" }], questions: [] });
+      await mountEnabled(surface, props);
+      expect(accessibleName(clearControl()), "idle control named Clear").toBe("Clear");
+      expect(byName("Clear"), "byName('Clear') still resolves to the idle control").toBeTruthy();
+    });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// N7 (AC-7) [guard — passes HEAD] — a disabled Clear (nothing to clear) cannot
+// arm or wipe. Both surfaces. The disabled flag is the robust guard (jsdom's
+// dispatch of events to disabled controls is unreliable); the no-arm and
+// no-wipe assertions back it. Teeth on a drop-disable mutant and on a mutant
+// that lets a disabled control arm.
+// ---------------------------------------------------------------------------
+describe("N7 (AC-7): a disabled Clear cannot arm (guard, both surfaces)", () => {
+  for (const surface of ["inline", "tucked"]) {
+    it(`nothing to clear → Clear disabled and un-armable (${surface})`, async () => {
+      const props = baseProps({ finals: [], questions: [] });
+      await mountEnabled(surface, props);
+      const btn = clearControl();
+      expect(btn.disabled, "Clear disabled when nothing to clear").toBe(true);
+      await click(btn);
+      expect(props.clearAll, "disabled Clear never wipes").toHaveBeenCalledTimes(0);
+      expect(accessibleName(clearControl()), "disabled Clear never arms (name stays Clear)").toBe("Clear");
+      const region = liveRegion();
+      expect(region ? region.textContent.trim() : "", "no armed announcement while disabled").toBeFalsy();
+    });
+  }
 });
