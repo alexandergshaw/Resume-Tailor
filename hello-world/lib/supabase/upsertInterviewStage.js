@@ -27,9 +27,8 @@ export async function upsertInterviewStage(supabase, {
   notes,
 }) {
   try {
-    const payload = {
-      user_id: userId,
-      application_id: applicationId,
+    // The mutable stage fields only -- the part of the row an edit may change.
+    const mutableFields = {
       stage_name: stageName,
       stage_type: stageType,
       ...(scheduledAt && { scheduled_at: scheduledAt }),
@@ -40,17 +39,19 @@ export async function upsertInterviewStage(supabase, {
     };
 
     if (stageId) {
-      // Update existing stage. N37: `.eq("user_id", userId)` is the fix --
-      // without it, `payload` (shared with the INSERT branch above and
-      // therefore always carrying `user_id`/`application_id`) let a
-      // cross-account caller not merely edit someone else's row but
-      // REASSIGN its ownership outright, since the UPDATE's own WHERE
-      // clause matched on `id` alone. Precedent for this exact tenant-filter
-      // retrofit: lib/supabase/applicationStatusWriter.js's
-      // deleteApplicationForUser (`.eq("id", ...).eq("user_id", ...)`).
+      // Update existing stage. N37: `.eq("user_id", userId)` is the tenant
+      // filter -- without it a cross-account caller could edit someone
+      // else's row, since the UPDATE's WHERE clause matched on `id` alone.
+      // Precedent for this exact retrofit:
+      // lib/supabase/applicationStatusWriter.js's deleteApplicationForUser
+      // (`.eq("id", ...).eq("user_id", ...)`). The UPDATE payload is
+      // `mutableFields` ONLY: it carries neither `user_id` nor
+      // `application_id`, so an UPDATE can never reassign a stage's owner or
+      // reparent it to another application (defense-in-depth, owner ruling
+      // 2026-10-12). Only the INSERT branch sets identity columns.
       const { data, error } = await supabase
         .from("interview_stages")
-        .update(payload)
+        .update(mutableFields)
         .eq("id", stageId)
         .eq("user_id", userId)
         .select("id")
@@ -61,10 +62,10 @@ export async function upsertInterviewStage(supabase, {
       }
       return data?.id ?? null;
     } else {
-      // Insert new stage
+      // Insert new stage -- the one place identity columns are written.
       const { data, error } = await supabase
         .from("interview_stages")
-        .insert([payload])
+        .insert([{ user_id: userId, application_id: applicationId, ...mutableFields }])
         .select("id")
         .single();
       if (error) {

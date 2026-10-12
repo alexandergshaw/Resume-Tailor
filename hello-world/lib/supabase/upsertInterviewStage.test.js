@@ -78,14 +78,9 @@ describe("N37 -- upsertInterviewStage's UPDATE branch must not let a cross-accou
     expect(row.interviewer_names).toEqual(["Original"]);
   });
 
-  it("[RED, same escalation via a different applicationId guess] a caller asserting the true owner's userId but a WRONG applicationId still cannot mutate a stage that belongs to a different application, if the fix scopes on application_id too", async () => {
-    // This is the narrower of the two predicates the fix might add; the
-    // user_id predicate is the one design-reconciled.r2.md ss8 requires.
-    // This test only requires SOME real tenant scoping beyond bare `id` --
-    // it does not require an application_id predicate specifically, since
-    // r2's own fix text adds only `.eq("user_id", userId)`. It is included
-    // as a companion check that a correct fix does not accidentally widen
-    // access via a mismatched application_id either.
+  it("[defense-in-depth] an owner UPDATE called with a MISMATCHED applicationId succeeds but leaves the row's application_id UNCHANGED -- an UPDATE never moves identity columns", async () => {
+    // Flipped per the 2026-10-12 owner ruling (apply defense-in-depth): this
+    // test used to pin the reparenting as a disclosed residual.
     const sb = makeStatefulSupabase({ interview_stages: [seedRow()] });
     const result = await upsertInterviewStage(sb, {
       userId: "user-A",
@@ -95,17 +90,38 @@ describe("N37 -- upsertInterviewStage's UPDATE branch must not let a cross-accou
       stageType: "technical",
       interviewerNames: ["Injected"],
     });
-    // Documented, disclosed residual (design-reconciled.r2.md ss8's own
-    // "sharper residual... explicitly NOT fixed by N37 as scoped"): N37's
-    // OWN fix (a user_id predicate only) does NOT close this path -- a
-    // legitimate owner passing a mismatched applicationId still reparents
-    // the row, because `payload.application_id` is written unconditionally.
-    // This test pins that CURRENT, disclosed-not-fixed behavior so nobody
-    // mistakes N37's scope for something broader than it is; it is NOT a
-    // requirement this diff must change.
     expect(result).toBe("stage-A");
     const row = sb.row("interview_stages", (r) => r.id === "stage-A");
-    expect(row.application_id, "documented residual, NOT fixed by N37 as scoped -- see design-reconciled.r2.md ss8").toBe("app-WRONG");
+    expect(row.application_id, "an UPDATE reparented the stage to a different application -- identity columns must not be in the UPDATE payload").toBe("app-A");
+    expect(row.user_id).toBe("user-A");
+    expect(row.interviewer_names, "the mutable fields must still be written by the same UPDATE").toEqual(["Injected"]);
+  });
+
+  it("[guarantee] the UPDATE statement's payload carries NO identity columns -- application_id and user_id are absent, the mutable fields are present", async () => {
+    const sb = makeStatefulSupabase({ interview_stages: [seedRow()] });
+    await upsertInterviewStage(sb, {
+      userId: "user-A",
+      applicationId: "app-A",
+      stageId: "stage-A",
+      stageName: "x",
+      stageType: "technical",
+      scheduledAt: "2026-10-12T10:00:00.000Z",
+      durationMinutes: 45,
+      outcome: "passed",
+      interviewerNames: ["Injected"],
+      notes: "went well",
+    });
+    const updateCall = sb.calls.find((c) => c.table === "interview_stages" && c.verb === "update");
+    expect(updateCall, "no update call was issued against interview_stages").toBeDefined();
+    const keys = Object.keys(updateCall.payload);
+    expect(keys).not.toContain("application_id");
+    expect(keys).not.toContain("user_id");
+    expect(keys.sort()).toEqual(
+      ["duration_minutes", "interviewer_names", "notes", "outcome", "scheduled_at", "stage_name", "stage_type"].sort(),
+    );
+    // The WHERE scoping is unchanged: id AND user_id.
+    expect(updateCall.filters.some((f) => f.column === "id" && f.operator === "eq" && f.value === "stage-A")).toBe(true);
+    expect(updateCall.filters.some((f) => f.column === "user_id" && f.operator === "eq" && f.value === "user-A")).toBe(true);
   });
 
   it("[REQUIRED NO-OP CONTROL] the identical call, with the row's REAL owner's userId, still succeeds and still updates interviewer_names -- the fix must not also break the legitimate case", async () => {
@@ -136,6 +152,23 @@ describe("N37 -- upsertInterviewStage's UPDATE branch must not let a cross-accou
     expect(result).not.toBe(null);
     expect(sb.rows("interview_stages").length).toBe(1);
     expect(sb.rows("interview_stages")[0].user_id).toBe("user-A");
+  });
+
+  it("INSERT still SETS the identity columns -- the insert payload carries both user_id and application_id (only the UPDATE payload drops them)", async () => {
+    const sb = makeStatefulSupabase({ interview_stages: [] });
+    await upsertInterviewStage(sb, {
+      userId: "user-A",
+      applicationId: "app-A",
+      stageName: "Phone Screen",
+      stageType: "phone_screen",
+    });
+    const insertCall = sb.calls.find((c) => c.table === "interview_stages" && c.verb === "insert");
+    expect(insertCall, "no insert call was issued against interview_stages").toBeDefined();
+    const inserted = Array.isArray(insertCall.payload) ? insertCall.payload[0] : insertCall.payload;
+    expect(inserted.user_id).toBe("user-A");
+    expect(inserted.application_id).toBe("app-A");
+    const row = sb.rows("interview_stages")[0];
+    expect(row.application_id).toBe("app-A");
   });
 });
 
