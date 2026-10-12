@@ -13,6 +13,7 @@ import { copilotTabDescription } from "@/lib/copilot/tabHeaderDescription";
 import { briefStatusMessage } from "@/lib/copilot/companyBrief";
 import { visuallyHidden } from "@/lib/copilot/answerStatus";
 import { useEngine } from "@/app/settings/engine";
+import { useIncludeCodingSolution } from "@/app/settings/includeCodingSolution";
 import { ExpansionScope } from "./useAnswerExpansions";
 import { TechTermDetailScope } from "./useTechTermDetails";
 import { ProjectBulletDetailScope } from "./useProjectBulletDetails";
@@ -92,6 +93,11 @@ export default function CopilotClient() {
   // AC-C1/AC-C4: the shared code-language control (chunk C) — mirrors the
   // line above; a second, independent store (app/copilot/useCodeLanguage.js).
   const { codeLanguage, setCodeLanguage } = useCodeLanguage();
+  // N162 AC-4: the shared "add code solutions" preference. This is the ONE place
+  // the live screen reads the store and hands value + setter down to
+  // SessionControls (which holds no store subscription itself); the live draft
+  // hook (useDraftAnswer) reads the same store directly when it requests a draft.
+  const { includeCodingSolution, setIncludeCodingSolution } = useIncludeCodingSolution();
   // AC-H1: the tracked posting selected for this live session, if any — the
   // same picker practice mode has, feeding both the "Submitted for this
   // application" panel and the grounding documents draftAnswer sends along
@@ -771,6 +777,8 @@ export default function CopilotClient() {
               elapsed={elapsed}
               autoDraft={autoDraft}
               setAutoDraft={setAutoDraft}
+              includeCodingSolution={includeCodingSolution}
+              onIncludeCodingSolutionChange={setIncludeCodingSolution}
               copyTranscript={copyTranscript}
               clearAll={clearAll}
               finals={finals}

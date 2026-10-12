@@ -84,13 +84,9 @@ export default function QuestionFeed({
   // the direct-index read it replaces.
   const latest = currentOverride !== undefined ? currentOverride : latestQuestionEntry(questions);
   const latestLines = answerLines(latest?.cues, latest?.points, latest?.pageSources);
-  // N161: a done coding answer has no lines, so without these flags this region
-  // would read "Answer ready, 0 points" for a worked code solution.
   const latestStatusText = answerStatusMessage({
     status: latest?.status,
     bulletCount: latestLines.length,
-    hasCodingSolution: !!latest?.codingSolution,
-    hasCodingFallback: !latest?.codingSolution && !!latest?.codingFallback,
   });
   // BUG-2: see useCurrentQuestionAnnouncement's doc (CopilotDashboard.js) —
   // `latest` can swap to a different, already-`done` entry without a
@@ -208,19 +204,13 @@ function QuestionCard({ q, onDraft }) {
         </Alert>
       ) : null}
 
-      {/* N161: REPLACE, not augment -- AnswerLines is reachable only in the
-          else of the coding gate, and a coding card carries no resume anchor,
-          example project or tech buzzwords (D1); CodeSolution keeps the
-          posting's buzzwords alone. */}
-      {done && q.codingSolution ? (
-        <Box sx={{ mb: 1 }}>
-          <CodeSolution solution={q.codingSolution} buzzwords={q.buzzwords} />
-        </Box>
-      ) : done && q.codingFallback ? (
-        <Box sx={{ mb: 1 }}>
-          <CodingFallbackNote message={q.codingFallback} />
-        </Box>
-      ) : done && lines.length ? (
+      {/* N162: ADDITIVE -- the normal answer renders whenever there are
+          lines (the answer route always produces points for a coding
+          question), and a detected coding question's worked solution, or the
+          embedded engine's honest "no code here" note, is APPENDED after it,
+          so the posting's buzzwords and the resume aids ride the normal
+          answer exactly once. */}
+      {done && lines.length ? (
         <Box sx={{ mb: 1 }}>
           <AnswerLines lines={lines} />
           {/* AC-K1.2/AC-K1.3: the posting's own vocabulary to work in, and
@@ -233,6 +223,15 @@ function QuestionCard({ q, onDraft }) {
             projectExampleLive={q.projectExampleLive}
             techTerms={q.techTerms}
           />
+          {q.codingSolution ? (
+            <Box sx={{ mt: 1.5 }}>
+              <CodeSolution solution={q.codingSolution} />
+            </Box>
+          ) : q.codingFallback ? (
+            <Box sx={{ mt: 1.5 }}>
+              <CodingFallbackNote message={q.codingFallback} />
+            </Box>
+          ) : null}
         </Box>
       ) : null}
 

@@ -266,10 +266,15 @@ describe("END TO END on the practice REVEAL path: the language reaches the WIRE 
 
     expect(needsRedraft).toHaveBeenCalled();
     const redraftCall = needsRedraft.mock.calls[needsRedraft.mock.calls.length - 1];
-    // `needsRedraft(active, profile, interviewType, applicationId, codeLanguage, force)`
+    // N162 re-statement (Wave A signature change): the layout is now
+    // `needsRedraft(active, profile, interviewType, applicationId, codeLanguage, includeCodingSolution, force)`.
     expect(redraftCall[4]).toBe("typescript");
-    // …and `force` is still in the sixth slot, not displaced by it (AC-C27c).
-    expect(typeof redraftCall[5]).toBe("boolean");
+    // …the coding toggle took the sixth slot (OFF here: this probe hands
+    // useSampleAnswer no toggle, and the hook defaults it OFF)…
+    expect(redraftCall[5]).toBe(false);
+    // …and `force` is still the trailing argument, now in the seventh slot,
+    // displaced by neither the language nor the toggle (AC-C27c).
+    expect(typeof redraftCall[6]).toBe("boolean");
   });
 
   it("hands cachedSampleAnswerFor the language as its sixth argument", () => {

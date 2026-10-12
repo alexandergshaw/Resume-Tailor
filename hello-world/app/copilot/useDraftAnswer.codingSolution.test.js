@@ -1,26 +1,25 @@
 // @vitest-environment jsdom
 //
-// N161 SC-2 (step 4b) — live mode's half of AC-8/AC-9: the worked solution a
-// detected coding question produces must ride useDraftAnswer.js's full client
-// round-trip (response -> card -> answerCacheRef) so a CACHE HIT is never served
-// without it. Written BEFORE SC-2 lands; every coding case fails against today's
-// hook, which does not destructure or cache `codingSolution`.
+// N161 SC-2 RE-STATED FOR N162 (step 4b) — live mode's half of the coding
+// answer's client round-trip. The INTENT is preserved exactly: the worked
+// solution a detected coding question produces must ride useDraftAnswer.js's
+// full round-trip (response -> card -> answerCacheRef) so a CACHE HIT is never
+// served without it.
 //
-// Harness copied verbatim from useDraftAnswer.pageSources.test.js next door —
-// the field this file pins travels the exact same response -> entry -> cache
-// path pageSources does, so the proof is the same shape: a real mount of
-// runDraft (NOT a source read, NOT a stubbed store), and the cache-hit case
-// asserts the streaming client is called exactly ONCE across two asks for the
-// same question, so "the solution survived" cannot be satisfied by a second
-// real fetch returning the same mock.
+// WHAT N162 REVERSES (owner ruling, see docs/loop/N162.ac.r1.md): N161 made the
+// coding solution REPLACE the spoken answer, so the done frame carried
+// codingSolution and NO points. N162 makes it ADDITIVE — the normal answer is
+// ALWAYS produced and the codingSolution/codingFallback COEXISTS with non-empty
+// `points` on the very same record. So the frames below now carry BOTH, and
+// every assertion pins that BOTH survive the round-trip and the cache replay.
 //
-// THE STRUCTURAL CATCH (see sampleAnswerState.codingSolution.test.js's header
-// in full): a detected coding answer carries NO `points` — the solution
-// REPLACES them. answerGrounding.js's cachedAnswerFor rejects an entry with no
-// usable points, so on HEAD the second ask for a coding question MISSES the
-// cache and refetches. `toHaveBeenCalledTimes(1)` is what makes that a red:
-// carrying the field onto the entry is necessary but not sufficient; the cache
-// must also admit a coding (pointless) entry.
+// The cache-hit case therefore no longer needs the old "admit a pointless
+// entry" trick: a coding answer now carries real points, so answerGrounding.js's
+// cachedAnswerFor admits it on the points alone. `toHaveBeenCalledTimes(1)`
+// still holds the second ask to a cache read rather than a second fetch of the
+// same mock — the proof that the coding field was CACHED, not merely re-fetched.
+//
+// Harness copied verbatim from useDraftAnswer.pageSources.test.js next door.
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { createElement, useRef, useState, act } from "react";
@@ -44,15 +43,32 @@ const CODING = {
   edgeCases: ["Empty string", "Single character"],
 };
 
-// The route's streaming done frame for a detected coding question: the worked
-// solution and the type, and NOTHING else — no points, cues or aids (SC-1
-// contract, confirmed at app/api/copilot/answer/route.js:277-279). draftAnswer-
-// Streaming resolves with exactly this frame (minus `t`).
-const CODING_FRAME = { codingSolution: CODING, type: "technical" };
+const CODING_POINTS = [
+  "I would frame it as a two-pointer scan and walk through the invariant out loud.",
+  "Then I would call out the empty-string and single-character edge cases.",
+];
 
-// The embedded engine's honest marker for the same question (AC-10): a fallback
-// string, no code of any kind.
+// N162 ADDITIVE: the route's streaming done frame for a detected coding question
+// under the toggle ON carries the normal spoken answer (points + cues) AND the
+// worked solution alongside it — never one in place of the other.
+const CODING_FRAME = {
+  points: CODING_POINTS,
+  cues: ["Two-pointer scan"],
+  buzzwords: [],
+  resumeAnchor: null,
+  pageSources: [],
+  codingSolution: CODING,
+  type: "technical",
+};
+
+// The embedded engine's honest marker (AC-10) — again ALONGSIDE a normal answer,
+// no code of any kind.
 const FALLBACK_FRAME = {
+  points: CODING_POINTS,
+  cues: ["Two-pointer scan"],
+  buzzwords: [],
+  resumeAnchor: null,
+  pageSources: [],
   codingFallback: "Switch to the AI engine for a worked code solution.",
   type: "technical",
 };
@@ -120,8 +136,8 @@ beforeEach(() => {
   vi.clearAllMocks();
 });
 
-describe("useDraftAnswer — a fresh coding draft carries the solution onto the card", () => {
-  it("writes codingSolution from the done frame to the question entry", async () => {
+describe("useDraftAnswer — a fresh coding draft carries points AND the solution (N162 coexist)", () => {
+  it("writes BOTH the spoken points and codingSolution from the done frame to the card", async () => {
     draftAnswerStreaming.mockResolvedValue(CODING_FRAME);
     const { root, state } = mountProbe();
     act(() => {
@@ -131,17 +147,19 @@ describe("useDraftAnswer — a fresh coding draft carries the solution onto the 
       await state.runDraft(1, CODING_QUESTION);
     });
 
-    // RED on HEAD: the hook does not destructure `codingSolution`, so it never
-    // reaches the card.
     expect(entryOf(state, 1).status).toBe("done");
+    // The reversal in one line: the normal answer is present AND the solution
+    // rides beside it. A build that re-introduced REPLACE (points dropped when
+    // a solution is present) reds the points assertion.
+    expect(entryOf(state, 1).points).toEqual(CODING_POINTS);
     expect(entryOf(state, 1).codingSolution).toEqual(CODING);
 
     act(() => root.unmount());
   });
 });
 
-describe("useDraftAnswer — a CACHE HIT still carries codingSolution (AC-8 live reuse)", () => {
-  it("replays the SAME solution on the second ask WITHOUT a refetch", async () => {
+describe("useDraftAnswer — a CACHE HIT carries points AND codingSolution (AC-8 live reuse)", () => {
+  it("replays BOTH on the second ask WITHOUT a refetch", async () => {
     draftAnswerStreaming.mockResolvedValue(CODING_FRAME);
     const { root, state } = mountProbe();
 
@@ -154,12 +172,10 @@ describe("useDraftAnswer — a CACHE HIT still carries codingSolution (AC-8 live
     expect(entryOf(state, 1).codingSolution).toEqual(CODING);
     expect(draftAnswerStreaming).toHaveBeenCalledTimes(1);
 
-    // A second card for the SAME normalized question — the interviewer
-    // circling back — must be served from answerCacheRef, not a fresh call.
-    // RED on HEAD for TWO reasons at once: (1) the field is never cached, and
-    // (2) a coding entry has no points, so cachedAnswerFor rejects it and this
-    // second ask refetches — call count goes to 2. Holding the count at 1 is
-    // what forces BOTH the carry AND the cache-admission fix.
+    // A second card for the SAME normalized question — the interviewer circling
+    // back — must be served from answerCacheRef, not a fresh call. Under N162 a
+    // coding entry carries real points, so it is admitted on points alone;
+    // holding the count at 1 proves the coding field was cached, not re-fetched.
     act(() => {
       state.setQuestions((prev) => [...prev, seedQuestion(2, CODING_QUESTION)]);
     });
@@ -171,15 +187,15 @@ describe("useDraftAnswer — a CACHE HIT still carries codingSolution (AC-8 live
     const second = entryOf(state, 2);
     expect(second.status).toBe("done");
     expect(second.cached).toBe(true);
-    // The sabotage target (the mutant to watch): a cache write that dropped
-    // codingSolution passes every other assertion here and reds this one
-    // alone.
+    expect(second.points).toEqual(CODING_POINTS);
+    // The sabotage target: a cache write that dropped codingSolution passes
+    // every other assertion here and reds this one alone.
     expect(second.codingSolution).toEqual(CODING);
 
     act(() => root.unmount());
   });
 
-  it("replays an embedded codingFallback marker from the cache too (AC-10 live reuse)", async () => {
+  it("replays an embedded codingFallback marker beside its points from the cache too (AC-10)", async () => {
     draftAnswerStreaming.mockResolvedValue(FALLBACK_FRAME);
     const { root, state } = mountProbe();
 
@@ -202,6 +218,7 @@ describe("useDraftAnswer — a CACHE HIT still carries codingSolution (AC-8 live
     expect(draftAnswerStreaming).toHaveBeenCalledTimes(1);
     const second = entryOf(state, 2);
     expect(second.cached).toBe(true);
+    expect(second.points).toEqual(CODING_POINTS);
     expect(second.codingFallback).toBe(FALLBACK_FRAME.codingFallback);
 
     act(() => root.unmount());
@@ -210,10 +227,6 @@ describe("useDraftAnswer — a CACHE HIT still carries codingSolution (AC-8 live
 
 describe("useDraftAnswer — a non-coding draft is UNCHANGED (SC-2 regression guard)", () => {
   it("carries points and pageSources exactly as today and adds no codingSolution key", async () => {
-    // Green on HEAD and after SC-2: the ordinary path must not sprout a coding
-    // field, and the fields that already round-trip must keep doing so. This
-    // is the control that a gate relaxation for coding entries did not quietly
-    // change the non-coding entry's shape.
     draftAnswerStreaming.mockResolvedValue(PLAIN_FRAME);
     const { root, state } = mountProbe();
 

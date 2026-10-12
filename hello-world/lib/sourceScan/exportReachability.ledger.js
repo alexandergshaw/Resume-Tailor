@@ -212,6 +212,37 @@ export const ALLOWED_UNREACHABLE_MODULES = [
 // (+4 studyPlanKnobs.js test-pinned caps and helper, -1 applicationDigest.js#DIGEST_SECTIONS
 // gaining StudyPlanClient.js as its first shipping importer), total 506 -> 509, ORPHAN_EXPORTS
 // unmoved at 65. Named in exportReachability.ledger.md, sections 2, 4 and 5.
+//
+// 5 -> 6, N162 Wave A. The built-ahead-of-its-consumers shape once more, one
+// module: app/settings/includeCodingSolution.js, the shared "include coding
+// solution" toggle store (the answerAsMe.js pattern), landed with its suite in the
+// contract wave, ahead of the two things that write and read it -- the live
+// control and the request read -- which land in Wave D. Its only importer today
+// is includeCodingSolution.test.js, and a test file is not a caller, so it is
+// wholly unreachable and, being unreachable, sits in no symbol bucket. ONE line added, none removed (appended last); ORPHAN_EXPORTS unmoved at
+// 65, TR-1 unmoved at 445, total unmoved at 510, ALLOWED_UNREACHABLE_MODULES stays
+// 14. The other three Wave A edits (answerGrounding.js, sampleAnswerState.js,
+// answerClient.js) are existing reachable modules and moved no bucket. Named in
+// exportReachability.ledger.md, section 2.
+//
+// 6 -> 5, N162 Wave B reconcile. The first shipping reader of that store landed:
+// app/copilot/useDraftAnswer.js imports readIncludeCodingSolution from
+// app/settings/includeCodingSolution.js, so the store is reachable and the line
+// above is deleted (the line's own instruction). ONE line deleted, none added; the
+// computed unreachable set is 19 = ALLOWED 14 + UNWIRED 5. Wave B itself added no
+// line: lib/copilot/ndjsonResponse.js (the NDJSON wrapper extracted from the answer
+// route to hold its line band) is imported by that route, so it is reachable from
+// birth. THIS change moves symbol buckets, because the store's exports are now
+// classified per symbol and codingSolution.js lost its route importer: TR-1 445 ->
+// 452 (+7), total 510 -> 517, ORPHAN_EXPORTS unmoved at 65. Every symbol is named in
+// exportReachability.ledger.md section 2 and in the history file's sections 4 and 5.
+//
+// N162 Wave D reconcile: no line added or removed (the control, the render-append and
+// the client wiring edit existing reachable modules only; 14 + 5 stays). It moves one
+// symbol bucket: TR-1 452 -> 451, total 517 -> 516, ORPHAN_EXPORTS unmoved at 65,
+// because app/settings/includeCodingSolution.js#useIncludeCodingSolution gained its
+// first shipping importers (CopilotClient.js and practice/PracticeClient.js). Named in
+// exportReachability.ledger.md section 2 and in the history file's sections 4 and 5.
 export const UNWIRED_MODULES = [
   {
     file: "lib/interviewPrep/prepLog.js",

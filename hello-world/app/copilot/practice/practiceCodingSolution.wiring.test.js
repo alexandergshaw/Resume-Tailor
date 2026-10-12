@@ -1,8 +1,18 @@
 // @vitest-environment jsdom
 //
-// N161: the practice tab's wiring of the coding answer. The render components
-// (CodeSolution, SampleAnswer, CurrentAnswerPanel, QuestionFeed) and the hooks
-// (useSampleAnswer, useDraftAnswer) already handle a `codingSolution` /
+// N162 Wave D re-statement (owner reversal of N161, 2026-10-12; AC-N162 BLAST
+// RADIUS item 6 — owner-authorized test rework). The coding answer is now
+// ADDITIVE: a coding record carries real spoken `points` AND a codingSolution,
+// and the render sites show the normal answer AND append the code. The render
+// gate shows the appended code ONLY inside the `lines.length` arm, so every
+// coding fixture below now carries points (the additive reality the Wave B
+// route produces); the single "REPLACES" seam flips to "renders both". The
+// pass-through / hook-carries-the-field seams are unchanged in intent — they
+// still prove practice hands the coding pair down beside the points.
+//
+// N161 (original): the practice tab's wiring of the coding answer. The render
+// components (CodeSolution, SampleAnswer, CurrentAnswerPanel, QuestionFeed) and
+// the hooks (useSampleAnswer, useDraftAnswer) handle a `codingSolution` /
 // `codingFallback` record, and each has its own suite; what none of them can
 // see is whether PRACTICE actually hands the fields down. Four seams did not:
 //
@@ -119,7 +129,7 @@ const SOLUTION = {
 
 const FALLBACK = "The on-device engine can't write a worked code solution. Switch to the AI engine for a worked solution.";
 const QUESTION = "Write a function that prints FizzBuzz up to n.";
-const SPOKEN_POINT = "SPOKEN_POINT_SENTINEL this must never render beside the code.";
+const SPOKEN_POINT = "SPOKEN_POINT_SENTINEL the normal answer the code is appended to.";
 const MONO_RE = /mono|consolas|menlo|courier|monaco|ui-monospace/i;
 
 // The innermost element whose text holds the code.
@@ -199,10 +209,14 @@ describe("PracticeClient's synthesized dashboard entry carries the coding pair (
     expect(entries[0].status).toBe("done");
   });
 
-  it("copies codingSolution off the sample-answer return, and the dashboard renders the code from it", async () => {
-    const [entry] = synthesizedEntries(sampleAnswerReturn({ codingSolution: SOLUTION }));
+  it("copies codingSolution off the sample-answer return, and the dashboard renders the code beside the answer", async () => {
+    const [entry] = synthesizedEntries(
+      sampleAnswerReturn({ codingSolution: SOLUTION, points: [SPOKEN_POINT], cues: ["FizzBuzz"] }),
+    );
     expect(entry.codingSolution).toBe(SOLUTION);
     await renderDashboard([entry]);
+    // Additive: the normal answer AND the code both render.
+    expect(document.body.textContent).toContain("SPOKEN_POINT_SENTINEL");
     const code = codeEl(document.body);
     expect(code).not.toBeNull();
     expect(["pre", "pre-wrap"]).toContain(code.style.whiteSpace);
@@ -210,10 +224,13 @@ describe("PracticeClient's synthesized dashboard entry carries the coding pair (
     expect(document.body.textContent).toContain(SOLUTION.complexity);
   });
 
-  it("copies codingFallback off the sample-answer return, and the dashboard shows the marker", async () => {
-    const [entry] = synthesizedEntries(sampleAnswerReturn({ codingFallback: FALLBACK }));
+  it("copies codingFallback off the sample-answer return, and the dashboard shows the marker beside the answer", async () => {
+    const [entry] = synthesizedEntries(
+      sampleAnswerReturn({ codingFallback: FALLBACK, points: [SPOKEN_POINT], cues: ["FizzBuzz"] }),
+    );
     expect(entry.codingFallback).toBe(FALLBACK);
     await renderDashboard([entry]);
+    expect(document.body.textContent).toContain("SPOKEN_POINT_SENTINEL");
     expect(document.body.textContent).toContain("Switch to the AI engine");
     expect(codeEl(document.body)).toBeNull();
   });
@@ -280,7 +297,7 @@ describe("QuestionCard forwards the coding pair to SampleAnswer (seam 3)", () =>
   }
 
   it("a done coding answer renders the code block inside the card", async () => {
-    await renderCard({ sampleCodingSolution: SOLUTION });
+    await renderCard({ sampleCodingSolution: SOLUTION, sampleAnswerPoints: [SPOKEN_POINT], sampleCues: ["FizzBuzz"] });
     const code = codeEl(container);
     expect(code).not.toBeNull();
     expect(["pre", "pre-wrap"]).toContain(code.style.whiteSpace);
@@ -288,14 +305,22 @@ describe("QuestionCard forwards the coding pair to SampleAnswer (seam 3)", () =>
     expect(text()).toContain(SOLUTION.complexity);
   });
 
-  it("the coding answer REPLACES the spoken one", async () => {
+  it("the coding answer is ADDITIVE — the spoken answer renders beside the code", async () => {
+    // N162 FLIP of N161's REPLACE: a build that still suppresses the spoken
+    // answer when a codingSolution is present REDs on the first assertion.
     await renderCard({ sampleCodingSolution: SOLUTION, sampleAnswerPoints: [SPOKEN_POINT], sampleCues: ["FizzBuzz"] });
+    expect(text()).toContain("SPOKEN_POINT_SENTINEL");
     expect(codeEl(container)).not.toBeNull();
-    expect(text()).not.toContain("SPOKEN_POINT_SENTINEL");
   });
 
-  it("the embedded engine's marker shows, and no code block does", async () => {
-    await renderCard({ isEmbedded: true, sampleCodingFallback: FALLBACK });
+  it("the embedded engine's marker shows beside the answer, and no code block does", async () => {
+    await renderCard({
+      isEmbedded: true,
+      sampleCodingFallback: FALLBACK,
+      sampleAnswerPoints: [SPOKEN_POINT],
+      sampleCues: ["FizzBuzz"],
+    });
+    expect(text()).toContain("SPOKEN_POINT_SENTINEL");
     expect(text()).toContain("Switch to the AI engine");
     expect(codeEl(container)).toBeNull();
   });
@@ -334,8 +359,11 @@ describe("PracticeClient passes the coding pair to <QuestionCard> under the name
       loading: false,
       sampleVisible: true,
       sampleStatus: "done",
-      sampleAnswerPoints: null,
-      sampleCues: [],
+      // Additive: a coding answer carries points, and the appended code/marker
+      // renders inside the normal-answer arm — so the card needs a spoken
+      // answer for either to show.
+      sampleAnswerPoints: [SPOKEN_POINT],
+      sampleCues: ["FizzBuzz"],
       sampleBuzzwords: [],
       samplePageSources: [],
       onNext: () => {},
@@ -382,19 +410,21 @@ describe("useRoomQuestions carries the coding pair on a drafted card (seam 4)", 
     });
   }
 
-  it("a coding draft lands codingSolution on the entry and renders the code on the card", async () => {
-    draftAnswer.mockResolvedValue(draft({ codingSolution: SOLUTION }));
+  it("a coding draft lands codingSolution on the entry and renders the code beside the answer", async () => {
+    draftAnswer.mockResolvedValue(draft({ codingSolution: SOLUTION, points: [SPOKEN_POINT], cues: ["FizzBuzz"], pageSources: [null] }));
     await mountAndAsk();
     expect(latest.questions[0].status).toBe("done");
     expect(latest.questions[0].codingSolution).toEqual(SOLUTION);
+    expect(text()).toContain("SPOKEN_POINT_SENTINEL");
     expect(codeEl(container)).not.toBeNull();
   });
 
-  it("an embedded draft lands codingFallback on the entry and renders the marker, with no code", async () => {
-    draftAnswer.mockResolvedValue(draft({ codingFallback: FALLBACK }));
+  it("an embedded draft lands codingFallback on the entry and renders the marker beside the answer, with no code", async () => {
+    draftAnswer.mockResolvedValue(draft({ codingFallback: FALLBACK, points: [SPOKEN_POINT], cues: ["FizzBuzz"], pageSources: [null] }));
     await mountAndAsk();
     expect(latest.questions[0].codingFallback).toBe(FALLBACK);
     expect(latest.questions[0].codingSolution).toBeUndefined();
+    expect(text()).toContain("SPOKEN_POINT_SENTINEL");
     expect(text()).toContain("Switch to the AI engine");
     expect(codeEl(container)).toBeNull();
   });
@@ -418,7 +448,7 @@ describe("useRoomQuestions carries the coding pair on a drafted card (seam 4)", 
   });
 
   it("a redraft that comes back ordinary does not keep the previous coding answer", async () => {
-    draftAnswer.mockResolvedValue(draft({ codingSolution: SOLUTION }));
+    draftAnswer.mockResolvedValue(draft({ codingSolution: SOLUTION, points: [SPOKEN_POINT], cues: ["FizzBuzz"], pageSources: [null] }));
     await mountAndAsk();
     expect(codeEl(container)).not.toBeNull();
 
@@ -432,7 +462,7 @@ describe("useRoomQuestions carries the coding pair on a drafted card (seam 4)", 
   });
 
   it("invalidateDrafts clears the coding answer with the rest of the draft", async () => {
-    draftAnswer.mockResolvedValue(draft({ codingSolution: SOLUTION }));
+    draftAnswer.mockResolvedValue(draft({ codingSolution: SOLUTION, points: [SPOKEN_POINT], cues: ["FizzBuzz"], pageSources: [null] }));
     await mountAndAsk();
     expect(latest.questions[0].codingSolution).toEqual(SOLUTION);
     await act(async () => {

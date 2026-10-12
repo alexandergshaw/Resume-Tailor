@@ -200,7 +200,12 @@ describe("the extraction is WIRED, not merely mounted", () => {
     // Without this the two runs above degrade to whole-file substring checks,
     // which every one of them would pass with the props scattered anywhere.
     expect(mount.startsWith("<SessionControls")).toBe(true);
-    expect(mount.length).toBeLessThan(600);
+    // A slice-length VACUITY guard (the real teeth are the startsWith above and
+    // the not-<SessionSetup below), not a line ceiling. Raised 600 -> 720 for
+    // N162's two new props, includeCodingSolution and
+    // onIncludeCodingSolutionChange (578 -> 709 chars, one prop per line as
+    // before); still a tiny fraction of the whole file.
+    expect(mount.length).toBeLessThan(720);
     expect(mount).not.toMatch(/<SessionSetup/);
   });
 });

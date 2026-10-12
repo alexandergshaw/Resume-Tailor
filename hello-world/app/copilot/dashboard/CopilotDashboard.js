@@ -276,13 +276,9 @@ function CurrentAnswerPanel({
   // to useCurrentQuestionAnnouncement above as well as used for its own
   // sake — see that hook's doc for why the announcement can't simply be
   // this string on every render.
-  // N161: a done coding answer has no lines; the two flags keep this region
-  // from announcing "Answer ready, 0 points" for a worked code solution.
   const currentAnswerStatusText = answerStatusMessage({
     status: answerHidden && !announceHiddenReadiness ? "idle" : current?.status,
     bulletCount: lines.length,
-    hasCodingSolution: !!current?.codingSolution,
-    hasCodingFallback: !current?.codingSolution && !!current?.codingFallback,
   });
   const currentAnswerRegionText = useCurrentQuestionAnnouncement(current, currentAnswerStatusText);
 
@@ -450,15 +446,11 @@ function CurrentAnswerPanel({
             // role="alert" plus a non-color icon, rather than a plain
             // colored Typography (WCAG 1.4.1).
             <Alert severity="error">{current.error || "Could not draft an answer."}</Alert>
-          ) : current.status === "done" && current.codingSolution ? (
-            // N161: REPLACE, not augment -- AnswerLines is reachable only in
-            // the else of this gate, and a coding answer carries no resume
-            // anchor, example project or tech buzzwords (D1); CodeSolution
-            // keeps the posting's buzzwords alone.
-            <CodeSolution solution={current.codingSolution} buzzwords={current.buzzwords} />
-          ) : current.status === "done" && current.codingFallback ? (
-            <CodingFallbackNote message={current.codingFallback} />
           ) : current.status === "done" && lines.length ? (
+            // N162: ADDITIVE -- the normal answer renders whenever there are
+            // lines (the answer route always produces points for a coding
+            // question), and the worked solution or the embedded engine's
+            // "no code here" note is APPENDED after its AnswerAids.
             <>
               <AnswerLines lines={lines} />
               {/* AC-K1.2/AC-K1.3: the same subsections the question card
@@ -477,6 +469,15 @@ function CurrentAnswerPanel({
                 onRetryRowOne={onRetryRowOne}
                 rowOneRetrying={rowOneRetrying}
               />
+              {current.codingSolution ? (
+                <Box sx={{ mt: 1.5 }}>
+                  <CodeSolution solution={current.codingSolution} />
+                </Box>
+              ) : current.codingFallback ? (
+                <Box sx={{ mt: 1.5 }}>
+                  <CodingFallbackNote message={current.codingFallback} />
+                </Box>
+              ) : null}
             </>
           ) : (
             // WCAG 1.4.3: --text-secondary, not --text-muted — see the
@@ -763,14 +764,10 @@ function HistoryItem({ entry, copy }) {
       </Button>
       {expanded ? (
         <Box sx={{ px: 1.25, pb: 1.25 }}>
-          {/* N161: a revealed PAST coding answer shows its stored worked
-              solution. Same REPLACE gate as CurrentAnswerPanel: AnswerLines
-              is reachable only in the else. */}
-          {entry.codingSolution ? (
-            <CodeSolution solution={entry.codingSolution} buzzwords={entry.buzzwords} />
-          ) : entry.codingFallback ? (
-            <CodingFallbackNote message={entry.codingFallback} />
-          ) : lines.length ? (
+          {/* N162: a revealed PAST coding answer shows its normal answer and,
+              APPENDED after its AnswerAids, its stored worked solution --
+              same additive shape as CurrentAnswerPanel. */}
+          {lines.length ? (
             <>
               <AnswerLines lines={lines} />
               {/* A past question: its example rows can only be in a final state
@@ -784,6 +781,15 @@ function HistoryItem({ entry, copy }) {
                 techTerms={entry.techTerms}
                 finalOnly
               />
+              {entry.codingSolution ? (
+                <Box sx={{ mt: 1.5 }}>
+                  <CodeSolution solution={entry.codingSolution} />
+                </Box>
+              ) : entry.codingFallback ? (
+                <Box sx={{ mt: 1.5 }}>
+                  <CodingFallbackNote message={entry.codingFallback} />
+                </Box>
+              ) : null}
             </>
           ) : (
             <Typography variant="body2" sx={{ color: "var(--text-secondary)" }}>

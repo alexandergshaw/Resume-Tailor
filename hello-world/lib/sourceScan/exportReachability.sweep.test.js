@@ -265,7 +265,7 @@ describe("every module is reachable from something that ships, or is on a ledger
     // These are NOT allow-listed. They are findings held in a named bucket so
     // that they cannot quietly become "just how it is". Wiring one up (or
     // removing it) fails the exact match above, which is the prompt to delete
-    // its line here. History ([] -> 2 -> 1 -> 5 -> 7 -> 11 -> 7 -> 9 -> 5): exportReachability.ledger.md, section 2.
+    // its line here. History ([] -> 2 -> 1 -> 5 -> 7 -> 11 -> 7 -> 9 -> 5 -> 6 -> 5): exportReachability.ledger.md, section 2.
     expect(UNWIRED_MODULES.map((e) => e.file)).toEqual([
       "lib/interviewPrep/prepLog.js",
       "lib/interviewPrep/interviewProcessGrammar.js",
@@ -321,15 +321,15 @@ describe("every export of a shipping module is asked for, or is on a ledger with
     // check the new export is a helper being pinned, not a feature that was
     // built and never connected, then update the number.
     //
-    // Pinned at 445. Every movement (299 -> 445) is stated by name in
+    // Pinned at 451. Every movement (299 -> 451) is stated by name in
     // exportReachability.ledger.md, section 4; append the new delta there.
-    expect(TEST_REFERENCED.length).toBe(445);
+    expect(TEST_REFERENCED.length).toBe(451);
     // A classifier that swept everything into this bucket would make the
     // orphan ledger vacuous, so pin the split rather than only the total.
     expect(UNUSED_IN_SHIPPING_MODULES.length).toBe(TEST_REFERENCED.length + ORPHANS.length);
-    // Pinned at 510 = 445 + 65. Every movement (356 -> 510), with which half
+    // Pinned at 516 = 451 + 65. Every movement (356 -> 516), with which half
     // moved, is stated in exportReachability.ledger.md, section 5.
-    expect(UNUSED_IN_SHIPPING_MODULES.length).toBe(510);
+    expect(UNUSED_IN_SHIPPING_MODULES.length).toBe(516);
   });
 
   it("still reports the two symbol-level cases this sweep was built for", () => {

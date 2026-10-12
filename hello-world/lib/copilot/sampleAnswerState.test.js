@@ -92,6 +92,10 @@ describe("emptySampleAnswer", () => {
 });
 
 describe("needsRedraft — force", () => {
+  // N162: `force` is now the SEVENTH positional argument, after the new
+  // `includeCodingSolution` sixth argument. These calls pass includeCodingSolution
+  // (false here — the toggle matches the fixture, so it is not what drives the
+  // result) in the sixth slot and `force` in the seventh.
   it("redrafts even when status is done and every comparison key matches", () => {
     const active = {
       question: "Q",
@@ -100,8 +104,9 @@ describe("needsRedraft — force", () => {
       interviewType: "behavioral",
       applicationId: "app-1",
       codeLanguage: "auto",
+      includeCodingSolution: false,
     };
-    expect(needsRedraft(active, "profile-A", "behavioral", "app-1", "auto", true)).toBe(true);
+    expect(needsRedraft(active, "profile-A", "behavioral", "app-1", "auto", false, true)).toBe(true);
   });
 
   it("redrafts even when a request for this question is already loading", () => {
@@ -112,8 +117,9 @@ describe("needsRedraft — force", () => {
       interviewType: "behavioral",
       applicationId: "app-1",
       codeLanguage: "auto",
+      includeCodingSolution: false,
     };
-    expect(needsRedraft(active, "profile-A", "behavioral", "app-1", "auto", true)).toBe(true);
+    expect(needsRedraft(active, "profile-A", "behavioral", "app-1", "auto", false, true)).toBe(true);
   });
 });
 
@@ -169,6 +175,10 @@ describe("needsRedraft — loading never starts a second request", () => {
 });
 
 describe("needsRedraft — done redrafts only when profile, interviewType, applicationId, or codeLanguage differs", () => {
+  // N162: the fixture now records the coding toggle it was drafted under
+  // (false), so a reveal that matches it is served and a flip redrafts. These
+  // calls pass includeCodingSolution in the SIXTH slot and `force` in the
+  // SEVENTH.
   const doneActive = {
     question: "Q",
     status: "done",
@@ -177,42 +187,54 @@ describe("needsRedraft — done redrafts only when profile, interviewType, appli
     interviewType: "behavioral",
     applicationId: "app-1",
     codeLanguage: "auto",
+    includeCodingSolution: false,
   };
 
-  it("serves the cache when profile, interviewType, applicationId, and codeLanguage all still match", () => {
-    expect(needsRedraft(doneActive, "profile-A", "behavioral", "app-1", "auto", false)).toBe(false);
+  it("serves the cache when profile, interviewType, applicationId, codeLanguage, and the coding toggle all still match", () => {
+    expect(needsRedraft(doneActive, "profile-A", "behavioral", "app-1", "auto", false, false)).toBe(false);
   });
 
   it("redrafts when only profile differs", () => {
-    expect(needsRedraft(doneActive, "profile-B", "behavioral", "app-1", "auto", false)).toBe(true);
+    expect(needsRedraft(doneActive, "profile-B", "behavioral", "app-1", "auto", false, false)).toBe(true);
   });
 
   it("redrafts when only interviewType differs", () => {
-    expect(needsRedraft(doneActive, "profile-A", "technical", "app-1", "auto", false)).toBe(true);
+    expect(needsRedraft(doneActive, "profile-A", "technical", "app-1", "auto", false, false)).toBe(true);
   });
 
   it("redrafts when only applicationId differs", () => {
-    expect(needsRedraft(doneActive, "profile-A", "behavioral", "app-2", "auto", false)).toBe(true);
+    expect(needsRedraft(doneActive, "profile-A", "behavioral", "app-2", "auto", false, false)).toBe(true);
   });
 
   it("redrafts when applicationId changes from null to a real id", () => {
     const activeWithNullApp = { ...doneActive, applicationId: null };
-    expect(needsRedraft(activeWithNullApp, "profile-A", "behavioral", "app-1", "auto", false)).toBe(true);
+    expect(needsRedraft(activeWithNullApp, "profile-A", "behavioral", "app-1", "auto", false, false)).toBe(true);
   });
 
   // AC-C27: codeLanguage is a fourth comparison field, driven off the exact
   // same "done" branch as profile/interviewType/applicationId.
   it("redrafts when only codeLanguage differs", () => {
-    expect(needsRedraft(doneActive, "profile-A", "behavioral", "app-1", "java", false)).toBe(true);
+    expect(needsRedraft(doneActive, "profile-A", "behavioral", "app-1", "java", false, false)).toBe(true);
   });
 
-  // AC-C27c: the case the ordering rule exists for. `codeLanguage` sits in
-  // the FIFTH slot, before `force` — appended after it instead, the language
-  // would land in the `force` slot, and a truthy string there redrafts
-  // unconditionally regardless of what actually matches.
-  it("puts codeLanguage BEFORE force, not after it", () => {
-    expect(needsRedraft(doneActive, "profile-A", "behavioral", "app-1", "auto", false)).toBe(false);
-    expect(needsRedraft(doneActive, "profile-A", "behavioral", "app-1", "auto", true)).toBe(true);
+  // N162: the coding toggle is a fifth comparison field, driven off the same
+  // "done" branch. A flip alone redrafts (FD-3 at the practice reveal).
+  it("redrafts when only the coding toggle differs", () => {
+    expect(needsRedraft(doneActive, "profile-A", "behavioral", "app-1", "auto", true, false)).toBe(true);
+  });
+
+  // AC-C27c + N162: the ordering rule the arity trap exists for. `force` stays
+  // the LAST positional argument; `codeLanguage` is fifth and the coding toggle
+  // sixth, both BEFORE `force`. Were the toggle appended after `force` instead,
+  // the toggle value would land in the `force` slot and redraft unconditionally
+  // regardless of what matches — this pins all three positions at once:
+  //   - no force, everything matches  -> false
+  //   - force in the seventh slot      -> true
+  //   - a toggle flip in the sixth slot (no force) -> true (not via force)
+  it("keeps force LAST, with codeLanguage and the coding toggle before it", () => {
+    expect(needsRedraft(doneActive, "profile-A", "behavioral", "app-1", "auto", false, false)).toBe(false);
+    expect(needsRedraft(doneActive, "profile-A", "behavioral", "app-1", "auto", false, true)).toBe(true);
+    expect(needsRedraft(doneActive, "profile-A", "behavioral", "app-1", "auto", true, false)).toBe(true);
   });
 });
 
@@ -446,24 +468,31 @@ describe("cachedSampleAnswerFor", () => {
   // This drives both functions off the SAME table of entries and asserts
   // they agree on every combination of matching/mismatching profile,
   // interviewType, applicationId, and (AC-C27) codeLanguage.
+  // N162: the matrix gains a fifth dimension — the coding toggle — so the two
+  // functions are proven to agree on it too (the design's "the agreement block
+  // adds the new field"). CURRENT_INC is the current reveal's toggle; an entry
+  // that "differs" was drafted under the opposite toggle state.
   describe("agrees with needsRedraft on every combination of matching/mismatching fields", () => {
+    const CURRENT_INC = false;
     const combinations = [];
     for (const profileMatches of [true, false]) {
       for (const typeMatches of [true, false]) {
         for (const appMatches of [true, false]) {
           for (const langMatches of [true, false]) {
-            combinations.push({ profileMatches, typeMatches, appMatches, langMatches });
+            for (const incMatches of [true, false]) {
+              combinations.push({ profileMatches, typeMatches, appMatches, langMatches, incMatches });
+            }
           }
         }
       }
     }
 
-    for (const { profileMatches, typeMatches, appMatches, langMatches } of combinations) {
+    for (const { profileMatches, typeMatches, appMatches, langMatches, incMatches } of combinations) {
       const label = `profile ${profileMatches ? "matches" : "differs"}, interviewType ${
         typeMatches ? "matches" : "differs"
       }, applicationId ${appMatches ? "matches" : "differs"}, codeLanguage ${
         langMatches ? "matches" : "differs"
-      }`;
+      }, codingToggle ${incMatches ? "matches" : "differs"}`;
 
       it(label, () => {
         const entry = validEntry({
@@ -471,6 +500,7 @@ describe("cachedSampleAnswerFor", () => {
           interviewType: typeMatches ? CURRENT_TYPE : "technical",
           applicationId: appMatches ? CURRENT_APP : "app-2",
           codeLanguage: langMatches ? CURRENT_LANG : "java",
+          includeCodingSolution: incMatches ? CURRENT_INC : !CURRENT_INC,
         });
 
         const cached = cachedSampleAnswerFor(
@@ -480,12 +510,13 @@ describe("cachedSampleAnswerFor", () => {
           CURRENT_TYPE,
           CURRENT_APP,
           CURRENT_LANG,
+          CURRENT_INC,
         );
 
         // The same entry, reshaped as an "active" state slot the way the
         // hook would hold it after a real draft landed — needsRedraft only
-        // looks at status/profile/interviewType/applicationId/codeLanguage,
-        // never points.
+        // looks at status/profile/interviewType/applicationId/codeLanguage/
+        // includeCodingSolution, never points.
         const active = {
           question: CURRENT_QUESTION,
           status: "done",
@@ -494,8 +525,9 @@ describe("cachedSampleAnswerFor", () => {
           interviewType: entry.interviewType,
           applicationId: entry.applicationId,
           codeLanguage: entry.codeLanguage,
+          includeCodingSolution: entry.includeCodingSolution,
         };
-        const stale = needsRedraft(active, CURRENT_PROFILE, CURRENT_TYPE, CURRENT_APP, CURRENT_LANG, false);
+        const stale = needsRedraft(active, CURRENT_PROFILE, CURRENT_TYPE, CURRENT_APP, CURRENT_LANG, CURRENT_INC, false);
 
         // A cache hit (non-null) must mean "not stale", and a cache miss
         // (null) must mean "stale" — the two functions must never disagree.

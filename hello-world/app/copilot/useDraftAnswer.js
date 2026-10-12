@@ -14,6 +14,7 @@ import {
 } from "@/lib/copilot/projectExampleLive";
 import { startTechTerms } from "@/lib/copilot/techTermsLive";
 import { readEngine } from "@/app/settings/engine";
+import { readIncludeCodingSolution } from "@/app/settings/includeCodingSolution";
 
 // AC-P4.2: runDraft's one and only answer-fetching call, in production
 // always the streaming client — draftAnswerStreaming resolves with exactly
@@ -188,6 +189,12 @@ export function useDraftAnswer({
         // below reuses grounding.codeLanguage rather than reading the store
         // a second time.
         codeLanguage: getCodeLanguage(),
+        // N162 (arch §6.3): the "include coding solution" toggle, read straight
+        // from its store here for the same reason as the two reads above, and
+        // captured ONCE — the request body below reuses
+        // grounding.includeCodingSolution rather than reading the store again,
+        // so the value on the wire is the one the cache entry is keyed on.
+        includeCodingSolution: readIncludeCodingSolution(),
       });
       // AC-N1.3: this draft's generation, also captured before the await.
       // Bumped by onPostingChange/onProfileChange (CopilotClient.js) and by
@@ -474,6 +481,9 @@ export function useDraftAnswer({
             // normalizer and this cache's grounding always agree on what
             // "no preference" looks like.
             codeLanguage: grounding.codeLanguage,
+            // N162: forwarded from the single capture above (groundingFor
+            // folds it to a strict boolean), never re-read from the store.
+            includeCodingSolution: grounding.includeCodingSolution,
           },
           {
             // AC-P4.2: bullets land on the card as they stream in — each
@@ -516,12 +526,11 @@ export function useDraftAnswer({
           // ONLY `points`, unchanged, during the stream itself.
           pageSources: Array.isArray(pageSources) ? pageSources : [],
           // N161: a detected coding question's worked solution (or the
-          // embedded engine's marker), which REPLACES `points` — the done
-          // frame carries it with no points at all. Spread, so an ordinary
+          // embedded engine's marker). N162: it rides ALONGSIDE `points` on
+          // the done frame, no longer in place of them. Spread, so an ordinary
           // answer's aids (and therefore its cache entry and its card) carry
-          // no coding key; it is the entry's only admission signal when
-          // `points` is empty (see cachedAnswerFor). An OUTPUT, never part of
-          // the grounding key above.
+          // no coding key. An OUTPUT, never part of the grounding key above
+          // (the toggle that asked for it is).
           ...codingFieldsOf({ codingSolution, codingFallback }),
           // Row 1 of the example-projects group, picked server-side from the
           // pre-warmed pool for THIS question. ABSENT (not defaulted) when the

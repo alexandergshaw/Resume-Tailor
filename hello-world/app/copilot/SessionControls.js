@@ -24,8 +24,9 @@ import { TOUCH_TARGET_SX, TOUCH_SWITCH_SX } from "@/app/theme/mobileSx";
 // out, and no assertion in this suite was weakened to let it move.
 //
 // Owns live mode's session control row and nothing else: Start/Stop, the
-// status pill, the elapsed clock, the Auto-draft switch, Copy, Clear, and the
-// "Download session log" button with its D6 disabled-reason caption. This is
+// status pill, the elapsed clock, the Auto-draft switch, the N162 "Add code
+// solutions" switch, Copy, Clear, and the "Download session log" button with its
+// D6 disabled-reason caption. This is
 // the live-mode mirror of practice/PracticeControls.js — the same split, for
 // the same reason, on the very row that file's own header already points at
 // ("live mode's own Start/Stop row in CopilotClient.js").
@@ -54,8 +55,9 @@ import { TOUCH_TARGET_SX, TOUCH_SWITCH_SX } from "@/app/theme/mobileSx";
 // trio — Copy, Clear and Download session log, plus the caption — tucks behind
 // ONE reused CollapsibleAid, so Clear (which wipes the transcript, every
 // detected question and the confirm gate, and has no undo) is
-// not a stray-tap target mid-session. Stop/Start, the pill, the clock and Auto-draft stay
-// inline in every state, and the trio is defined ONCE below and placed in
+// not a stray-tap target mid-session. Stop/Start, the pill, the clock,
+// Auto-draft and "Add code solutions" stay inline in every state, and the trio
+// is defined ONCE below and placed in
 // exactly one of two spots, so a duplicated control row cannot exist. The
 // disclosure's open state is the module-scope choice store below, read by
 // CollapsibleAid, not state here.
@@ -103,6 +105,12 @@ export default function SessionControls({
   elapsed,
   autoDraft,
   setAutoDraft,
+  // N162: the shared "include coding solution" preference. CopilotClient reads
+  // the store (useIncludeCodingSolution) and hands the value and its setter
+  // down, exactly as it does autoDraft/setAutoDraft; this module stays free of
+  // any store subscription (SessionControls.extraction.test.js bans it).
+  includeCodingSolution,
+  onIncludeCodingSolutionChange,
   copyTranscript,
   clearAll,
   finals,
@@ -248,6 +256,22 @@ export default function SessionControls({
         label={
           <Typography variant="body2" sx={{ color: "var(--text-secondary)" }}>
             Auto-draft
+          </Typography>
+        }
+        sx={{ mr: 0.5 }}
+      />
+      <FormControlLabel
+        control={
+          <Switch
+            size="small"
+            checked={includeCodingSolution}
+            onChange={(e) => onIncludeCodingSolutionChange(e.target.checked)}
+            sx={TOUCH_SWITCH_SX}
+          />
+        }
+        label={
+          <Typography variant="body2" sx={{ color: "var(--text-secondary)" }}>
+            Add code solutions
           </Typography>
         }
         sx={{ mr: 0.5 }}

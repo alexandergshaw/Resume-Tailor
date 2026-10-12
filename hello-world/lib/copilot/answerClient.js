@@ -27,7 +27,25 @@ import { splitFrames } from "./answerStream.js";
 // true then, but not for chunk C's: both request-building functions here
 // gain the field so the route can fold it into the answer-prompt precedence
 // and the grounding key.
-export async function draftAnswer({ question, context, profile, interviewType, applicationId, codeLanguage, mode }) {
+//
+// N162: `includeCodingSolution` (the "include coding solution" toggle) is
+// FORWARDED, never read: this client does not touch the toggle's store, and it
+// does not default the field. The caller captures the toggle once per draft and
+// passes it in, so the value in the body is exactly the one the draft's cache
+// entry is keyed on. A caller that passes `false` sends `false`; a caller that
+// omits it sends nothing (undefined is dropped by JSON.stringify), so a request
+// from a call site that never learned about the toggle is byte-identical to
+// what it was before the field existed.
+export async function draftAnswer({
+  question,
+  context,
+  profile,
+  interviewType,
+  applicationId,
+  codeLanguage,
+  mode,
+  includeCodingSolution,
+}) {
   const res = await fetch("/api/copilot/answer", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -40,6 +58,7 @@ export async function draftAnswer({ question, context, profile, interviewType, a
       codeLanguage,
       mode,
       engine: readEngine(),
+      includeCodingSolution,
     }),
   });
   const json = await res.json().catch(() => ({}));
@@ -64,8 +83,11 @@ export async function draftAnswer({ question, context, profile, interviewType, a
 // caller-supplied `onPoints` that throws (a React setState wrapper mid-
 // render, say) is swallowed so an otherwise-intact stream is never lost to
 // it, and nothing is ever delivered to `onPoints` once this has resolved.
+//
+// N162: forwards `includeCodingSolution` exactly as draftAnswer does (forward
+// only, no default, omitted means absent from the body).
 export async function draftAnswerStreaming(
-  { question, context, profile, interviewType, applicationId, codeLanguage, mode },
+  { question, context, profile, interviewType, applicationId, codeLanguage, mode, includeCodingSolution },
   { onPoints } = {},
 ) {
   const res = await fetch("/api/copilot/answer", {
@@ -80,6 +102,7 @@ export async function draftAnswerStreaming(
       codeLanguage,
       mode,
       engine: readEngine(),
+      includeCodingSolution,
       stream: true,
     }),
   });

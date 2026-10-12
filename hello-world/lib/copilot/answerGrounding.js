@@ -66,12 +66,23 @@ function normalizeField(value) {
 // selection both modes now read), `applicationId` (the selected posting's id,
 // or nothing), `codeLanguage` (the code-language control's value, or nothing)
 // — and folds each one's "not applicable" spellings together.
-export function groundingFor({ profile, interviewType, applicationId, codeLanguage } = {}) {
+//
+// N162: `includeCodingSolution` (the "include coding solution" toggle the draft
+// was built under) is a fifth field, but a BOOLEAN FACT, not a free-form value,
+// so it does NOT go through `normalizeField`: strict `=== true`, which folds an
+// omitted field, an explicit `false`, null and any truthy non-boolean (the
+// string "true", the number 1) all to `false`. An entry cached before the field
+// existed therefore still matches a default-OFF request, while only a real
+// `true` arms it. Flipping the toggle then misses exactly the way a
+// `codeLanguage` change does. This is the toggle, never the `codingSolution`
+// OUTPUT object (see `cachedAnswerFor` below — that stays out of the key).
+export function groundingFor({ profile, interviewType, applicationId, codeLanguage, includeCodingSolution } = {}) {
   return {
     profile: normalizeField(profile),
     interviewType: normalizeField(interviewType),
     applicationId: normalizeField(applicationId),
     codeLanguage: normalizeField(codeLanguage),
+    includeCodingSolution: includeCodingSolution === true,
   };
 }
 
@@ -85,7 +96,8 @@ export function sameGrounding(a, b) {
     a.profile === b.profile &&
     a.interviewType === b.interviewType &&
     a.applicationId === b.applicationId &&
-    a.codeLanguage === b.codeLanguage
+    a.codeLanguage === b.codeLanguage &&
+    a.includeCodingSolution === b.includeCodingSolution
   );
 }
 

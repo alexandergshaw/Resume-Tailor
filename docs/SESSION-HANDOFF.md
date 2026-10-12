@@ -7,8 +7,8 @@ _Last updated: 2026-10-07 by the orchestrator._
 ---
 
 ## 1. In-flight uncommitted work (the dirty tree)
-- About to commit N160 (last-used-app restore + eslint fix) — full suite 20189 green. After this, ALL fresh actionable items (N154–N161) are shipped; what remains is the N1–N100 standing block (triaged 2026-10-05 as mostly shipped-but-listed/owner-gated — being RE-TRIAGED now) + owner/Gemini-env verification owed.
-- (prior) N161 committed e0f33f8 (coding-answer detection, full suite 20179).
+- About to commit N162 (coding-answer TOGGLE; all 4 waves A/B/C/D on disk, green) after the whole-chunk integration gate. N162 REVERSES N161's replace → normal answer always + additive toggle-gated coding solution. Nothing else pending.
+- SHIPPED earlier this session incl. N37 (defense-in-depth), N124 (recent companies), pool-failure UX N145+N146a (stale-serve + Try again), N160, N161, and the whole N154–N161 + N157 arc. N37 residual decision ruled (apply fix). Remaining standing N1–N100 block = mostly shipped-but-listed/owner-gated (re-triaged 2026-10-11); owner-input blockers surfaced: N107 go-live+kill-switch, N97 (3 decisions), Gemini-env quality confirms (N140/N143/N149/N150/N161/N162). N78 low-value (page.js). N146 b/c probe-gated.
 - **FLAG:** app/copilot/practice/PracticeClient.js is at EXACTLY the 950-line ceiling (949/950, 1 line slack) — the next practice edit needs an extraction first. File as a follow-up if touched.
 - N160 (last-used-app restore + stale eslint disable) remains the only fresh low item open.
 - (prior) N157 SC-D committed earlier: (D-a studyPlanKnobs + copy; D-b StudyPlanControls/useStudyKnobs + 4 C-c wiring edits + notice.gemini egress append + census reconcile + authorized pin updates). Full suite 20036 green. This COMPLETES N157. Nothing else pending after.

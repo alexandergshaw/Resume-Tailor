@@ -1,39 +1,36 @@
-// N161 SC-1 — route wiring for the coding path (AC-6 per-branch key sets +
-// codingSolution rides the done frame; AC-11 REPLACE on the response side;
-// AC-10 embedded fallback fence). New file beside route.test.js / streaming.js
-// so their existing exact-key-set assertions are never edited or weakened.
+// N162 Wave B (4b) — RE-STATED from N161 SC-1. Owner reversed N161's REPLACE on
+// 2026-10-12 (N162.ac.r1.md §BLAST RADIUS authorises this rework). Under N162 the
+// coding solution is ADDITIVE and DOUBLE-GATED: the route ALWAYS produces the
+// normal answer, and appends a coding section ONLY when
+//   wantsCoding = body.includeCodingSolution === true && detectCodingChallenge(question)
+// Binds to N162.arch.r1.md §5 and AC-N162-6/7/9/10/11/16/17/20.
 //
-// THE FIVE ANSWER-PRODUCING BRANCHES (route.js), re-read this round to anchor
-// AC-6's "codingSolution absent when not detected" to the REAL assertions:
-//   1. streaming Gemini done frame      (route.js:313-337) — streaming.test.js
-//      pins points/type/resumeAnchor on the done frame but NO full key-set
-//      toEqual, so this file adds one.
-//   2. non-streaming Gemini answer-mode (route.js:725-797) — route.test.js:314
-//      has a full toEqual (with applicationId → projectExample); this file adds
-//      the no-application key set.
-//   3. non-streaming Gemini points-mode (route.js:851-915) — route.test.js:192
-//      / :452 full toEqual (6 / 7 keys).
-//   4. embedded answer-mode             (route.js:665-720) — route.test.js:225
-//      pins fields but NO full key-set toEqual, so this file adds one.
-//   5. embedded points-mode             (route.js:817-846) — route.test.js:172
-//      full toEqual (6 keys).
-// For branches 3 and 5 the existing toEqual already reddens if codingSolution
-// leaks in; branches 1, 2 (no-app) and 4 are the gaps this file closes (AC-6 /
-// m2). Every non-coding key set below is a regression guard: GREEN on HEAD,
-// RED on a build that leaks codingSolution onto a non-coding response.
+// THE FIVE ANSWER-PRODUCING BRANCHES (route.js), re-read this round:
+//   1. streaming Gemini done frame      (route.js:276-343)
+//   2. non-streaming Gemini answer-mode (route.js:734-811)
+//   3. non-streaming Gemini points-mode (route.js:863-931)
+//   4. embedded answer-mode             (route.js:676-733)
+//   5. embedded points-mode             (route.js:826-861)
 //
-// The detected-coding cases are RED on HEAD: there is no coding branch, so a
-// model payload carrying codingSolution but no `points` makes the route 502
-// (Gemini) or emit a terminal `error` frame (streaming). The discarded
-// reference in tests.r1.md proves them satisfiable.
+// RED/GREEN on HEAD (verified 2026-10-12 against the shipped N161 tree):
+//   - "AC-6 non-coding key sets" (below) are GREEN today and stay GREEN under
+//     N162 (OFF/non-coding path is byte/key-identical to today — AC-N162-17).
+//     They redden only if a build leaks a coding field onto a non-coding
+//     response — the over-fire control.
+//   - every ADDITIVE / gate case is RED today: HEAD REPLACES a detected-coding
+//     Gemini answer with `{codingSolution, type}` (no points) and early-returns
+//     the embedded fallback marker alone — so the normal-answer `points` this
+//     chunk requires are absent, and HEAD ignores the request flag entirely.
+//
+// Satisfiability: the discarded reference in tests.r1.md builds the additive
+// route and turns every RED green; the mocks here control the payload, so one
+// model call returning BOTH `points` and `codingSolution` is mechanical.
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 vi.mock("@/lib/config/env", () => ({ getServerEnv: vi.fn() }));
 vi.mock("@/lib/llm/geminiClient", () => ({ getGeminiClient: vi.fn() }));
 vi.mock("@/lib/supabase/server", () => ({ createClient: vi.fn() }));
-// Same reason streaming.test.js mocks it: keep the per-application resolver a
-// miss so no request warms a real cache through a hanging generateContent.
 vi.mock("@/lib/copilot/answerCodeLanguage", () => ({
   startCodeLanguageResolution: vi.fn(),
   peekCodeLanguage: vi.fn(() => null),
@@ -69,8 +66,6 @@ function mockGemini(payload) {
   });
 }
 
-// Streaming Gemini: yields `payload` as one or more text chunks; generateContent
-// never settles so any completed test proves the done frame came from the stream.
 function chunkStream(chunks) {
   return (async function* () {
     for (const text of chunks) yield { text };
@@ -108,17 +103,24 @@ const PROFILE = [
   "Built a React and Node.js platform serving 2M users.",
 ].join("\n");
 
-// Non-coding question with no role-taxonomy term (so roleTermsFlag stays {}),
-// used for the clean key-set guards. "Tell me about a time you handled a tight
-// deadline." is the embedded-mode fixture route.test.js:153 already pins at a
-// 6-key set, confirming it fires no role-term flags.
 const NON_CODING = "Tell me about yourself.";
 const NON_CODING_BEHAVIORAL = "Tell me about a time you handled a tight deadline.";
 
-// A detected coding question (AC-1 positive) and the model payload the coding
-// prompt asks for. No `points`: a worked solution REPLACES the spoken answer.
+// A detected coding question (AC-1 positive; detectCodingChallenge→true and
+// roleTerms→[] verified this round, so no role-term key perturbs the key sets).
 const CODING_Q = "Write a function to reverse a linked list.";
-const CODING_PAYLOAD = {
+
+// The ADDITIVE model payload: ONE call returns BOTH the spoken `points` AND a
+// `codingSolution`. `points` is FIRST so the streaming parser emits points
+// frames before the solution (arch §4.1 / pointsFromPartialJson anchor).
+const CODING_PAYLOAD_ADDITIVE = {
+  points: [
+    "Walk the list once, reversing each next-pointer in place.",
+    "Track previous, current, and next as you go.",
+    "Return the previous pointer once you reach the end.",
+  ],
+  cues: ["reverse in place", "three pointers", "return prev"],
+  type: "technical",
   codingSolution: {
     approach: "Walk the list once, reversing each next-pointer in place.",
     language: "Python",
@@ -126,15 +128,14 @@ const CODING_PAYLOAD = {
     complexity: "O(n) time, O(1) space.",
     edgeCases: ["empty list", "single node"],
   },
-  type: "technical",
 };
-// Hand-written EXPECTED (independent of normalizeCodingSolution, so this is not
-// a self-consistency canary): model language token "Python" is honoured.
+// Hand-written EXPECTED (independent of normalizeCodingSolution): model token
+// "Python" honoured.
 const EXPECTED_SOLUTION = {
-  approach: CODING_PAYLOAD.codingSolution.approach,
+  approach: CODING_PAYLOAD_ADDITIVE.codingSolution.approach,
   language: "Python",
-  code: CODING_PAYLOAD.codingSolution.code,
-  complexity: CODING_PAYLOAD.codingSolution.complexity,
+  code: CODING_PAYLOAD_ADDITIVE.codingSolution.code,
+  complexity: CODING_PAYLOAD_ADDITIVE.codingSolution.complexity,
   edgeCases: ["empty list", "single node"],
 };
 
@@ -147,8 +148,10 @@ beforeEach(() => {
 afterEach(() => vi.unstubAllEnvs());
 
 // ---------------------------------------------------------------------------
-// AC-6 — non-coding response is key-for-key today's shape; codingSolution
-// ABSENT (not null, not []) on every branch. Regression guards (GREEN on HEAD).
+// AC-N162-17 — the OFF / non-coding path is key-for-key today's shape;
+// NO coding field on any branch. Regression guards (GREEN on HEAD AND under
+// N162). RED only on a build that leaks a coding field onto a non-coding
+// response — the over-fire control.
 // ---------------------------------------------------------------------------
 describe("AC-6 — non-coding key sets, codingSolution absent on all five branches", () => {
   it("branch 3: gemini points-mode (no application)", async () => {
@@ -230,98 +233,236 @@ describe("AC-6 — non-coding key sets, codingSolution absent on all five branch
 });
 
 // ---------------------------------------------------------------------------
-// AC-6 + AC-11 — a DETECTED coding question: the worked solution rides the
-// response in place of points, on the three Gemini branches. RED on HEAD.
+// AC-N162-7 / AC-N162-9 — ADDITIVE: flag ON + detected coding → the NORMAL
+// answer (points non-empty) AND codingSolution, on every Gemini branch.
+// RED on HEAD (HEAD REPLACES: codingSolution with NO points). The exact key
+// sets pinned here are the shape C caches and D renders.
 // ---------------------------------------------------------------------------
-describe("AC-6 / AC-11 — detected coding question carries codingSolution, suppresses points (Gemini)", () => {
-  it("branch 3: gemini points-mode returns codingSolution and NO points/answer", async () => {
+describe("AC-N162-7/9 — additive: normal answer + codingSolution when flag ON ∧ detected (Gemini)", () => {
+  it("branch 3: gemini points-mode returns points AND codingSolution (exact shape)", async () => {
     mockUser();
-    mockGemini(CODING_PAYLOAD);
-    const res = await POST(jsonRequest({ question: CODING_Q, engine: "gemini", interviewType: "technical" }));
-    expect(res.status).toBe(200);
-    const data = await res.json();
-    expect(data.codingSolution).toEqual(EXPECTED_SOLUTION);
-    // AC-11 REPLACE: no spoken-points list and no derived prose beside the code.
-    expect(data).not.toHaveProperty("points");
-    expect(data).not.toHaveProperty("answer");
-  });
-
-  it("branch 2: gemini answer-mode returns codingSolution and NO points/answer", async () => {
-    mockUser();
-    mockGemini(CODING_PAYLOAD);
+    mockGemini(CODING_PAYLOAD_ADDITIVE);
     const res = await POST(
-      jsonRequest({ question: CODING_Q, mode: "answer", engine: "gemini", interviewType: "technical" }),
+      jsonRequest({ question: CODING_Q, engine: "gemini", interviewType: "technical", includeCodingSolution: true }),
     );
     expect(res.status).toBe(200);
     const data = await res.json();
+    // Both sentinels — the normal answer is NOT suppressed (FD-2) AND the code
+    // section is additive. A mutant restoring REPLACE fails the points sentinel.
+    expect(data.points?.length ?? 0).toBeGreaterThanOrEqual(1);
     expect(data.codingSolution).toEqual(EXPECTED_SOLUTION);
-    expect(data).not.toHaveProperty("points");
-    expect(data).not.toHaveProperty("answer");
+    expect(data).not.toHaveProperty("answer"); // points mode
+    // The exact additive shape: today's points-mode key set + codingSolution.
+    expect(Object.keys(data).sort()).toEqual([
+      "buzzwords",
+      "codingSolution",
+      "cues",
+      "pageSources",
+      "points",
+      "resumeAnchor",
+      "type",
+    ]);
   });
 
-  it("branch 1: streaming done frame carries codingSolution, not a spoken answer", async () => {
+  it("branch 2: gemini answer-mode returns points, answer AND codingSolution (exact shape)", async () => {
     mockUser();
-    mockGeminiStream(CODING_PAYLOAD);
+    mockGemini(CODING_PAYLOAD_ADDITIVE);
     const res = await POST(
-      jsonRequest({ question: CODING_Q, engine: "gemini", interviewType: "technical", stream: true }),
+      jsonRequest({
+        question: CODING_Q,
+        mode: "answer",
+        engine: "gemini",
+        interviewType: "technical",
+        includeCodingSolution: true,
+      }),
+    );
+    expect(res.status).toBe(200);
+    const data = await res.json();
+    expect(data.points?.length ?? 0).toBeGreaterThanOrEqual(1);
+    expect(typeof data.answer).toBe("string");
+    expect(data.codingSolution).toEqual(EXPECTED_SOLUTION);
+    expect(Object.keys(data).sort()).toEqual([
+      "answer",
+      "buzzwords",
+      "codingSolution",
+      "cues",
+      "grounding",
+      "pageSources",
+      "points",
+      "resumeAnchor",
+      "type",
+    ]);
+  });
+
+  it("branch 1: streaming emits ≥1 points frame AND a done frame carrying points AND codingSolution", async () => {
+    mockUser();
+    mockGeminiStream(CODING_PAYLOAD_ADDITIVE);
+    const res = await POST(
+      jsonRequest({
+        question: CODING_Q,
+        engine: "gemini",
+        interviewType: "technical",
+        stream: true,
+        includeCodingSolution: true,
+      }),
     );
     const frames = await readFrames(res);
     const terminal = frames.filter((f) => f.t === "done" || f.t === "error");
     expect(terminal).toHaveLength(1);
     expect(terminal[0].t).toBe("done");
+    // The normal answer streams (≥1 incremental points frame) — RED→GREEN vs
+    // N161 which asserted 0 points frames for a coding question.
+    expect(frames.filter((f) => f.t === "points").length).toBeGreaterThanOrEqual(1);
+    // The done frame carries BOTH the spoken points AND the solution.
+    expect(terminal[0].points?.length ?? 0).toBeGreaterThanOrEqual(1);
     expect(terminal[0].codingSolution).toEqual(EXPECTED_SOLUTION);
-    // No incremental points frames for a coding question: nothing to speak.
-    expect(frames.filter((f) => f.t === "points")).toHaveLength(0);
-    expect(terminal[0]).not.toHaveProperty("points");
+    expect(Object.keys(terminal[0]).sort()).toEqual([
+      "buzzwords",
+      "codingSolution",
+      "cues",
+      "pageSources",
+      "points",
+      "resumeAnchor",
+      "t",
+      "type",
+    ]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// AC-N162-6 / AC-N162-16 — the gate is flag AND detection. Each conjunct has
+// its own mutation control:
+//   OFF + detected   → no coding section (catches the IGNORE-FLAG / always-add
+//                       mutant, i.e. HEAD's detection-only gate).
+//   ON  + non-coding → no coding section (catches the IGNORE-DETECTION /
+//                       flag-alone mutant). GREEN on HEAD (non-coding path).
+// ---------------------------------------------------------------------------
+describe("AC-N162-6/16 — gate = includeCodingSolution === true AND detectCodingChallenge(question)", () => {
+  it.each([
+    ["flag omitted", {}],
+    ["flag explicitly false", { includeCodingSolution: false }],
+  ])("OFF (%s) + detected coding → normal answer, NO codingSolution (RED on HEAD)", async (_label, flag) => {
+    mockUser();
+    mockGemini(CODING_PAYLOAD_ADDITIVE); // payload carries a solution; the gate must drop it when OFF
+    const res = await POST(
+      jsonRequest({ question: CODING_Q, engine: "gemini", interviewType: "technical", ...flag }),
+    );
+    expect(res.status).toBe(200);
+    const data = await res.json();
+    expect(data.points?.length ?? 0).toBeGreaterThanOrEqual(1);
+    expect(data).not.toHaveProperty("codingSolution");
   });
 
-  it("a malformed model coding payload degrades to a safe non-coding answer, never a half-built object (AC-3)", async () => {
-    // Model claims a coding solution but omits `code` AND returns no points:
-    // the normaliser yields null, and with no points the route reports the
-    // ordinary empty-answer error rather than shipping a partial solution.
+  it("ON + NON-coding question → normal answer, NO codingSolution (detection gates it; GREEN on HEAD, ignore-detection control)", async () => {
     mockUser();
-    mockGemini({ codingSolution: { approach: "x", complexity: "y", edgeCases: [] }, type: "technical" });
-    const res = await POST(jsonRequest({ question: CODING_Q, engine: "gemini", interviewType: "technical" }));
+    mockGemini(CODING_PAYLOAD_ADDITIVE); // payload carries a solution; detection=false must drop it
+    const res = await POST(
+      jsonRequest({ question: NON_CODING, engine: "gemini", includeCodingSolution: true }),
+    );
+    expect(res.status).toBe(200);
     const data = await res.json();
-    expect(res.status).toBe(502);
+    expect(data.points?.length ?? 0).toBeGreaterThanOrEqual(1);
     expect(data).not.toHaveProperty("codingSolution");
   });
 });
 
 // ---------------------------------------------------------------------------
-// AC-10 / D6 — the embedded engine never fabricates code. Honest fallback
-// marker, no code field, on both embedded branches. The "no code" half is a
-// scope fence (vacuous on HEAD until the marker exists); the teeth are the
-// marker-present assertion (RED on HEAD) and the no-code mutant.
+// AC-N162-10 / AC-N162-20 — embedded engine is ADDITIVE and still never
+// fabricates code: normal on-device answer (points) + honest codingFallback
+// marker, no `code` field anywhere. RED on HEAD (HEAD early-returns the marker
+// ALONE, before the drafter runs — no points).
 // ---------------------------------------------------------------------------
-describe("AC-10 — embedded engine returns an honest fallback, no fabricated code", () => {
-  it("embedded points-mode: a detected coding question yields the fallback marker and no code", async () => {
-    mockUser();
-    const res = await POST(jsonRequest({ question: CODING_Q, engine: "embedded", interviewType: "technical" }));
-    expect(res.status).toBe(200);
-    const data = await res.json();
-    expect(typeof data.codingFallback).toBe("string");
-    expect(data.codingFallback.length).toBeGreaterThan(0);
-    expect(data).not.toHaveProperty("code");
-    // No fabricated solution object carrying code either.
-    expect(data.codingSolution?.code).toBeUndefined();
-  });
-
-  it("embedded answer-mode: same honest fallback, no code", async () => {
+describe("AC-N162-10/20 — embedded additive: normal answer + honest fallback, no fabricated code", () => {
+  it("embedded points-mode ON + detected → normal points AND codingFallback, no code", async () => {
     mockUser();
     const res = await POST(
-      jsonRequest({ question: CODING_Q, mode: "answer", engine: "embedded", interviewType: "technical" }),
+      jsonRequest({
+        question: CODING_Q,
+        profile: PROFILE,
+        engine: "embedded",
+        interviewType: "technical",
+        includeCodingSolution: true,
+      }),
     );
     expect(res.status).toBe(200);
     const data = await res.json();
+    expect(data.points?.length ?? 0).toBeGreaterThanOrEqual(1); // RED on HEAD: fallback alone, no points
+    expect(typeof data.codingFallback).toBe("string");
+    expect(data.codingFallback.length).toBeGreaterThan(0);
+    expect(data).not.toHaveProperty("code"); // FD-4
+    expect(data.codingSolution?.code).toBeUndefined();
+  });
+
+  it("embedded answer-mode ON + detected → normal answer AND codingFallback, no code", async () => {
+    mockUser();
+    const res = await POST(
+      jsonRequest({
+        question: CODING_Q,
+        profile: PROFILE,
+        mode: "answer",
+        engine: "embedded",
+        interviewType: "technical",
+        includeCodingSolution: true,
+      }),
+    );
+    expect(res.status).toBe(200);
+    const data = await res.json();
+    expect(data.points?.length ?? 0).toBeGreaterThanOrEqual(1);
     expect(typeof data.codingFallback).toBe("string");
     expect(data).not.toHaveProperty("code");
     expect(data.codingSolution?.code).toBeUndefined();
   });
 
-  it("no Gemini client is constructed on the embedded coding path", async () => {
+  it("embedded OFF + detected → normal answer, NO codingFallback (RED on HEAD; embedded ignore-flag control)", async () => {
     mockUser();
-    await POST(jsonRequest({ question: CODING_Q, engine: "embedded", interviewType: "technical" }));
+    const res = await POST(
+      jsonRequest({ question: CODING_Q, profile: PROFILE, engine: "embedded", interviewType: "technical" }),
+    );
+    expect(res.status).toBe(200);
+    const data = await res.json();
+    expect(data.points?.length ?? 0).toBeGreaterThanOrEqual(1); // RED on HEAD
+    expect(data).not.toHaveProperty("codingFallback"); // RED on HEAD
+  });
+
+  it("no Gemini client is constructed on the embedded coding path (guard)", async () => {
+    mockUser();
+    await POST(
+      jsonRequest({
+        question: CODING_Q,
+        profile: PROFILE,
+        engine: "embedded",
+        interviewType: "technical",
+        includeCodingSolution: true,
+      }),
+    );
     expect(getGeminiClient).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// AC-N162-11 — a malformed model coding payload (normalizeCodingSolution→null)
+// with the flag ON must degrade to the NORMAL answer when points are present,
+// never a half-built solution and never a 502. This is a GUARD, not a RED:
+// with BOTH points and a malformed solution in one payload, HEAD already drops
+// the unparseable solution and returns the points (200), so there is no
+// HEAD/additive divergence to redden. The "502 → 200 flip" the AC describes is
+// a PROMPT effect (the additive prompt asks for points), proven in
+// answerPrompts.coding.test.js, not reproducible with one fixed route payload.
+// ---------------------------------------------------------------------------
+describe("AC-N162-11 — malformed coding payload with points present degrades to the normal answer (guard)", () => {
+  it("gemini points-mode, flag ON, detected, codingSolution missing `code` → 200 normal answer, no codingSolution", async () => {
+    mockUser();
+    mockGemini({
+      points: ["A real spoken point.", "A second spoken point."],
+      type: "technical",
+      codingSolution: { approach: "x", complexity: "y", edgeCases: [] }, // no code → normalizer returns null
+    });
+    const res = await POST(
+      jsonRequest({ question: CODING_Q, engine: "gemini", interviewType: "technical", includeCodingSolution: true }),
+    );
+    expect(res.status).toBe(200);
+    const data = await res.json();
+    expect(data.points?.length ?? 0).toBeGreaterThanOrEqual(1);
+    expect(data).not.toHaveProperty("codingSolution");
   });
 });

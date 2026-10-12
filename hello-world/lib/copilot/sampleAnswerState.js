@@ -100,6 +100,12 @@ export function emptySampleAnswer() {
     // rather than the distinct "field omitted" spelling `normalizeField`
     // reserves for that (answerGrounding.js's own header).
     codeLanguage: AUTO,
+    // N162: the "include coding solution" toggle the draft (or in-flight
+    // request) was built under — the fifth field needsRedraft/
+    // cachedSampleAnswerFor compare. Seeded to its OFF default (false), never
+    // undefined, the way codeLanguage is seeded to AUTO, so a comparison against
+    // an untouched slot is a real boolean comparison.
+    includeCodingSolution: false,
   };
 }
 
@@ -160,7 +166,20 @@ export function activeSampleAnswer(state, question) {
 // silently shift the positional argument useSampleAnswer.js's own call
 // already passes at that slot, turning `force` into a truthy string and
 // making every reveal pay for a fresh model call forever.
-export function needsRedraft(active, profile, interviewType, applicationId, codeLanguage, force = false) {
+//
+// N162: `includeCodingSolution` (the coding toggle) is the SIXTH parameter,
+// again before the trailing `force = false` for the same reason — and `force`
+// is therefore now the SEVENTH. A flip between what the draft was built under
+// and the current toggle redrafts exactly like a `codeLanguage` change does.
+export function needsRedraft(
+  active,
+  profile,
+  interviewType,
+  applicationId,
+  codeLanguage,
+  includeCodingSolution,
+  force = false,
+) {
   if (force) return true;
   if (!active || active.status === "idle" || active.status === "error") return true;
   if (active.status === "loading") return false;
@@ -168,7 +187,8 @@ export function needsRedraft(active, profile, interviewType, applicationId, code
     active.profile !== profile ||
     active.interviewType !== interviewType ||
     active.applicationId !== applicationId ||
-    active.codeLanguage !== codeLanguage
+    active.codeLanguage !== codeLanguage ||
+    active.includeCodingSolution !== includeCodingSolution
   );
 }
 
@@ -215,8 +235,26 @@ export function needsRedraft(active, profile, interviewType, applicationId, code
 // fail-safe direction. Defaulting it to AUTO "to be safe" would invert that:
 // a caller that forgot the argument would then HIT a genuine `auto` entry,
 // serving an answer drafted under an explicit language as the Auto answer.
-export function cachedSampleAnswerFor(entry, question, profile, interviewType, applicationId, codeLanguage) {
-  const hit = cachedAnswerFor(entry, groundingFor({ profile, interviewType, applicationId, codeLanguage }));
+//
+// N162: `includeCodingSolution` is a SEVENTH positional parameter, undefaulted
+// for the same reason: an omitted argument is `undefined`, which groundingFor's
+// strict `=== true` folds to the OFF grounding, so a caller that forgot it
+// MISSES an entry drafted under ON (never serves a coding answer to a request
+// that did not ask for one). It rides the grounding comparison above and is
+// echoed back on the slot as passed, the way `codeLanguage` is.
+export function cachedSampleAnswerFor(
+  entry,
+  question,
+  profile,
+  interviewType,
+  applicationId,
+  codeLanguage,
+  includeCodingSolution,
+) {
+  const hit = cachedAnswerFor(
+    entry,
+    groundingFor({ profile, interviewType, applicationId, codeLanguage, includeCodingSolution }),
+  );
   if (!hit) return null;
   return {
     question,
@@ -253,5 +291,6 @@ export function cachedSampleAnswerFor(entry, question, profile, interviewType, a
     interviewType,
     applicationId,
     codeLanguage,
+    includeCodingSolution,
   };
 }

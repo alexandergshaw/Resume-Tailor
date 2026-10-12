@@ -1,26 +1,29 @@
 // @vitest-environment jsdom
 //
-// N161 SC-2 (step 4b) — practice mode's half of AC-8: the worked solution a
+// N161 SC-2 RE-STATED FOR N162 (step 4b) — practice mode's half of the coding
+// answer's round-trip. The INTENT is preserved exactly: the worked solution a
 // detected coding question produces must ride useSampleAnswer.js's full
 // round-trip (response -> state -> cache ENTRY) on BOTH the user-requested
 // `request` path and the silent `queue` pre-fetch, so a reveal served from the
-// cache is never served without it. Written BEFORE SC-2 lands; every coding
-// case fails against today's hook, which does not destructure or cache a coding
-// field.
+// cache is never served without it.
 //
-// Harness copied from useSampleAnswer.projectExample.test.js next door. The
-// cache-hit case uses the SAME queue(...) -> toggle() shape that file uses to
-// prove Row 1 rides the cache: queue writes the entry, toggle reveals FROM it,
-// and `draftAnswer` must NOT be called a second time on the reveal — that call
-// count is what makes "the solution replayed" a genuine cache read rather than
-// a second fetch returning the same mock.
+// WHAT N162 REVERSES: N161 made the coding solution REPLACE the spoken answer,
+// so the response carried codingSolution and NO points. N162 makes it ADDITIVE
+// — the normal answer is ALWAYS produced and codingSolution/codingFallback
+// COEXISTS with non-empty `points` on the same record. The responses below now
+// carry BOTH, and the reveal is asserted to replay BOTH.
 //
-// THE STRUCTURAL CATCH (see sampleAnswerState.codingSolution.test.js's header):
-// a detected coding answer carries NO `points`; cachedSampleAnswerFor (via
-// cachedAnswerFor) rejects a pointless entry, so on HEAD the toggle MISSES and
-// pays for a fresh `request`. The `draftAnswer.not.toHaveBeenCalled()`
-// assertion after the toggle is what forces the cache to admit a coding entry,
-// not merely carry the field.
+// The cache-hit case no longer needs the old "admit a pointless entry" trick:
+// the entry carries real points, so cachedSampleAnswerFor admits it on the
+// points alone. `draftAnswer.not.toHaveBeenCalled()` after the reveal still
+// proves the coding field was CACHED, not re-fetched.
+//
+// The toggle is consistent ON throughout (BASE.includeCodingSolution = true and
+// queue's trailing arg true), so the reveal grounding matches the entry's and
+// the cache hits — the cross-toggle MISS is pinned separately in
+// useSampleAnswer.includeCodingSolution.test.js.
+//
+// Harness copied from useSampleAnswer.projectExample.test.js next door.
 
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { createElement, act } from "react";
@@ -43,17 +46,41 @@ const CODING = {
   edgeCases: ["Empty string", "Single character"],
 };
 
+const CODING_POINTS = ["I would frame it as a two-pointer scan and talk through the invariant."];
+
 const QUESTION = "Code a function that checks if a string is a palindrome.";
 const OTHER_QUESTION = "Tell me about an incident you handled.";
-const BASE = { question: QUESTION, profile: "", interviewType: "technical", applicationId: "app-1", codeLanguage: "auto" };
+const BASE = {
+  question: QUESTION,
+  profile: "",
+  interviewType: "technical",
+  applicationId: "app-1",
+  codeLanguage: "auto",
+  includeCodingSolution: true,
+};
 
-// The route's non-streaming answer-mode body for a detected coding question:
-// codingSolution and type, NO points (SC-1, route.js:762-763). draftAnswer
-// resolves with this.
-const codingResponse = () => ({ codingSolution: CODING, type: "technical" });
+// N162 ADDITIVE: the non-streaming answer-mode body for a detected coding
+// question under the toggle ON carries the normal answer (points + cues) AND
+// the worked solution alongside it.
+const codingResponse = () => ({
+  points: CODING_POINTS,
+  cues: ["Two-pointer scan"],
+  buzzwords: [],
+  resumeAnchor: null,
+  pageSources: [],
+  grounding: { resume: false, coverLetter: false, pages: false },
+  codingSolution: CODING,
+  type: "technical",
+});
 
-// The embedded engine's honest marker (AC-10): a fallback string, no code.
+// The embedded engine's honest marker (AC-10), again ALONGSIDE a normal answer.
 const fallbackResponse = () => ({
+  points: CODING_POINTS,
+  cues: ["Two-pointer scan"],
+  buzzwords: [],
+  resumeAnchor: null,
+  pageSources: [],
+  grounding: { resume: false, coverLetter: false, pages: false },
   codingFallback: "Switch to the AI engine for a worked code solution.",
   type: "technical",
 });
@@ -80,7 +107,6 @@ async function mount(props = BASE) {
   root = createRoot(container);
   await act(async () => root.render(createElement(Probe, props)));
 }
-
 async function rerender(props) {
   await act(async () => root.render(createElement(Probe, props)));
 }
@@ -89,26 +115,19 @@ beforeEach(() => {
   answerClient.draftAnswer.mockReset();
 });
 
-describe("useSampleAnswer — a fresh coding sample answer carries the solution", () => {
-  it("exposes codingSolution from the response after a user-requested reveal (the `request` path)", async () => {
-    // RED on HEAD: the hook destructures neither codingSolution nor exposes it
-    // on its return, so api.codingSolution is undefined.
+describe("useSampleAnswer — a fresh coding sample answer carries points AND the solution (N162 coexist)", () => {
+  it("exposes BOTH points and codingSolution after a user-requested reveal (the `request` path)", async () => {
     answerClient.draftAnswer.mockResolvedValue(codingResponse());
     await mount();
     await act(async () => api.toggle());
 
     expect(api.status).toBe("done");
+    expect(api.points).toEqual(CODING_POINTS);
     expect(api.codingSolution).toEqual(CODING);
     expect(answerClient.draftAnswer).toHaveBeenCalledTimes(1);
   });
 
-  it("re-reveals the SAME solution from the `request` cache after moving away and back (no refetch)", async () => {
-    // The `request` path's own cache write (useSampleAnswer.js:306) must carry
-    // the field. Reveal, switch to another question (which resets the single
-    // state slot), switch back, reveal again — the second reveal is served
-    // from the cache, so draftAnswer must stay at one call and the solution
-    // must replay. RED on HEAD: field not cached AND the pointless entry is
-    // rejected by the cache gate, so the second reveal refetches.
+  it("re-reveals points AND the solution from the `request` cache after moving away and back (no refetch)", async () => {
     answerClient.draftAnswer.mockResolvedValue(codingResponse());
     await mount();
     await act(async () => api.toggle());
@@ -121,51 +140,48 @@ describe("useSampleAnswer — a fresh coding sample answer carries the solution"
     await act(async () => api.toggle());
     expect(answerClient.draftAnswer).not.toHaveBeenCalled();
     expect(api.status).toBe("done");
+    expect(api.points).toEqual(CODING_POINTS);
     expect(api.codingSolution).toEqual(CODING);
   });
 });
 
 describe("useSampleAnswer — a QUEUED coding draft rides the cache entry (AC-8 practice)", () => {
-  it("reveals the solution from the queue's cache without a request of its own", async () => {
-    // The queue path's cache write (useSampleAnswer.js:430) is the sabotage
-    // target named by AC-8: the mutant to watch drops codingSolution from THIS
-    // write. queue pre-fetches silently; toggle reveals from the entry.
+  it("reveals points AND the solution from the queue's cache without a request of its own", async () => {
+    // The queue path's cache write (:446) is the sabotage target: the mutant to
+    // watch drops codingSolution from THIS write.
     answerClient.draftAnswer.mockResolvedValue(codingResponse());
     await mount();
-    await act(async () => api.queue(QUESTION, "", "technical", "app-1", "auto"));
+    await act(async () => api.queue(QUESTION, "", "technical", "app-1", "auto", true));
 
     answerClient.draftAnswer.mockClear();
     await act(async () => api.toggle());
 
-    // RED on HEAD: a pointless coding entry is rejected by the cache gate, so
-    // toggle pays for a fresh request (draftAnswer called) instead of a free
-    // replay, and the field was never stored anyway.
     expect(answerClient.draftAnswer).not.toHaveBeenCalled();
     expect(api.status).toBe("done");
+    expect(api.points).toEqual(CODING_POINTS);
     expect(api.codingSolution).toEqual(CODING);
   });
 
-  it("reveals an embedded codingFallback marker from the queue's cache too (AC-10)", async () => {
+  it("reveals an embedded codingFallback marker beside its points from the queue's cache (AC-10)", async () => {
     answerClient.draftAnswer.mockResolvedValue(fallbackResponse());
     await mount();
-    await act(async () => api.queue(QUESTION, "", "technical", "app-1", "auto"));
+    await act(async () => api.queue(QUESTION, "", "technical", "app-1", "auto", true));
 
     answerClient.draftAnswer.mockClear();
     await act(async () => api.toggle());
 
     expect(answerClient.draftAnswer).not.toHaveBeenCalled();
     expect(api.status).toBe("done");
+    expect(api.points).toEqual(CODING_POINTS);
     expect(api.codingFallback).toBe("Switch to the AI engine for a worked code solution.");
   });
 });
 
 describe("useSampleAnswer — a non-coding sample answer is UNCHANGED (SC-2 regression guard)", () => {
   it("still reveals points and pageSources from the queue cache and carries no coding field", async () => {
-    // Green on HEAD and after SC-2 — the control that the gate relaxation for
-    // coding entries did not disturb the ordinary cached reveal.
     answerClient.draftAnswer.mockResolvedValue(plainResponse());
     await mount();
-    await act(async () => api.queue(QUESTION, "", "technical", "app-1", "auto"));
+    await act(async () => api.queue(QUESTION, "", "technical", "app-1", "auto", true));
 
     answerClient.draftAnswer.mockClear();
     await act(async () => api.toggle());

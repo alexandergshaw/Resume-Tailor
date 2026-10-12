@@ -49,7 +49,6 @@
 import { submittedDocsPromptParts } from "@/lib/copilot/applicationDocsPrompt";
 import { roleTerms } from "@/lib/copilot/questionVocabulary";
 import { AUTO, codeLanguageLabel } from "@/lib/copilot/codeLanguages";
-import { detectCodingChallenge } from "@/lib/copilot/detectCodingChallenge";
 import { codingLanguageDirective } from "@/lib/copilot/codingSolution";
 
 // AC-2.1/design §4a. The clause this replaces used to end with "if it is
@@ -218,44 +217,38 @@ export function codeLanguageLines(descriptor, codeLanguage) {
   ];
 }
 
-// N161 — the prompt for a DETECTED coding / pseudocode question
-// (detectCodingChallenge). Both builders below reach it through one early
-// return placed ahead of everything else, gated on that detector re-derived
-// from `question` — never a new argument, the same way the `roleTerms` gate is
-// — so a question that is not a coding ask takes none of this and every
-// existing prompt stays byte-identical (the FROZEN_*_NO_PAGES oracles).
+// N162 — the coding ask APPENDED to a normal prompt, by both builders below,
+// when their trailing `includeCoding` is true. N161 swapped in a coding-only
+// prompt and told the model to disregard the talking points; the owner reversed
+// that, so the spoken answer is ALWAYS asked for in full and this block adds the
+// worked solution beside it. The builders do not re-derive detection: the route
+// computes `wantsCoding` (the candidate's toggle AND detectCodingChallenge) and
+// passes it down, so `includeCoding` defaults off and every existing call — the
+// FROZEN_*_NO_PAGES oracles included — never reaches this.
 //
-// A worked solution REPLACES the spoken answer, so this prompt asks for a
-// `codingSolution` object INSTEAD of `points`, and tells the model to disregard
-// the system instruction's talking-points framing: the system instructions stay
-// the same two constants for every question, so the override rides this user
-// turn only. It carries no résumé, project pages or company facts — code is not
-// a claim about the candidate's experience — and uses codingLanguageDirective,
-// which, unlike codeLanguageLines, does not depend on `descriptor.codeBearing`.
-// The `type` enum is unchanged: the coding signal is the separate field.
-function buildCodingPrompt({ question, context, descriptor, codeLanguage }) {
-  const parts = [
-    `The interviewer asked: "${question}"`,
-    "",
-    ...interviewFormatLines(descriptor),
+// It rides the USER prompt only; POINTS_SYSTEM / ANSWER_SYSTEM stay the same two
+// constants for every question. It carries no résumé, project pages or company
+// facts of its own (code is not a claim about the candidate's experience), grants
+// no permission to claim anything, and uses codingLanguageDirective, which,
+// unlike codeLanguageLines, does not depend on `descriptor.codeBearing`. Under a
+// code-bearing format both blocks appear; they state the same four-step order.
+// `type` is unchanged: the coding signal is the separate `codingSolution` field.
+const CODING_SHAPE_FIELD =
+  '"codingSolution": { "approach": string, "language": string, "code": string, "complexity": string, "edgeCases": string[] }';
+
+function codingDirectiveLines(codeLanguage) {
+  return [
     "",
     ...codingLanguageDirective(codeLanguage),
-  ];
-  if (context) {
-    parts.push("", "Recent conversation (most recent last), for context:", context);
-  }
-  parts.push(
     "",
     "--- CODING CHALLENGE ---",
-    "This question asks the candidate to produce code or pseudocode, so it is not answered with spoken talking points. Disregard any earlier instruction to return talking points or a spoken answer: write a worked solution the candidate can read from and type. Do not write a story, a STAR answer, or any claim about the candidate's own experience.",
-    'Return ONLY JSON of this exact shape: { "codingSolution": { "approach": string, "language": string, "code": string, "complexity": string, "edgeCases": string[] }, "type": "behavioral" | "technical" | "general" }',
-    "approach: 1-3 plain sentences stating the idea and why it works, in the order the candidate would explain it aloud.",
-    'language: the name of the language the code is written in, or "Pseudocode".',
-    "code: the complete, correct, readable solution as ONE JSON string — line breaks written as \\n, indentation kept exactly as it should be typed, no markdown fences. Comments are welcome.",
-    "complexity: the time and space complexity in Big-O terms, each with a one-clause reason.",
-    "edgeCases: 2-5 short strings, each an edge case worth raising and how the code handles it — for example empty input, a single element, duplicates, or very large input.",
-  );
-  return parts.join("\n");
+    "This question also asks the candidate to produce code or pseudocode. Give the answer described above in full, as usual, and ALSO write a worked solution the candidate can read from and type, in the `codingSolution` field. The worked solution is code, not a claim about the candidate's own experience: put no story, STAR answer, or statement about what the candidate has done in it, and it changes nothing about what the answer above may claim.",
+    "codingSolution.approach: 1-3 plain sentences stating the idea and why it works, in the order the candidate would explain it aloud.",
+    'codingSolution.language: the name of the language the code is written in, or "Pseudocode".',
+    "codingSolution.code: the complete, correct, readable solution as ONE JSON string — line breaks written as \\n, indentation kept exactly as it should be typed, no markdown fences. Comments are welcome.",
+    "codingSolution.complexity: the time and space complexity in Big-O terms, each with a one-clause reason.",
+    "codingSolution.edgeCases: 2-5 short strings, each an edge case worth raising and how the code handles it — for example empty input, a single element, duplicates, or very large input.",
+  ];
 }
 
 // AC-H4.15: grounds live mode's talking points in the résumé and cover
@@ -300,7 +293,8 @@ function buildCodingPrompt({ question, context, descriptor, codeLanguage }) {
 // — while still accepting the ninth^H eighth argument every call site now
 // passes. A bare `companyFacts` parameter with no default would make that
 // frozen arity assertion fail on a change this module was never asked to
-// make.
+// make. `includeCoding` is the TENTH, trailing, defaulted parameter for the
+// identical reason (N162): it stays out of `.length`, and `false` appends nothing.
 //
 // THE BYTE-IDENTITY PROBLEM AND ITS FIX (contradiction C4, ARCH §4): V4.3 as
 // stated requires BOTH "an empty facts block still gets an instruction" AND
@@ -324,8 +318,8 @@ export function buildPointsPrompt(
   pagesBlock,
   companyFacts = undefined,
   codeLanguage = undefined,
+  includeCoding = false,
 ) {
-  if (detectCodingChallenge(question)) return buildCodingPrompt({ question, context, descriptor, codeLanguage });
   const companyKnown = !!companyFacts?.companyKnown;
   const factsBlock = companyKnown && typeof companyFacts.block === "string" ? companyFacts.block : "";
   const parts = [
@@ -426,6 +420,8 @@ export function buildPointsPrompt(
   const shapeFields = ['"points": string[]', '"type": "behavioral" | "technical" | "general"'];
   if (pagesBlock) shapeFields.push('"pageIds": (string | null)[]');
   if (askForFactIds) shapeFields.push('"factIds": (string | null)[]');
+  // N162: last, so `points` still leads the shape and streams first.
+  if (includeCoding) shapeFields.push(CODING_SHAPE_FIELD);
   parts.push("", `Return ONLY JSON of this exact shape: { ${shapeFields.join(", ")} }`);
   parts.push("points: 3-5 concise talking points as described above.");
   if (pagesBlock) {
@@ -438,6 +434,7 @@ export function buildPointsPrompt(
       'factIds: exactly one per point, same order — the exact "fact id" from a VERIFIED COMPANY FACTS line that point drew a claim about the employer from, or null when the point makes no claim about the employer. Never invent an id and never cite a fact you were not shown.',
     );
   }
+  if (includeCoding) parts.push(...codingDirectiveLines(codeLanguage));
   return parts.join("\n");
 }
 
@@ -507,8 +504,9 @@ export function buildAnswerPrompt({
   descriptor,
   pagesBlock,
   codeLanguage,
+  // N162: the route's `wantsCoding`; see codingDirectiveLines above.
+  includeCoding = false,
 }) {
-  if (detectCodingChallenge(question)) return buildCodingPrompt({ question, context, descriptor, codeLanguage });
   const parts = [
     `The interviewer asked: "${question}"`,
     "",
@@ -582,6 +580,10 @@ export function buildAnswerPrompt({
       "The interviewer's own wording may be used to name the subject and frame what the candidate has actually done, but every claim about their own experience must still come only from the material above, and never from the question.",
     );
   }
+  // N162: `codingSolution` is declared LAST, for the same reason `pageIds` is
+  // declared after `points` below, and is spliced into the otherwise
+  // unchanged shape line so a call with `includeCoding` false is byte-identical.
+  const codingShape = includeCoding ? `, ${CODING_SHAPE_FIELD}` : "";
   if (pagesBlock) {
     // AC-6.1/A3: the model names which page (by the id in that page's own
     // "## <title> (page id: <id>)" heading) each point actually drew a
@@ -594,11 +596,11 @@ export function buildAnswerPrompt({
     // at that array's close, so an earlier field would delay the first
     // streamed points frame for no benefit.
     parts.push(
-      'Return ONLY JSON of this exact shape: { "points": string[], "cues": string[], "type": "behavioral" | "technical" | "general", "pageIds": (string | null)[] }',
+      `Return ONLY JSON of this exact shape: { "points": string[], "cues": string[], "type": "behavioral" | "technical" | "general", "pageIds": (string | null)[]${codingShape} }`,
     );
   } else {
     parts.push(
-      'Return ONLY JSON of this exact shape: { "points": string[], "cues": string[], "type": "behavioral" | "technical" | "general" }',
+      `Return ONLY JSON of this exact shape: { "points": string[], "cues": string[], "type": "behavioral" | "technical" | "general"${codingShape} }`,
     );
   }
   parts.push(
@@ -609,5 +611,6 @@ export function buildAnswerPrompt({
       'pageIds: exactly one per point, same order — the exact "page id" from a YOUR OWN PROJECT PAGES heading that point drew a concrete detail from, or null when it did not draw on a page. Never invent an id and never cite a page you were not shown.',
     );
   }
+  if (includeCoding) parts.push(...codingDirectiveLines(codeLanguage));
   return parts.join("\n");
 }

@@ -59,7 +59,11 @@ import { geminiRoleTermsFlag, embeddedRoleTermsFlag } from "@/lib/copilot/roleTe
 import { normalizeCodeLanguageChoice } from "@/lib/copilot/codeLanguages";
 import { startCodeLanguageResolution, peekCodeLanguage } from "@/lib/copilot/answerCodeLanguage";
 import { detectCodingChallenge } from "@/lib/copilot/detectCodingChallenge";
-import { codingResponseFields, embeddedCodingFallback } from "@/lib/copilot/codingSolution";
+import { codingSolutionField, embeddedCodingField } from "@/lib/copilot/codingSolution";
+// The NDJSON response wrapper streamAnswer writes through, moved to its own module
+// to keep this file inside its line band — see that module's header, which carries
+// the guarantee it makes and the limits of it.
+import { ndjsonResponse } from "@/lib/copilot/ndjsonResponse";
 // Row 1 of the invented example-projects group: the pre-warmed pool's best match
 // for THIS question, read and picked fresh per question below. The selector and
 // the status derivation are pure and live in projectExampleSelect.js, which is
@@ -120,49 +124,7 @@ const VALID_TYPES = ["behavioral", "technical", "general"];
 // instructions, cues/answer derivation and answerAids (imported above, from
 // lib/copilot/answerAids.js) are the exact same functions the non-streaming
 // branches call, so the two can never drift on what an answer IS, only on
-// how it's delivered.
-//
-// Wraps a NDJSON body around `producer`, which writes `{t:"points",...}` /
-// `{t:"done",...}` / `{t:"error",...}` frames via `write`.
-//
-// WHAT THIS DOES AND DOES NOT PROMISE. `ReadableStream` calls `start()`
-// synchronously from its own constructor and does not await it, so this
-// function returns its Response as soon as `producer` reaches its first
-// await: the CONNECTION opens immediately, with no posting lookup ahead of
-// it. That is the whole of the guarantee. It
-// says nothing about when the first `points` frame arrives, and the caller
-// is what decides that — `streamAnswer` deliberately does its
-// company-facts wait (up to lib/copilot/answerCompanyFacts.js's deadline)
-// inside the producer.
-//
-// The sentence this replaces claimed the first points frame "is never sat
-// behind anything but the model call itself". That stopped being true the
-// moment AC-V4's facts deadline was awaited in POST, ahead of the
-// stream-vs-not branch — by up to 2.5s, on the request a candidate is
-// actively staring at. Moving the wait in here is what makes the connection
-// half true again; overstating the frame half is what let the regression go
-// unnoticed, so the two are now stated apart.
-function ndjsonResponse(producer) {
-  const encoder = new TextEncoder();
-  const stream = new ReadableStream({
-    async start(controller) {
-      const write = (frame) => controller.enqueue(encoder.encode(`${JSON.stringify(frame)}\n`));
-      try {
-        await producer(write);
-      } catch (err) {
-        // Safety net only — `producer` below already catches its own
-        // failures and writes an `error` frame itself. This guards against a
-        // bug in producer leaving the stream open with no terminal frame.
-        write({ t: "error", error: err?.message || "Answer request failed." });
-      } finally {
-        controller.close();
-      }
-    },
-  });
-  return new Response(stream, {
-    headers: { "Content-Type": "application/x-ndjson; charset=utf-8" },
-  });
-}
+// how it's delivered. The NDJSON body itself is `ndjsonResponse`, imported above.
 
 // Streams the Gemini call for either mode, emitting a `points` frame every
 // time pointsFromPartialJson reports a longer prefix than the last one sent
@@ -189,7 +151,8 @@ async function streamAnswer({
   // peek that started it lives there too) and handed down unchanged, exactly
   // like `questionRoleTerms` below.
   codeLanguage,
-  isCoding,
+  // N162: the coding section's gate (toggle AND detection), computed once in POST.
+  wantsCoding,
   // §4d: this route's own gate, computed once in POST from the (already
   // capped) question and handed down — streamAnswer is Gemini-only, so the
   // role-terms flag below always gets `geminiRoleTermsFlag` with `kb.block`
@@ -227,8 +190,8 @@ async function streamAnswer({
     // for why the wait belongs here and not in a shared prologue.
     const { facts, companyFacts } = await resolveCompanyFacts(awaitCompanyFacts);
     const promptText = isAnswerMode
-      ? buildAnswerPrompt({ question, context, profile, resume, coverLetter, descriptor, pagesBlock: kb.block, codeLanguage })
-      : buildPointsPrompt(question, context, profile, descriptor, resume, coverLetter, kb.block, companyFacts, codeLanguage);
+      ? buildAnswerPrompt({ question, context, profile, resume, coverLetter, descriptor, pagesBlock: kb.block, codeLanguage, includeCoding: wantsCoding })
+      : buildPointsPrompt(question, context, profile, descriptor, resume, coverLetter, kb.block, companyFacts, codeLanguage, wantsCoding);
 
     let stream;
     try {
@@ -274,9 +237,6 @@ async function streamAnswer({
     }
 
     const parsed = parseModelJson(raw.trim());
-    // N161: a whole coding solution is the terminal frame alone (no `points` frame was ever written for it).
-    const coding = codingResponseFields({ parsed, isCoding, codeLanguage, validTypes: VALID_TYPES });
-    if (coding) return write({ t: "done", ...coding });
     const { points, pageIds, factIds } = normalizeModelPoints(parsed, pointsCap);
     if (points.length === 0) {
       write({ t: "error", error: "Could not generate an answer." });
@@ -316,6 +276,10 @@ async function streamAnswer({
     // Row 1, settled as late as it can be: a slow pool read delays only this
     // terminal frame, never a bullet.
     const projectExampleField = await projectExampleFieldPromise;
+    // N162: the worked solution rides the SAME terminal frame as the answer it
+    // is appended to (its `points` frames were already written above), or is
+    // absent: a malformed solution leaves the ordinary answer to ship.
+    const codingField = codingSolutionField({ parsed, wantsCoding, codeLanguage });
     const done = isAnswerMode
       ? {
           points,
@@ -327,6 +291,7 @@ async function streamAnswer({
           ...aids,
           ...roleTermsFlag,
           ...projectExampleField,
+          ...codingField,
         }
       : {
           points,
@@ -339,6 +304,7 @@ async function streamAnswer({
           ...aids,
           ...roleTermsFlag,
           ...projectExampleField,
+          ...codingField,
         };
     write({ t: "done", ...done });
   });
@@ -401,8 +367,9 @@ export async function POST(request) {
     // buildAnswerPrompt, which re-derive this same value from `question`)
     // only ever takes effect on the Gemini path.
     const questionRoleTerms = roleTerms(question);
-    // N161: a coding question gets a worked solution INSTEAD of the spoken answer (lib/copilot/codingSolution.js).
-    const isCoding = detectCodingChallenge(question);
+    // N162: the question is ALWAYS answered normally; a worked solution (lib/copilot/codingSolution.js) is
+    // APPENDED only when the candidate's toggle is strictly `true` AND the question is a detected coding ask.
+    const wantsCoding = body?.includeCodingSolution === true && detectCodingChallenge(question);
     const context = (body?.context ?? "").toString().slice(0, MAX_CONTEXT_CHARS);
     const profile = (body?.profile ?? "").toString().slice(0, MAX_PROFILE_CHARS);
     const interviewTypeValue = normalizeInterviewType(body?.interviewType);
@@ -651,7 +618,7 @@ export async function POST(request) {
         kb,
         pages,
         codeLanguage,
-        isCoding,
+        wantsCoding,
         questionRoleTerms,
         // AC-V5.4: the THUNK, not an already-awaited result — streamAnswer
         // opens the NDJSON body first and settles this inside its own
@@ -661,9 +628,6 @@ export async function POST(request) {
         projectExampleFieldPromise,
       });
     }
-
-    // N161: both embedded branches (no model, no code producer) answer a coding question with the honest marker, before either drafter runs.
-    if (isCoding && wantsEmbedded(body?.engine)) return Response.json(embeddedCodingFallback("technical"));
 
     // The NON-streaming branches build one whole JSON body and have nothing
     // to open early, so this is where their facts wait belongs — the same
@@ -729,6 +693,8 @@ export async function POST(request) {
             coverLetter,
             story,
           }),
+          // N162: the honest "switch engine" marker beside the on-device answer — never code.
+          ...embeddedCodingField(wantsCoding),
         });
       }
 
@@ -750,6 +716,7 @@ export async function POST(request) {
                   descriptor,
                   pagesBlock: kb.block,
                   codeLanguage,
+                  includeCoding: wantsCoding,
                 }),
               },
             ],
@@ -759,8 +726,6 @@ export async function POST(request) {
       });
 
       const parsed = parseModelJson(response.text?.trim() || "");
-      const coding = codingResponseFields({ parsed, isCoding, codeLanguage, validTypes: VALID_TYPES });
-      if (coding) return Response.json(coding);
       const { points, pageIds } = normalizeModelPoints(parsed, MAX_ANSWER_POINTS);
       if (points.length === 0) {
         return Response.json({ error: "Could not generate an answer." }, { status: 502 });
@@ -808,6 +773,8 @@ export async function POST(request) {
         }),
         // Row 1 of the example-projects group (built once above).
         ...projectExampleField,
+        // N162: appended beside the answer under the gate; `{}` otherwise.
+        ...codingSolutionField({ parsed, wantsCoding, codeLanguage }),
       });
     }
 
@@ -857,6 +824,8 @@ export async function POST(request) {
           coverLetter,
           story,
         }),
+        // N162: see the answer-mode embedded branch above.
+        ...embeddedCodingField(wantsCoding),
       });
     }
 
@@ -879,6 +848,7 @@ export async function POST(request) {
                 kb.block,
                 companyFacts,
                 codeLanguage,
+                wantsCoding,
               ),
             },
           ],
@@ -888,8 +858,6 @@ export async function POST(request) {
     });
 
     const parsed = parseModelJson(response.text?.trim() || "");
-    const coding = codingResponseFields({ parsed, isCoding, codeLanguage, validTypes: VALID_TYPES });
-    if (coding) return Response.json(coding);
     const { points, pageIds, factIds } = normalizeModelPoints(parsed, 6);
     if (points.length === 0) {
       return Response.json({ error: "Could not generate an answer." }, { status: 502 });
@@ -928,6 +896,8 @@ export async function POST(request) {
       ...geminiRoleTermsFlag({ terms: questionRoleTerms, points, profile, resume, coverLetter, pagesBlock: kb.block }),
       // Row 1 of the example-projects group (built once above).
       ...projectExampleField,
+      // N162: appended beside the answer under the gate; `{}` otherwise.
+      ...codingSolutionField({ parsed, wantsCoding, codeLanguage }),
     });
   } catch (err) {
     return Response.json(

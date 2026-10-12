@@ -21,7 +21,7 @@ table in the main ledger.
 
 ---
 
-## 4. TEST_REFERENCED, rule TR-1: movement notes (pinned at 445)
+## 4. TEST_REFERENCED, rule TR-1: movement notes (pinned at 451)
 
 ```text
 299 -> 300, and NOT because the tree grew. This number was pinned at
@@ -695,11 +695,54 @@ added. roomQuestionPrivacyClause (practiceRoomQuestionPrivacy.js) keeps its Prac
 importer, because the room-question sentence is still composed at the call site and handed to
 buildPracticeNotice as a string.
 ORPHAN_EXPORTS unmoved at 65; ALLOWED_UNREACHABLE_MODULES / UNWIRED_MODULES unmoved at 14 / 5.
+N162 Wave B reconcile: 445 -> 452 (+7, -0), measured with the sweep's own scan over the tree as
+found (a probe printing the TR-1 key set for the N162 files; the 452 is the sweep's own
+TEST_REFERENCED.length). Two causes, kept apart because they are different chunks' edits.
+IN (+6), by name, because the Wave A toggle store became reachable (section 2, 6 -> 5):
+  app/settings/includeCodingSolution.js#INCLUDE_CODING_SOLUTION_STORAGE_KEY,
+  #DEFAULT_INCLUDE_CODING_SOLUTION, #normalizeIncludeCodingSolution, #subscribe,
+  #setIncludeCodingSolution and #useIncludeCodingSolution -- app/copilot/useDraftAnswer.js (the
+  Wave C live hook) imports readIncludeCodingSolution, the seventh export, which is therefore
+  NOT in this list. The other six have no shipping reader yet (the live control and the
+  practice capture are later waves) and are imported by name from includeCodingSolution.test.js,
+  the widened-surface shape this bucket counts: the key, the default and the normalizer pinned
+  by the store's suite, and the subscribe/setter/hook trio waiting for the control.
+IN (+1), by name, losing its only shipping importer (Wave B):
+  lib/copilot/codingSolution.js#embeddedCodingFallback -- app/api/copilot/answer/route.js
+  imported it to early-return the embedded marker in place of the answer. N162 made the coding
+  section additive, so the route now spreads embeddedCodingField (new in the same module, with
+  the route as its importer) beside the on-device answer and no longer calls the typed form.
+  Its importer is now codingSolution.test.js only, which pins its no-code contract. Not a
+  feature built and never connected: it is the same marker string embeddedCodingField spreads.
+OUT (-0): none. lib/copilot/codingSolution.js#codingResponseFields (retired) was imported by
+the route, so it was never in this bucket; codingSolutionField and embeddedCodingField have the
+route as their importer from birth.
+NOT in either list, because they have a shipping importer from birth: ndjsonResponse.js's one
+export (imported by the answer route, which it was extracted from), codingSolutionField and
+embeddedCodingField (the route).
+ORPHAN_EXPORTS unmoved at 65; ALLOWED_UNREACHABLE_MODULES / UNWIRED_MODULES 14 / 5.
+N162 Wave D reconcile: 452 -> 451 (+0, -1), measured with the sweep's own scan over the tree as
+found (a probe printing the TR-1 key set for the N162 files, deleted afterwards; the 451 is the
+sweep's own TEST_REFERENCED.length).
+IN (+0): none. Wave D added no export that only a test consumes.
+OUT (-1), by name, gaining its first shipping importers:
+  app/settings/includeCodingSolution.js#useIncludeCodingSolution -- CopilotClient.js (the live
+    screen: it reads the store and hands value and setter to SessionControls' "Add code
+    solutions" switch) and practice/PracticeClient.js (which passes the value into useSampleAnswer
+    and as queue's sixth argument) both import it. Listed at the Wave B reconcile (+6) as waiting
+    for the control; the control is here.
+NOT out, still test-only: #INCLUDE_CODING_SOLUTION_STORAGE_KEY, #DEFAULT_INCLUDE_CODING_SOLUTION,
+#normalizeIncludeCodingSolution, #subscribe and #setIncludeCodingSolution (the setter reaches
+SessionControls through the hook's return value, which is not an importer of the symbol), and
+codingSolution.js#embeddedCodingFallback. Wave D exports nothing new from any shipping module
+(CodeSolution.js, answerStatus.js and the rest only changed what they render or accept), so
+nothing entered either half.
+ORPHAN_EXPORTS unmoved at 65; ALLOWED_UNREACHABLE_MODULES / UNWIRED_MODULES 14 / 5.
 ```
 
 ---
 
-## 5. UNUSED_IN_SHIPPING_MODULES total: movement notes (pinned at 510)
+## 5. UNUSED_IN_SHIPPING_MODULES total: movement notes (pinned at 516)
 
 ```text
 356 -> 354: exactly the two orphan symbols that were deleted
@@ -930,4 +973,20 @@ identical set-for-set). The total moving by exactly the TR-1 half's net +1 with 
 half frozen is what says this was a relocation of a call one level deeper and not a feature
 built and never wired. No new unreachable file (section 2), so no export sits in neither half.
 TEST_REFERENCED 445 + ORPHANS 65.
+N162 Wave B reconcile: 510 -> 517 (TEST_REFERENCED's +7 -0, the seven symbols named at section 4:
+IN six app/settings/includeCodingSolution.js exports whose module became reachable when the Wave C
+live hook began importing readIncludeCodingSolution, and IN codingSolution.js#embeddedCodingFallback,
+which lost its route importer when the coding section went additive; ORPHAN_EXPORTS unmoved at 65,
+section 3, identical set-for-set). The total moving by exactly the TR-1 half's net +7 with the
+orphan half frozen is what says this was widened export surface for a unit suite plus one typed
+helper superseded by its sibling, not a feature built and never wired. The store module leaving
+section 2's list (6 -> 5) is why six of its exports now sit in a half at all: a wholly unreachable
+module's exports are in neither. TEST_REFERENCED 452 + ORPHANS 65.
+N162 Wave D reconcile: 517 -> 516 (TEST_REFERENCED's +0 -1, the one symbol named at section 4: OUT
+app/settings/includeCodingSolution.js#useIncludeCodingSolution, gaining its first shipping importers
+in CopilotClient.js and PracticeClient.js; ORPHAN_EXPORTS unmoved at 65, section 3, identical
+set-for-set). The total moving by exactly the TR-1 half's net -1 with the orphan half frozen is what
+says a widened export surface got its promised consumer (the live control the Wave A store was built
+ahead of), not that anything was deleted or lost. No module left or entered the unreachable set
+(section 2), so no export moved in or out of neither-half. TEST_REFERENCED 451 + ORPHANS 65.
 ```

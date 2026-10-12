@@ -1,27 +1,33 @@
 // @vitest-environment jsdom
 //
-// N161 SC-3 / AC-4, AC-3(render half), D1. The NEW CodeSolution component:
-// the whitespace-preserving, INLINE-styled code block that replaces the
-// spoken answer for a detected coding question. Rendered with
-// react-dom/client (no @testing-library in this repo), the same idiom
-// QuestionFeed.test.js / CitationDetail.test.js already establish for a
-// full-DOM render under this suite's per-file jsdom opt-in.
+// N162 Wave D (owner reversal of N161, 2026-10-12). The CodeSolution
+// component is now an ADDITIVE, pure code-block presenter: it renders a
+// detected coding question's worked solution AFTER the normal answer, never
+// in place of it. Rendered with react-dom/client (no @testing-library in this
+// repo), the same idiom QuestionFeed.test.js / CitationDetail.test.js already
+// establish for a full-DOM render under this suite's per-file jsdom opt-in.
 //
-// RED on HEAD: app/copilot/CodeSolution.js does not exist, so the import
-// below fails at collection — INVALID until built, reported as RED, not a
-// pass. It becomes reachable the moment the implementer lands the component
-// AND imports it at the five render sites (SC-3).
+// WHAT N162 CHANGES in this component (arch §7.2, AC-N162-14): because the
+// normal answer is now ALWAYS present, its own <AnswerAids> already renders
+// the posting-words ("Words from the posting to work in") group once. A
+// CodeSolution appended after it that ALSO rendered <AnswerAids buzzwords>
+// would show that group TWICE. So CodeSolution drops its trailing
+// <AnswerAids> and its `buzzwords` prop; it is now a pure code-block
+// presenter taking `{ solution }` only. The inline-style <pre> (AC-N162-13)
+// is UNCHANGED and is guarded below.
 //
-// THE INSTRUMENT, and why it is element.style and not getComputedStyle.
-// jsdom's cascade does not apply emotion/author (`sx`) classes, so
-// getComputedStyle resolves an sx-declared `white-space`/`font-family` to the
-// UA default — it is ZERO-POWER for exactly the two declarations AC-4 is
-// about (CitationDetail.test.js:266-270 pays for that lesson). Only an INLINE
-// `style={{...}}` attribute resolves via `element.style`. So the code block
-// MUST carry `style={{ whiteSpace, fontFamily }}` and these tests read
-// `codeEl.style.*`. A build that declares them via `sx` instead leaves
-// `element.style.whiteSpace === ""` and these tests RED — that is the
-// sx-instead-of-inline mutant, watched dead in the TDD notes.
+// RED reasons on HEAD:
+//   - "does NOT render a posting-words aid even when buzzwords are passed":
+//     HEAD's CodeSolution renders <AnswerAids buzzwords>, so the header "Words
+//     from the posting to work in" IS present with buzzwords supplied — the
+//     assertion that it is absent REDs on HEAD. This is the no-double-aids
+//     driver (AC-N162-14).
+// GREEN guards on HEAD (non-regression):
+//   - the four worked-solution parts still render.
+//   - the inline-style <pre> carries whiteSpace + monospace fontFamily on its
+//     own style attribute, verbatim code (AC-N162-13). jsdom resolves only an
+//     element's own style attribute, so this is the only assertion that can
+//     pin it (CitationDetail.test.js:266-270 documents the trap).
 
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { createElement, act } from "react";
@@ -36,7 +42,7 @@ let root;
 
 // Multi-line, indented, with a first-person COMMENT and an imperative line —
 // the exact content deriveAnswerFromPoints / answerLines / sanitizeTechTermDetail
-// would collapse, join or drop (AC-7). It must reach the DOM byte-for-byte.
+// would collapse, join or drop. It must reach the DOM byte-for-byte.
 const CODE = [
   "def reverse(head):",
   "    prev = None",
@@ -71,7 +77,7 @@ afterEach(async () => {
 
 async function render(props) {
   await act(async () => {
-    root.render(createElement(CodeSolution, { solution: SOLUTION, buzzwords: [], ...props }));
+    root.render(createElement(CodeSolution, { solution: SOLUTION, ...props }));
   });
   return container;
 }
@@ -86,7 +92,7 @@ function codeEl(rootEl, code) {
 
 const MONO_RE = /mono|consolas|menlo|courier|monaco|ui-monospace/i;
 
-describe("CodeSolution — the four worked-solution parts render (AC-3 render half)", () => {
+describe("CodeSolution — the four worked-solution parts render (AC-N162-13 guard)", () => {
   it("shows approach, the code, complexity and every edge case", async () => {
     const el = await render();
     const text = el.textContent || "";
@@ -97,18 +103,19 @@ describe("CodeSolution — the four worked-solution parts render (AC-3 render ha
   });
 });
 
-describe("CodeSolution — the code renders in an INLINE-styled monospace block (AC-4)", () => {
+describe("CodeSolution — the code renders in an INLINE-styled monospace block (AC-N162-13 guard)", () => {
   it("carries whiteSpace pre/pre-wrap AND a monospace fontFamily as an inline style attribute", async () => {
     const el = await render();
     const code = codeEl(el, CODE);
     expect(code).not.toBeNull();
     // Read via element.style — the ONLY thing that resolves in jsdom. An
-    // sx-declared value leaves these empty strings (the mutant REDs here).
+    // sx-declared value leaves these empty strings (the sx-instead-of-inline
+    // mutant REDs here).
     expect(["pre", "pre-wrap"]).toContain(code.style.whiteSpace);
     expect(code.style.fontFamily).toMatch(MONO_RE);
   });
 
-  it("preserves newlines and indentation in the DOM text (AC-4 / AC-7)", async () => {
+  it("preserves newlines and indentation in the DOM text (AC-N162-13)", async () => {
     // CSS white-space is a VISUAL effect jsdom cannot measure; what this pins
     // is that the code reached the DOM UNSPLIT — a route through
     // deriveAnswerFromPoints (joins lines with a single space) or answerLines
@@ -123,8 +130,9 @@ describe("CodeSolution — the code renders in an INLINE-styled monospace block 
   it("[control] the inline-style read is not trivially true for any element", async () => {
     // Distinguishes a real inline declaration on the code element from an
     // instrument that would read truthy on anything. A bare element the test
-    // creates has no such style — so a passing AC-4 test above is measuring
-    // the code block's own declaration, not an artefact of element.style.
+    // creates has no such style — so a passing inline-style test above is
+    // measuring the code block's own declaration, not an artefact of
+    // element.style.
     await render();
     const plain = document.createElement("p");
     plain.textContent = CODE;
@@ -135,30 +143,32 @@ describe("CodeSolution — the code renders in an INLINE-styled monospace block 
   });
 });
 
-describe("CodeSolution — buzzwords may remain, experience aids may not (D1)", () => {
-  it("renders the posting-words aid when buzzwords are supplied", async () => {
-    // D1 lets a coding card keep the posting's vocabulary (not a provenance
-    // claim). The arch's recommended default reuses <AnswerAids buzzwords/>,
-    // whose always-mounted disclosure header names the group regardless of
-    // the collapse state (robust against jsdom's matchMedia). Pins the
-    // recommended default; a chip-row alternative is a reconcilable choice.
+describe("CodeSolution is a PURE code-block presenter — no aids of its own (AC-N162-14)", () => {
+  it("does NOT render the posting-words aid, even when buzzwords are passed", async () => {
+    // N162 REVERSAL of N161. The normal answer is now always present and its
+    // own <AnswerAids> renders the posting-words group once; a CodeSolution
+    // appended below it must NOT render that group a second time. So
+    // CodeSolution renders no <AnswerAids> at all — passing a legacy
+    // `buzzwords` prop renders nothing of it.
+    //
+    // RED on HEAD: HEAD's CodeSolution renders <AnswerAids buzzwords>, so the
+    // "Words from the posting to work in" header IS on screen with buzzwords
+    // supplied. Paired with a code-present positive so "the header is absent"
+    // is never satisfied by a component that renders nothing.
     const el = await render({ buzzwords: ["Kafka", "idempotency"] });
-    expect(el.textContent || "").toMatch(/Words from the posting/i);
-  });
-
-  it("[control] renders NO posting-words aid when buzzwords are empty", async () => {
-    // Without this, the test above would pass for a component that always
-    // shows the header regardless of input.
-    const el = await render({ buzzwords: [] });
+    expect(codeEl(el, CODE)).not.toBeNull();
     expect(el.textContent || "").not.toMatch(/Words from the posting/i);
   });
 
   it("does not accept or render a résumé anchor or example project", async () => {
-    // D1 structural: CodeSolution's props are { solution, buzzwords } only —
-    // there is nowhere for an experience aid to enter. Passing them anyway
-    // must render nothing of them (the suppression is enforced at the render
-    // SITES too; see the per-site files).
-    const el = await render({ buzzwords: [], anchor: { title: "Staff Engineer", company: "Acme" }, projectExample: { status: "ready", title: "Payments cutover", bullets: ["Did a thing."] } });
+    // D1 structural, carried forward: CodeSolution's only prop is `solution`.
+    // Passing experience aids anyway must render nothing of them (the
+    // suppression is also enforced at the render SITES — see the per-site
+    // files, where these aids ride the NORMAL answer exactly once).
+    const el = await render({
+      anchor: { title: "Staff Engineer", company: "Acme" },
+      projectExample: { status: "ready", title: "Payments cutover", bullets: ["Did a thing."] },
+    });
     const text = el.textContent || "";
     expect(text).not.toContain("Staff Engineer");
     expect(text).not.toContain("Payments cutover");

@@ -84,7 +84,22 @@ function exampleRowEnabled(appId, example) {
 // warmed again within the session (useApplicationProjectPool's
 // noteRowOneStatus). Held in a ref so a caller handing over a new function each
 // render changes the identity of nothing below.
-export function useSampleAnswer({ question, profile, interviewType, applicationId, codeLanguage, onRowOneStatus }) {
+//
+// N162 (arch §6.4): also takes `includeCodingSolution` -- the "include coding
+// solution" toggle -- the same way it takes `codeLanguage`: handed in by the
+// caller, never read from its store here (unlike the live hook), and carried on
+// every state write, cache write, needsRedraft/cachedSampleAnswerFor comparison
+// and draftAnswer call. OFF when the caller supplies nothing, so a caller that
+// never learned about the toggle asks for exactly what it asked for before it.
+export function useSampleAnswer({
+  question,
+  profile,
+  interviewType,
+  applicationId,
+  codeLanguage,
+  includeCodingSolution = false,
+  onRowOneStatus,
+}) {
   const [state, setState] = useState(emptySampleAnswer);
   const onRowOneStatusRef = useRef(onRowOneStatus);
   useEffect(() => {
@@ -207,7 +222,7 @@ export function useSampleAnswer({ question, profile, interviewType, applicationI
   // silently undone the instant it lands; the draft still gets cached
   // either way. Errors are handled entirely inside this promise chain
   // (AC-G1-4): nothing here ever throws back out to a caller.
-  const request = useCallback((q, p, it, appId, cl) => {
+  const request = useCallback((q, p, it, appId, cl, inc) => {
     const gen = (genRef.current += 1);
     // A Row 2 still in flight for the draft this one replaces must not land on
     // the new one's panel.
@@ -231,6 +246,7 @@ export function useSampleAnswer({ question, profile, interviewType, applicationI
       interviewType: it,
       applicationId: appId,
       codeLanguage: cl,
+      includeCodingSolution: inc,
     });
     // AC-H9/AC-K1: the route's `mode: "answer"` response is
     // { points, cues, answer, type, grounding, buzzwords, resumeAnchor,
@@ -255,13 +271,18 @@ export function useSampleAnswer({ question, profile, interviewType, applicationI
       applicationId: appId,
       codeLanguage: cl,
       mode: "answer",
+      // N162: forwarded as handed in (the hook defaults the prop to OFF), so
+      // the value on the wire is the one the state slot and cache entry below
+      // record.
+      includeCodingSolution: inc,
     })
       .then(({ points, cues, buzzwords, resumeAnchor, pageSources, grounding, projectExample, codingSolution, codingFallback }) => {
         if (genRef.current !== gen) return;
         const cleanPoints = Array.isArray(points) ? points : [];
         // N161: a detected coding question answers with `codingSolution` (or
-        // the embedded engine's `codingFallback` marker) INSTEAD of `points`.
-        // Carried like `pageSources`, as an OUTPUT: it lands in state below and
+        // the embedded engine's `codingFallback` marker). N162: it arrives
+        // ALONGSIDE the spoken `points`, no longer instead of them, so both are
+        // written below. Carried like `pageSources`, as an OUTPUT: it lands in state below and
         // rides the cache write beneath it, and it is ABSENT (never null/{})
         // for an ordinary answer. See codingFieldsOf.
         const coding = codingFieldsOf({ codingSolution, codingFallback });
@@ -304,6 +325,7 @@ export function useSampleAnswer({ question, profile, interviewType, applicationI
           interviewType: it,
           applicationId: appId,
           codeLanguage: cl,
+          includeCodingSolution: inc,
         }));
         // AC-J2.8: a real (user-requested) draft is cached the exact same
         // way `queue`'s own silent pre-fetch is (see below) — same key, same
@@ -320,10 +342,10 @@ export function useSampleAnswer({ question, profile, interviewType, applicationI
           buzzwords: cleanBuzzwords,
           anchor: cleanAnchor,
           pageSources: cleanPageSources,
-          // N161: the coding answer rides this write too — it is the ONLY
-          // thing admitting a pointless coding entry (see cachedAnswerFor), so
-          // a write that dropped it would refetch on every reveal. Spread, so
-          // an ordinary entry carries no coding key at all.
+          // N161: the coding answer rides this write too, beside the points
+          // (N162) -- a write that dropped it would replay the points on a
+          // cache hit with no solution on them. Spread, so an ordinary entry
+          // carries no coding key at all.
           ...coding,
           projectExample: cleanExample,
           grounding: cleanGrounding,
@@ -331,6 +353,9 @@ export function useSampleAnswer({ question, profile, interviewType, applicationI
           interviewType: it,
           applicationId: appId,
           codeLanguage: cl,
+          // N162: the toggle this draft was built under keys the entry, so a
+          // reveal under the other setting is a miss (see cachedSampleAnswerFor).
+          includeCodingSolution: inc,
         });
         fireProjectExampleLive(q, appId, cleanExample);
         fireTechTerms(q, appId, cleanExample);
@@ -353,6 +378,7 @@ export function useSampleAnswer({ question, profile, interviewType, applicationI
           interviewType: it,
           applicationId: appId,
           codeLanguage: cl,
+          includeCodingSolution: inc,
         }));
       });
   }, [fireProjectExampleLive, fireTechTerms, reportRowOneStatus]);
@@ -363,7 +389,12 @@ export function useSampleAnswer({ question, profile, interviewType, applicationI
   // just acts on it.
   const reveal = useCallback(
     (force) => {
-      if (needsRedraft(active, profile, interviewType, applicationId, codeLanguage, force)) {
+      // N162: needsRedraft's signature is (…, codeLanguage, includeCodingSolution,
+      // force) -- the toggle is the SIXTH argument and `force` the SEVENTH. This
+      // call used to pass `force` sixth; left there it would land in the toggle's
+      // slot and the real `force` would default false, so Retry/Regenerate would
+      // stop forcing a redraft.
+      if (needsRedraft(active, profile, interviewType, applicationId, codeLanguage, includeCodingSolution, force)) {
         // AC-J2.8: `force` (Retry/Regenerate) always bypasses the cache and
         // redrafts — needsRedraft already returns true unconditionally for
         // force, so this branch only reaches the cache lookup when force is
@@ -371,13 +402,16 @@ export function useSampleAnswer({ question, profile, interviewType, applicationI
         // draft must be FREE on reveal, not merely fast: before paying for a
         // fresh request, check whether `queue` already drafted this exact
         // question while it sat unrevealed. cachedSampleAnswerFor applies the
-        // same profile/interviewType/applicationId/codeLanguage comparison
-        // needsRedraft's own "done" branch does, just against a cache entry
-        // instead of the draft already on screen, so a queued draft made
-        // before the user edited their prep context (or changed posting/
-        // interview type/code language) is never served as if it still
-        // applied.
+        // same profile/interviewType/applicationId/codeLanguage/
+        // includeCodingSolution comparison needsRedraft's own "done" branch
+        // does, just against a cache entry instead of the draft already on
+        // screen, so a queued draft made before the user edited their prep
+        // context (or changed posting/interview type/code language/the coding
+        // toggle) is never served as if it still applied.
         if (!force) {
+          // N162: the toggle is the SEVENTH argument, deliberately undefaulted
+          // in cachedSampleAnswerFor -- omitted, it would fold to OFF and a
+          // reveal under ON would hit an entry drafted under OFF.
           const cached = cachedSampleAnswerFor(
             cacheRef.current.get(normalizeQuestion(question)),
             question,
@@ -385,6 +419,7 @@ export function useSampleAnswer({ question, profile, interviewType, applicationI
             interviewType,
             applicationId,
             codeLanguage,
+            includeCodingSolution,
           );
           if (cached) {
             // Row 1 rides the cache only in a FINAL state, and Row 2 is never
@@ -398,12 +433,23 @@ export function useSampleAnswer({ question, profile, interviewType, applicationI
             return;
           }
         }
-        request(question, profile, interviewType, applicationId, codeLanguage);
+        request(question, profile, interviewType, applicationId, codeLanguage, includeCodingSolution);
         return;
       }
       setState((prev) => (prev.question === question ? { ...prev, visible: true } : prev));
     },
-    [active, profile, interviewType, applicationId, codeLanguage, question, request, fireProjectExampleLive, fireTechTerms],
+    [
+      active,
+      profile,
+      interviewType,
+      applicationId,
+      codeLanguage,
+      includeCodingSolution,
+      question,
+      request,
+      fireProjectExampleLive,
+      fireTechTerms,
+    ],
   );
 
   // AC-N2: fetches a draft for `q` and writes it to the cache via the exact
@@ -414,7 +460,11 @@ export function useSampleAnswer({ question, profile, interviewType, applicationI
   // draft READY, never SHOWN — only `reveal` ever sets `state`. Callers
   // decide whether this should run at all via shouldQueueSampleAnswer
   // (lib/copilot/practiceFlow.js); this just does the fetch and the write.
-  const queue = useCallback((q, p, it, appId, cl) => {
+  //
+  // N162: takes the coding toggle as a trailing sixth argument (`inc`), handed
+  // in by the caller exactly as `cl` is -- the queue writes the entry under the
+  // toggle it was asked with, so a reveal under the other setting misses it.
+  const queue = useCallback((q, p, it, appId, cl, inc) => {
     // Written synchronously, before the fetch even starts — the same
     // moment `request` above marks its own state loading. `hasCached`
     // alone isn't enough to dedupe against: the cache entry doesn't exist
@@ -436,6 +486,7 @@ export function useSampleAnswer({ question, profile, interviewType, applicationI
       applicationId: appId,
       codeLanguage: cl,
       mode: "answer",
+      includeCodingSolution: inc,
     })
       .then(({ points, cues, buzzwords, resumeAnchor, pageSources, grounding, projectExample, codingSolution, codingFallback }) => {
         // A newer queue (or a real `request`) has since started for a
@@ -455,8 +506,8 @@ export function useSampleAnswer({ question, profile, interviewType, applicationI
           pageSources: Array.isArray(pageSources) ? pageSources : [],
           // N161: `request`'s cache write carries the coding answer for the
           // same reason, and this one matters more — a queued coding draft is
-          // only ever read back from this entry, and without the field it
-          // would not even be admitted (see cachedAnswerFor).
+          // only ever read back from this entry, so without the field the
+          // reveal would show its points and no solution.
           ...codingFieldsOf({ codingSolution, codingFallback }),
           // Same field `request`'s cache write carries, for the same reason: a
           // draft pre-fetched while unrevealed must still show its Row 1 the
@@ -467,6 +518,7 @@ export function useSampleAnswer({ question, profile, interviewType, applicationI
           interviewType: it,
           applicationId: appId,
           codeLanguage: cl,
+          includeCodingSolution: inc,
         });
         // A silent pre-fetch is a fresh server call too, so it is as good a
         // witness of the pool's state as a revealed one.

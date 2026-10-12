@@ -35,6 +35,7 @@ import { useSampleAnswer } from "./useSampleAnswer";
 import { useApplicationProjectPool } from "@/app/hooks/useApplicationProjectPool";
 import { useRowOneStatusRelay, useBindRowOneStatus } from "../useRowOneStatusRelay";
 import { usePracticeCodeLanguage } from "./usePracticeCodeLanguage";
+import { useIncludeCodingSolution } from "@/app/settings/includeCodingSolution";
 import { shouldQueueSampleAnswer } from "@/lib/copilot/practiceFlow";
 import { useInterviewType } from "../useInterviewType";
 import { useSaveRecordings } from "./useSaveRecordings";
@@ -223,6 +224,12 @@ export default function PracticeClient({
     // callback's identity from changing every render too.
   }, [resetAnswerFlowForSession, roomQuestions.resetForSession]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // N162: the shared "add code solutions" preference, written by the live
+  // screen's control and read here with no control of its own. useSampleAnswer
+  // takes it as a prop (its drafts are cached per question), so it is handed in
+  // below and as queue's sixth argument; the live hook reads the store itself.
+  const { includeCodingSolution } = useIncludeCodingSolution();
+
   // G1: the toggleable sample answer for the question currently on screen.
   // Deliberately kept independent of usePracticeAnswer above — showing or
   // hiding a draft must never start/stop the recorder or samplers, alter
@@ -239,6 +246,7 @@ export default function PracticeClient({
     interviewType,
     applicationId: posting?.id || null,
     codeLanguage,
+    includeCodingSolution,
     onRowOneStatus,
   });
 
@@ -320,7 +328,7 @@ export default function PracticeClient({
       queuedFor: sampleAnswer.getQueuedFor(),
     });
     if (!should) return;
-    sampleAnswer.queue(currentQuestionText, profile, interviewType, posting?.id || null, codeLanguage);
+    sampleAnswer.queue(currentQuestionText, profile, interviewType, posting?.id || null, codeLanguage, includeCodingSolution);
     // `sampleAnswer` is a fresh literal every render — depending on the
     // specific, stable members this body actually reads/calls is what keeps
     // this effect from re-running on every unrelated render.
@@ -336,6 +344,7 @@ export default function PracticeClient({
     interviewType,
     posting,
     codeLanguage,
+    includeCodingSolution,
   ]);
 
   // J2.4: the one-entry array CopilotDashboard's "Current question"/"Current

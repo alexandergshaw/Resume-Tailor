@@ -3,8 +3,12 @@
 // no React, no network, client/server shared.
 //
 // The response field is `codingSolution`, a SEPARATE field from `points` /
-// `type` (the type enum is unchanged — detect and answer routes both pin it),
-// and for a detected question it REPLACES the spoken answer:
+// `type` (the type enum is unchanged — detect and answer routes both pin it).
+// N162 made it ADDITIVE: the spoken answer is ALWAYS produced, and the route
+// appends this field beside it only when the candidate's toggle is on AND the
+// question is detected as a coding ask (route.js's `wantsCoding`). N161 had it
+// REPLACE the spoken answer; that reversal is why nothing here bundles `type`
+// or any other answer field any more.
 //
 //   codingSolution = { approach, language, code, complexity, edgeCases: string[] }
 //
@@ -16,7 +20,7 @@
 // CORRECT code. Role-term flags do not apply to it either.
 //
 // The embedded engine has no model and no code producer, so it cannot write a
-// solution honestly: embeddedCodingFallback is a marker, never code.
+// solution honestly: its fallback (embeddedCodingField) is a marker, never code.
 
 import {
   AUTO,
@@ -105,29 +109,35 @@ export function normalizeCodingSolution(parsed, { languageFallback = codeLanguag
   };
 }
 
-// What the answer route returns for a detected coding question: `codingSolution`
-// and `type`, and NOTHING else — no points, cues, answer or aids, because the
-// worked solution replaces the spoken answer rather than sitting beside it.
-// `null` when the question is not a coding ask OR the model's payload is not a
-// whole solution (normalizeCodingSolution yields null), so the route falls
-// through to its ordinary path — which, with no points either, is the usual
-// empty-answer error rather than a half-built solution. `validTypes` is the
-// route's own type enum, handed in so this module never keeps a second copy; a
-// coding question with no valid model-reported type defaults to technical.
-export function codingResponseFields({ parsed, isCoding, codeLanguage, validTypes }) {
-  if (!isCoding) return null;
+// The coding section the answer route SPREADS beside a normal Gemini answer:
+// `{ codingSolution }` when the gate is armed (`wantsCoding`) AND the model's
+// payload is a whole solution, else `{}`. It is never an answer on its own: a
+// malformed or absent solution (normalizeCodingSolution yields null) leaves the
+// ordinary answer untouched rather than failing it, and the route never ships
+// this field without the answer's own `points`.
+export function codingSolutionField({ parsed, wantsCoding, codeLanguage }) {
+  if (!wantsCoding) return {};
   const codingSolution = normalizeCodingSolution(parsed, {
     languageFallback: resolveCodingLanguageLabel(codeLanguage),
   });
-  if (!codingSolution) return null;
-  return { codingSolution, type: validTypes.includes(parsed?.type) ? parsed.type : "technical" };
+  return codingSolution ? { codingSolution } : {};
 }
 
+const EMBEDDED_CODING_FALLBACK =
+  "The on-device engine can't write a worked code solution. Switch to the AI engine for approach, code, complexity, and edge cases.";
+
 // The embedded engine's honest answer to a coding question: a marker the UI can
-// word as "switch to the AI engine", and NO code of any kind.
+// word as "switch to the AI engine", and NO code of any kind. The route no longer
+// calls this (it spreads embeddedCodingField below, which has no use for a `type`
+// the on-device drafter already reports); it stays as the typed form of the same
+// marker, pinned by codingSolution.test.js.
 export function embeddedCodingFallback(type) {
-  return {
-    codingFallback: "The on-device engine can't write a worked code solution. Switch to the AI engine for approach, code, complexity, and edge cases.",
-    type,
-  };
+  return { codingFallback: EMBEDDED_CODING_FALLBACK, type };
+}
+
+// The embedded counterpart of codingSolutionField, spread beside the on-device
+// answer under the same gate: the marker STRING only, never a `codingSolution`
+// object and never a `code` key, because that engine has no model to write one.
+export function embeddedCodingField(wantsCoding) {
+  return wantsCoding ? { codingFallback: EMBEDDED_CODING_FALLBACK } : {};
 }

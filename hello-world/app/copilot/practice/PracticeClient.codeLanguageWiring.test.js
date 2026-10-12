@@ -138,10 +138,19 @@ describe("the language reaches the sample-answer path (AC-C24, AC-C25, AC-C27)",
     // it would silently shift the argument the call site already passes —
     // `force` becomes a truthy string and every reveal pays a fresh model call
     // forever. The queue call is the surface where that ordering is visible.
+    //
+    // N162 re-statement (owner reversal N162, 2026-10-12): the queue call now
+    // carries a SIXTH positional argument — the coding-solution toggle,
+    // appended AFTER codeLanguage. codeLanguage stays FIFTH (the ordering this
+    // test exists to protect is unchanged); the arity rises from 5 to 6, and
+    // the toggle is the new trailing arg. See
+    // PracticeClient.includeCodingSolution.wiring.test.js for the toggle's own
+    // identifier/dep-array assertions.
     const args = argumentsOf(callExpression(CLIENT, "sampleAnswer.queue("));
     expect(args).not.toBe(null);
-    expect(args).toHaveLength(5);
+    expect(args).toHaveLength(6);
     expect(args[4]).toMatch(/codeLanguage/);
+    expect(args[5]).toMatch(/includeCodingSolution/);
   });
 
   it("lists it in the queue effect's dependency array", () => {
@@ -214,13 +223,19 @@ describe("needsRedraft and cachedSampleAnswerFor carry the language (AC-C27, AC-
   const QUESTION = "Implement a cache that evicts the least recently used entry.";
   const PROFILE = "Senior engineer, dispatch and logistics.";
 
-  // `needsRedraft(active, profile, interviewType, applicationId, codeLanguage, force = false)`
+  // N162 re-statement (the Wave A signature change; owner reversal N162): the
+  // layout is now
+  // `needsRedraft(active, profile, interviewType, applicationId, codeLanguage, includeCodingSolution, force = false)`
+  // -- the coding toggle is the SIXTH parameter and `force` the SEVENTH, still
+  // trailing. `active` therefore carries the toggle it was drafted under (OFF),
+  // and every call below hands the current toggle (OFF) in the sixth slot.
   const active = {
     status: "done",
     profile: PROFILE,
     interviewType: "technical",
     applicationId: "app-1",
     codeLanguage: "auto",
+    includeCodingSolution: false,
   };
 
   it("redrafts when the language differs, and does not when it matches", () => {
@@ -228,8 +243,8 @@ describe("needsRedraft and cachedSampleAnswerFor carry the language (AC-C27, AC-
     // records that the duplication between these two functions is deliberate,
     // and that its own suite drives both off one table and asserts they agree
     // — which is exactly why a field added to one and not the other is silent.
-    expect(needsRedraft(active, PROFILE, "technical", "app-1", "java")).toBe(true);
-    expect(needsRedraft(active, PROFILE, "technical", "app-1", "auto")).toBe(false);
+    expect(needsRedraft(active, PROFILE, "technical", "app-1", "java", false)).toBe(true);
+    expect(needsRedraft(active, PROFILE, "technical", "app-1", "auto", false)).toBe(false);
   });
 
   it("puts the language BEFORE `force`, not after it (AC-C27c's named failure)", () => {
@@ -240,18 +255,22 @@ describe("needsRedraft and cachedSampleAnswerFor carry the language (AC-C27, AC-
     // "passes" by always returning true.
     //
     // Correct order: false. Transposed: the language occupies `force`, and it
-    // is true.
-    expect(needsRedraft(active, PROFILE, "technical", "app-1", "auto", false)).toBe(false);
+    // is true. (N162: `force` is now the SEVENTH argument, after the toggle.)
+    expect(needsRedraft(active, PROFILE, "technical", "app-1", "auto", false, false)).toBe(false);
 
-    // The positive control — `force` still forces, so the sixth slot really is
-    // `force` and not an argument this case is ignoring.
-    expect(needsRedraft(active, PROFILE, "technical", "app-1", "auto", true)).toBe(true);
+    // The positive control — `force` still forces, so the seventh slot really
+    // is `force` and not an argument this case is ignoring.
+    expect(needsRedraft(active, PROFILE, "technical", "app-1", "auto", false, true)).toBe(true);
+
+    // And the sixth slot really is the TOGGLE, not `force`: a flipped toggle
+    // with `force` left false redrafts through the toggle comparison alone.
+    expect(needsRedraft(active, PROFILE, "technical", "app-1", "auto", true, false)).toBe(true);
   });
 
   it("still redrafts on a changed profile, type or posting — the other three survive", () => {
-    expect(needsRedraft(active, "different prep notes", "technical", "app-1", "auto")).toBe(true);
-    expect(needsRedraft(active, PROFILE, "behavioral", "app-1", "auto")).toBe(true);
-    expect(needsRedraft(active, PROFILE, "technical", "app-2", "auto")).toBe(true);
+    expect(needsRedraft(active, "different prep notes", "technical", "app-1", "auto", false)).toBe(true);
+    expect(needsRedraft(active, PROFILE, "behavioral", "app-1", "auto", false)).toBe(true);
+    expect(needsRedraft(active, PROFILE, "technical", "app-2", "auto", false)).toBe(true);
   });
 
   it("cachedSampleAnswerFor misses on a different language and hits on the same one", () => {

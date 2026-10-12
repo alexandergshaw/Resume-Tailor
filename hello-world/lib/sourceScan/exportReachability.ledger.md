@@ -26,12 +26,12 @@ Current pinned values, as of the last entry in each section:
 | `ALLOWED_UNREACHABLE_MODULES.length`        | 14     |
 | `UNWIRED_MODULES` (exact list of 5 files)   | 5      |
 | `ORPHAN_EXPORTS.length`                     | 65     |
-| `TEST_REFERENCED.length` (rule TR-1)        | 445    |
-| `UNUSED_IN_SHIPPING_MODULES.length`         | 510    |
+| `TEST_REFERENCED.length` (rule TR-1)        | 451    |
+| `UNUSED_IN_SHIPPING_MODULES.length`         | 516    |
 
 The identity that ties the last three together, and that the test asserts
 directly, is `UNUSED_IN_SHIPPING_MODULES = TEST_REFERENCED + ORPHANS`
-(445 + 65 = 510).
+(451 + 65 = 516).
 
 ---
 
@@ -202,6 +202,47 @@ first shipping importer (StudyPlanClient.js, which passes it to the model as see
 the new module exports are classified per symbol: TR-1 441 -> 444 (section 4), total
 506 -> 509 (section 5). ORPHAN_EXPORTS unmoved (section 3); ALLOWED_UNREACHABLE_MODULES stays
 14.
+
+5 -> 6 (N162 Wave A): the built-ahead-of-its-consumers shape once more, one module.
+The N162 contract wave landed app/settings/includeCodingSolution.js, the shared
+"include coding solution" toggle store (the app/settings/answerAsMe.js pattern: a
+localStorage-backed useSyncExternalStore, ON only for the string "true"), with its suite
+includeCodingSolution.test.js, ahead of the two things that write and read it -- the live
+control and the request read -- which land in Wave D. Its only importer today is that test,
+and a test file is not a caller, so it is wholly unreachable (measured: the computed
+unreachable set went 19 -> 20, which is ALLOWED 14 + UNWIRED 6). ONE entry added, none
+removed, appended last. The module moves no symbol bucket -- a wholly unreachable module's
+exports are reported at module granularity, the same reason as the 5 -> 7 and 7 -> 11
+entries above -- so the other pinned counts did not move (measured with the sweep's own
+scan, not predicted): ORPHAN_EXPORTS unmoved at 65 (section 3), TR-1 unmoved at 445
+(section 4), total unmoved at 510 (section 5), ALLOWED_UNREACHABLE_MODULES stays 14. The
+three other Wave A edits (lib/copilot/answerGrounding.js, sampleAnswerState.js,
+answerClient.js) are existing reachable modules and added no new export. Delete the line
+the day a shipping module imports the store.
+
+6 -> 5 (N162 Wave B reconcile): that day came. app/copilot/useDraftAnswer.js (the Wave C
+live hook, already in the tree when this reconcile ran) imports readIncludeCodingSolution
+from app/settings/includeCodingSolution.js, so the store is reachable and its line is
+deleted. ONE removed, none added, by name: app/settings/includeCodingSolution.js. Measured
+with the sweep's own scan over the tree as found, not predicted: 19 computed unreachable =
+ALLOWED 14 + UNWIRED 5 (the five N49 modules). Wave B added no line of its own:
+lib/copilot/ndjsonResponse.js (the NDJSON response wrapper moved out of
+app/api/copilot/answer/route.js to hold that file inside the 940-line band
+route.wiring.test.js pins) is imported by the route, so it is reachable from birth, and
+lib/copilot/codingSolution.js, answerPrompts.js and the route are existing reachable
+modules. Unlike the Wave A entry, THIS change moves symbol buckets, because a now-reachable
+module's exports are classified per symbol: TR-1 445 -> 452 (+7, -0, section 4), total 510
+-> 517 (section 5), ORPHAN_EXPORTS unmoved at 65 (section 3), ALLOWED_UNREACHABLE_MODULES
+stays 14.
+
+5 -> 5 (N162 Wave D reconcile): UNMOVED, measured with the sweep's own scan over the tree as
+found. Wave D (the live control, the render-append, the client wiring) added no module and
+removed none from this list: it edits existing reachable modules only (CodeSolution.js,
+QuestionFeed.js, SampleAnswer.js, CopilotDashboard.js, answerStatus.js, SessionControls.js,
+CopilotClient.js, PracticeClient.js), and the store module was already out of section 2 since the
+Wave B reconcile. The computed unreachable set stays 19 = ALLOWED 14 + UNWIRED 5. THIS change
+does move one symbol bucket: TR-1 452 -> 451 (-1, section 4), total 517 -> 516 (section 5),
+ORPHAN_EXPORTS unmoved at 65 (section 3).
 ```
 
 ---
@@ -297,11 +338,19 @@ studyPlanGenerate.embedded.test.js imported it; without it, the 66th entry here.
 sweep's own scan. None of the three new modules (studyPlanKnobs.js, useStudyKnobs.js,
 StudyPlanControls.js) exports an orphan: the four studyPlanKnobs.js exports with no shipping
 importer are all read by name from studyPlanKnobs.test.js and land in TR-1 (section 4).
+65 -> 65 (N162 Wave B reconcile): UNMOVED, measured with the sweep's own scan. The six
+includeCodingSolution.js exports that are not yet read by shipping code are all imported by
+name from includeCodingSolution.test.js, and codingSolution.js#embeddedCodingFallback is
+imported by name from codingSolution.test.js, so all seven land in TR-1 (section 4).
+65 -> 65 (N162 Wave D reconcile): UNMOVED, set-for-set identical, measured with the sweep's own
+scan. The one export that moved (app/settings/includeCodingSolution.js#useIncludeCodingSolution)
+left TR-1 for "used by shipping code", not for this bucket (section 4); the other five store
+exports and codingSolution.js#embeddedCodingFallback stay test-imported and in TR-1.
 ```
 
 ---
 
-## 4. TEST_REFERENCED, rule TR-1 (pinned at 445)
+## 4. TEST_REFERENCED, rule TR-1 (pinned at 451)
 
 Exports unused by shipping code that at least one `.test.js` imports BY NAME.
 A raise is a review event: check the new export is a helper being pinned, not
@@ -315,7 +364,7 @@ Full movement history (append-only, newest at the bottom): see
 
 ---
 
-## 5. UNUSED_IN_SHIPPING_MODULES total (pinned at 510)
+## 5. UNUSED_IN_SHIPPING_MODULES total (pinned at 516)
 
 The sum of the two halves above (`TEST_REFERENCED + ORPHANS`); the test also
 asserts that identity directly, so the split is pinned and not only the total.

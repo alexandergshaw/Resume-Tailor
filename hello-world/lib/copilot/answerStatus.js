@@ -45,18 +45,15 @@
 // announcement; this region just stays silent so it can never repeat or
 // contradict it.
 //
-// N161: a done CODING answer carries no spoken points, so `bulletCount` is 0 and
-// the sentence above would read "Answer ready, 0 points" -- a count that is
-// true of the points list and misleading about the answer. A caller that
-// renders a worked code solution passes `hasCodingSolution` and hears that
-// instead; the embedded engine's honest "no code here" marker passes
-// `hasCodingFallback` and hears that it is unavailable. Both default off, so
-// every existing caller's output is byte for byte what it was.
-export function answerStatusMessage({ status, bulletCount, hasCodingSolution, hasCodingFallback } = {}) {
+// N162: a detected coding answer is ADDITIVE -- the answer route always produces
+// the normal spoken points, and the worked solution is appended after them -- so
+// `bulletCount` is the real, non-zero point count of a coding answer too and
+// this message needs no coding case. (N161 short-circuited to "Code solution
+// ready" / "unavailable" because its replaced coding answer had no points and
+// would have read "Answer ready, 0 points".)
+export function answerStatusMessage({ status, bulletCount } = {}) {
   if (status === "loading") return "Drafting an answer";
   if (status === "done") {
-    if (hasCodingSolution) return "Code solution ready";
-    if (hasCodingFallback) return "Code solution unavailable on this engine";
     const n = Number.isFinite(bulletCount) && bulletCount > 0 ? bulletCount : 0;
     return `Answer ready, ${n} point${n === 1 ? "" : "s"}`;
   }
