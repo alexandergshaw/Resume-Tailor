@@ -633,7 +633,7 @@ export default function PracticeClient({
         useProjectBulletDetails for why they live here and not per card. */}
     <ExpansionScope questions={dashboardQuestions} request={{ applicationId: posting?.id || "", profile, interviewType, codeLanguage, engine }}>
     <TechTermDetailScope questions={dashboardQuestions} extraQuestions={roomQuestions.questions} request={{ applicationId: posting?.id || "", engine }} onDetailOutcome={sessionLog.logTechTermDetail}>
-    <ProjectBulletDetailScope questions={dashboardQuestions} extraQuestions={roomQuestions.questions} request={{ applicationId: posting?.id || "", engine }}>
+    <ProjectBulletDetailScope questions={dashboardQuestions} extraQuestions={roomQuestions.questions} request={{ applicationId: posting?.id || "", engine }} onDetailOutcome={sessionLog.logProjectBulletDetail}>
     <Box>
       <PracticeSetup
         privacyNotice={privacyNotice}

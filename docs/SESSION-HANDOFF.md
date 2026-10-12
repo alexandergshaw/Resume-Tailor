@@ -7,7 +7,8 @@ _Last updated: 2026-10-07 by the orchestrator._
 ---
 
 ## 1. In-flight uncommitted work (the dirty tree)
-- About to commit N157 SC-D (D-a studyPlanKnobs + copy; D-b StudyPlanControls/useStudyKnobs + 4 C-c wiring edits + notice.gemini egress append + census reconcile + authorized pin updates). Full suite 20036 green. This COMPLETES N157. Nothing else pending after.
+- About to commit N158 (practice bullet-detail logging) + N159 (ledger.md history extraction) — full suite 20042 green. N161.ac.r1.md also rides this commit (planning doc). NEW FEATURE N161 (coding-answer detection) is mid-loop: AC r1 done + under adversarial check; its decisions D1–D6 ruled (see §2). N160 (last-used-app restore + stale eslint disable) still open.
+- (prior) N157 SC-D committed earlier: (D-a studyPlanKnobs + copy; D-b StudyPlanControls/useStudyKnobs + 4 C-c wiring edits + notice.gemini egress append + census reconcile + authorized pin updates). Full suite 20036 green. This COMPLETES N157. Nothing else pending after.
 
 ## 2. Mid-flight waves / active dispatches
 - **N157 COMPLETE** (all 6 sub-chunks shipped; final full suite 20036 green; build OK). SC-D done: lib/studyPlan/studyPlanKnobs.js (knob model: RATIO_PRESETS/AREA_STATE/areaOptions/setAreaState/setDaysUntil/knobEffects/summarizeKnobs/suggestFocusAreas; labels-not-ids; every emit JOINs normalizeKnobs) + STUDY_COPY.knobs + app/copilot/study/{StudyPlanControls,useStudyKnobs}.js; 4 C-c wiring edits (StudyPlanClient seeds areaOptions with DIGEST_SECTIONS + knobs:effective in startBuild; StudyCreatePanel/Walkthrough/Overview forward settings); notice.gemini gained the egress sentence (PD-SD-3). Census: TR-1 444, total 509, UNWIRED 5, ORPHAN 65, ALLOWED 14. **N157 OWED owner/Gemini-env: live RLS/CHECK/grant + RPC lost-update 2-session concurrency + cross-user refusal + research/plan QUALITY + phone geometry (≥44px, 320px mix-toggle wrap).**

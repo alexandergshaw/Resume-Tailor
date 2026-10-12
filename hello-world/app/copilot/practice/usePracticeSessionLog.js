@@ -393,11 +393,23 @@ export function usePracticeSessionLog({
     [event],
   );
 
+  // One opened project bullet's outcome ({ status, code }), handed to the
+  // project-bullet detail scope -- the practice twin of what CopilotClient.js's
+  // scope logs on the live side, in the same shape: the status and code only.
+  // The bullet, the question, the title and the elaboration never reach the log.
+  const logProjectBulletDetail = useCallback(
+    (outcome) => {
+      event("projectExample.bulletDetail", { status: outcome?.status, code: outcome?.code ?? undefined });
+    },
+    [event],
+  );
+
   return {
     hasLog,
     onStart,
     sessionLogSnapshot,
     downloadLog,
     logTechTermDetail,
+    logProjectBulletDetail,
   };
 }

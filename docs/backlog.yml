@@ -1850,7 +1850,7 @@
 
 - id: "N158"
   state: "actionable"
-  title: "**N154 follow-up (low): the ideal-project bullet-detail outcome is logged on the LIVE copilot (CopilotClient logs projectExample.bulletDetail {status,code}) but NOT on PRACTICE (PracticeClient mounts ProjectBulletDetailScope without an onDetailOutcome callback) — feature-logs consistency gap. FIX: add the practice logging via usePracticeSessionLog (an onDetailOutcome logging {status,code} only, mirroring live), within the PracticeClient/usePracticeSessionLog line caps (PracticeClient was 957/1000). Not test-failing; the sites test passes without it.**"
+  title: "**SHIPPED 2026-10-11 (full suite 20042 green): N154 follow-up (low): the ideal-project bullet-detail outcome is logged on the LIVE copilot (CopilotClient logs projectExample.bulletDetail {status,code}) but NOT on PRACTICE (PracticeClient mounts ProjectBulletDetailScope without an onDetailOutcome callback) — feature-logs consistency gap. FIX: add the practice logging via usePracticeSessionLog (an onDetailOutcome logging {status,code} only, mirroring live), within the PracticeClient/usePracticeSessionLog line caps (PracticeClient was 957/1000). Not test-failing; the sites test passes without it.**"
   owed_by: "Small: add practice onDetailOutcome logging mirroring live"
   evidence: ["N154 impl 2026-10-11: practice scope mounted without onDetailOutcome; live logs it"]
   blocked_reason: null
@@ -1862,7 +1862,7 @@
 
 - id: "N159"
   state: "actionable"
-  title: "**Docs hygiene (low): lib/sourceScan/exportReachability.ledger.md is 1043 lines (>1000 standing-rule soft cap) after the N157 study-plan reconciles. FIX: extract the append-only movement history (sections 4 + 5) into a sibling file (e.g. exportReachability.ledger.history.md), leaving the current-values table + the live sections. No test enforces the cap, so this is hygiene, not a gate. Surfaced by the N157 C-a reconcile.**"
+  title: "**SHIPPED 2026-10-11 (ledger.md 1192→326; history preserved verbatim in exportReachability.ledger.history.md; sweep 50/50; no test reads the .md): Docs hygiene (low): lib/sourceScan/exportReachability.ledger.md is 1043 lines (>1000 standing-rule soft cap) after the N157 study-plan reconciles. FIX: extract the append-only movement history (sections 4 + 5) into a sibling file (e.g. exportReachability.ledger.history.md), leaving the current-values table + the live sections. No test enforces the cap, so this is hygiene, not a gate. Surfaced by the N157 C-a reconcile.**"
   owed_by: "Small: extract ledger.md history to a sibling, keep current-values table"
   evidence: ["N157 SC-C reconciles grew exportReachability.ledger.md past 1000 lines"]
   blocked_reason: null
