@@ -21,7 +21,7 @@ table in the main ledger.
 
 ---
 
-## 4. TEST_REFERENCED, rule TR-1: movement notes (pinned at 444)
+## 4. TEST_REFERENCED, rule TR-1: movement notes (pinned at 445)
 
 ```text
 299 -> 300, and NOT because the tree grew. This number was pinned at
@@ -674,11 +674,32 @@ study/StudyPlanClient.js; knobsEqual, by study/useStudyKnobs.js), and the defaul
 useStudyKnobs.js and StudyPlanControls.js (StudyPlanClient.js). studyPlanCopy.js gained no
 export (the knobs group and the notice.gemini sentence are strings inside STUDY_COPY).
 ORPHAN_EXPORTS unmoved at 65; ALLOWED_UNREACHABLE_MODULES / UNWIRED_MODULES unmoved at 14 / 5.
+N145-N146a Wave A1: 444 -> 445 (+1, -0): the privacy-notice assembly moved out of
+app/copilot/practice/PracticeClient.js into lib/copilot/practiceNotices.js to bring that file
+back under its 950-line ceiling. Measured with the sweep's own scan (the TR-1 key set printed
+after the move; the only practiceNotices.js key in it is the one below, and
+practiceRoomQuestionPrivacy.js has none).
+IN (+1), by name, losing its only shipping importer:
+  lib/copilot/practiceNotices.js#buildPrivacyNotice -- PracticeClient.js used to import and call
+    it directly; it now imports buildPracticeNotice, which calls buildPrivacyNotice from inside
+    practiceNotices.js (an in-module call is not an importer). Its importers are now tests only
+    (practiceNotices.test.js, practiceNotices.noPreDraft.test.js, knowledgeBaseDisclosure.test.js
+    and practiceNotices.buildPracticeNotice.test.js), which pin its wording. It is the same
+    widened-surface shape this bucket counts: a helper kept exported so the unit suites can
+    sweep its 256 flag combinations directly, not a feature built and never connected (it is
+    still on the live path, one call deeper).
+OUT (-0): none.
+NOT in either list, because they have a shipping importer from birth: buildPracticeNotice and
+submittedDocsFlagsFor (both imported by PracticeClient.js), which are the two exports this move
+added. roomQuestionPrivacyClause (practiceRoomQuestionPrivacy.js) keeps its PracticeClient.js
+importer, because the room-question sentence is still composed at the call site and handed to
+buildPracticeNotice as a string.
+ORPHAN_EXPORTS unmoved at 65; ALLOWED_UNREACHABLE_MODULES / UNWIRED_MODULES unmoved at 14 / 5.
 ```
 
 ---
 
-## 5. UNUSED_IN_SHIPPING_MODULES total: movement notes (pinned at 509)
+## 5. UNUSED_IN_SHIPPING_MODULES total: movement notes (pinned at 510)
 
 ```text
 356 -> 354: exactly the two orphan symbols that were deleted
@@ -902,4 +923,11 @@ surface (three retunable caps and one pure helper, read by name by studyPlanKnob
 one widened constant that got its promised consumer, and not a feature built and never wired.
 The three new modules add no unreachable file (section 2), so no export sits in neither half.
 TEST_REFERENCED 444 + ORPHANS 65.
+N145-N146a Wave A1: 509 -> 510 (TEST_REFERENCED's +1 -0, the one symbol named at section 4: IN
+practiceNotices.js#buildPrivacyNotice, whose only shipping importer PracticeClient.js now
+reaches it through buildPracticeNotice instead; ORPHAN_EXPORTS unmoved at 65, section 3,
+identical set-for-set). The total moving by exactly the TR-1 half's net +1 with the orphan
+half frozen is what says this was a relocation of a call one level deeper and not a feature
+built and never wired. No new unreachable file (section 2), so no export sits in neither half.
+TEST_REFERENCED 445 + ORPHANS 65.
 ```

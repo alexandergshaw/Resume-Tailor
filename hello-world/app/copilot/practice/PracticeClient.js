@@ -5,7 +5,7 @@ import Alert from "@mui/material/Alert";
 import Box from "@mui/material/Box";
 import Stack from "@mui/material/Stack";
 import { interviewTypeLabel } from "@/lib/copilot/interviewTypes";
-import { buildPrivacyNotice } from "@/lib/copilot/practiceNotices";
+import { buildPracticeNotice, submittedDocsFlagsFor } from "@/lib/copilot/practiceNotices";
 import { useEngine } from "@/app/settings/engine";
 import { ExpansionScope } from "../useAnswerExpansions";
 import { TechTermDetailScope } from "../useTechTermDetails";
@@ -531,28 +531,10 @@ export default function PracticeClient({
     projectExampleLive: sampleAnswer.projectExampleLive,
   });
 
-  // Derived from state, not hard-coded, and names every destination that
-  // actually receives data on the CURRENT engine/switch combination — never
-  // a static claim. On the Gemini engine, every critique request sends the
-  // answer transcript, the posting details, and the prep-context profile to
-  // Google, regardless of the frames switch; that switch only ever controls
-  // whether still frames are ALSO sent (AC-C4-5) — unchanged by D1.
-  const framesWillUpload = sendFrames && !isEmbedded;
-  // AC-H5/AC-H6.23/BUG-H5: the critique route now ALSO fetches and sends the
-  // submitted resume/cover letter to Gemini, grounding the critique the same
-  // way revealing a sample answer already did — but ONLY when a posting is
-  // selected AND that application actually has a document to send: with no
-  // posting there is no application for either request to fetch documents
-  // for, and even with one selected, an application whose
-  // `resume_used_id`/`cover_letter_id` are both unset makes
-  // fetchApplicationDocs return empty strings, in which case both routes'
-  // `if (resume || coverLetter)` guard (app/api/copilot/critique/route.js,
-  // app/api/copilot/answer/route.js) skips the document section entirely —
-  // nothing is sent. `submittedDocs` (from useApplicationDocs, the same hook
-  // backing the "Submitted for this application" panel) drives both
-  // clauses; while its load is still unsettled (`loading`/`idle`) or has
-  // failed (`error`), whether a document exists is genuinely unknown.
-  const hasPosting = !!posting;
+  // The notice is derived from state, never hard-coded: buildPracticeNotice
+  // and submittedDocsFlagsFor (lib/copilot/practiceNotices.js) hold the
+  // derivation and its AC-H5 gating, and both halves below read the SAME
+  // `docFlags`.
   // P1.6: the same fact live mode already reads for its own notice
   // (CopilotClient.js) and for VoiceCueSidebar — whether the selected posting
   // has a company on file. It is the exact predicate for whether the answer
@@ -561,37 +543,15 @@ export default function PracticeClient({
   // question paths take that branch (no `mode`), so the clause has to be
   // gated on this rather than on whether a posting was merely selected.
   const hasCompany = !!String(posting?.company || "").trim();
-  const docsSettled = submittedDocs.status === "done";
-  const hasSubmittedResume = !!submittedDocs.resume;
-  const hasSubmittedCoverLetter = !!submittedDocs.coverLetter;
-  // AC-J3: the actual sentence-by-sentence derivation (critique/sample-
-  // answer document clauses, the engine notice, the video notice, the STT
-  // notice) now lives in lib/copilot/practiceNotices.js, extracted purely to
-  // keep this component under this repo's line-count gate — its output is
-  // byte-identical to what used to be inlined here (see that module's own
-  // tests for the full combinatorial proof). F2: `sttProviderName` is passed
-  // down from
-  // CopilotClient, which learns it from the /api/copilot/token response
-  // rather than this component fetching its own — one fetch per page is
-  // enough for both modes' notices to agree. D1: `saveEnabled` is this
-  // render's live value from useSaveRecordings, since the notice should
-  // reflect whatever is true RIGHT NOW (unlike the upload decision itself,
-  // which re-reads storage — see useSaveRecordings.js's own doc on
-  // `readSaveEnabled`).
-  // Final wave (AC-M2): roomQuestionPrivacyClause's own sentence is appended
-  // after buildPrivacyNotice's full output — see that function's own doc
-  // for why it lives in this file rather than inside practiceNotices.js
-  // itself.
-  const privacyNotice = `${buildPrivacyNotice({
+  const docFlags = submittedDocsFlagsFor(posting, submittedDocs);
+  const privacyNotice = buildPracticeNotice({
     sttProviderName,
     isEmbedded,
-    framesWillUpload,
-    hasPosting,
-    docsSettled,
-    hasSubmittedResume,
-    hasSubmittedCoverLetter,
+    sendFrames,
     saveEnabled,
-  })} ${roomQuestionPrivacyClause({ isEmbedded, hasPosting, docsSettled, hasSubmittedResume, hasSubmittedCoverLetter, hasCompany })}`;
+    ...docFlags,
+    roomQuestionClause: roomQuestionPrivacyClause({ isEmbedded, ...docFlags, hasCompany }),
+  });
   // G2/AC-G2-C-6/AC-A12: resolved from usePracticeAnswer's OWN captured
   // judgedInterviewType, not the live `interviewType` — a foreign-origin
   // change no longer clears the answer on screen (AC-A11), so this now
@@ -878,13 +838,13 @@ export default function PracticeClient({
             // the response contract alone — both already live here.
             //
             // K1: this is `critiqueFramesSent` (usePracticeAnswer), NOT
-            // `framesWillUpload` below. `framesWillUpload` is re-derived from
-            // the "Include camera frames" switch's LIVE state every render —
-            // correct for describing what the NEXT request will do (see its
-            // own doc and buildPrivacyNotice below), but the switch lives on
-            // this same screen as the feedback panel, so toggling it after a
-            // critique has already returned would silently rewrite the
-            // panel's claim about a request that already happened.
+            // `framesWillUpload`. `framesWillUpload` is re-derived from the
+            // "Include camera frames" switch's LIVE state every render (in
+            // buildPracticeNotice, which feeds buildPrivacyNotice) — correct
+            // for describing what the NEXT request will do, but the switch
+            // lives on this same screen as the feedback panel, so toggling it
+            // after a critique has already returned would silently rewrite
+            // the panel's claim about a request that already happened.
             // critiqueFramesSent instead is written once, at the moment each
             // critique settles, from the frames array that request actually
             // sent — a retrospective fact that toggling the switch afterward

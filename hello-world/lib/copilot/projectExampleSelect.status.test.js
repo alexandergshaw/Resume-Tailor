@@ -148,6 +148,30 @@ describe("withPoolTags -- the whole pool, for the owner probe", () => {
     }
   });
 
+  it("[N146a] a stale value gains the probe's evidence too (fitScore + poolTags), like ready/no_match", () => {
+    // Owner ruling 2026-10-12: a FAILED pool may serve a last-good pick FLAGGED
+    // STALE. A stale pick is probe evidence exactly like ready/no_match (the
+    // owner reads fitScore + poolTags from the session log), so withPoolTags
+    // must whitelist "stale". RED on HEAD: the whitelist at :265 covers only
+    // ready/no_match, so a stale example passes through unchanged (no fitScore).
+    const staleExample = {
+      status: "stale",
+      competency: "incident response",
+      domain: "SRE",
+      title: "Rebuilt the paging rotation",
+      bullets: ["b1"],
+      hypothetical: true,
+      engine: "gemini",
+    };
+    const out = withPoolTags(staleExample, { pool: readyPool(POOL), pick: { fitScore: 2 } });
+    expect(out.status).toBe("stale");
+    expect(out.fitScore).toBe(2);
+    expect(out.poolTags).toHaveLength(3);
+    // The stale value's own invented content is untouched (like the ready case).
+    expect(out.title).toBe("Rebuilt the paging rotation");
+    expect(out.bullets).toEqual(["b1"]);
+  });
+
   it("tolerates a malformed pool and a missing pick without throwing", () => {
     const ready = { status: "ready", title: "t", bullets: ["a"] };
     expect(withPoolTags(ready, { pool: null, pick: undefined })).toEqual({ ...ready, fitScore: 0, poolTags: [] });

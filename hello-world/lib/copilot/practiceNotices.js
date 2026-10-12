@@ -250,3 +250,85 @@ export function buildPrivacyNotice({
   const sttNotice = sttNoticeFor(sttProviderName);
   return `${sttNotice} ${engineNotice} ${videoNotice}`;
 }
+
+// The four facts about the selected posting and its submitted documents that
+// the document clauses above are gated on, read off the posting and the
+// useApplicationDocs result. Moved here from PracticeClient.js, which still
+// calls it once and hands the result to BOTH halves of the notice, so the two
+// can never disagree about which documents exist.
+//
+// AC-H5/AC-H6.23/BUG-H5: the critique route now ALSO fetches and sends the
+// submitted resume/cover letter to Gemini, grounding the critique the same
+// way revealing a sample answer already did — but ONLY when a posting is
+// selected AND that application actually has a document to send: with no
+// posting there is no application for either request to fetch documents
+// for, and even with one selected, an application whose
+// `resume_used_id`/`cover_letter_id` are both unset makes
+// fetchApplicationDocs return empty strings, in which case both routes'
+// `if (resume || coverLetter)` guard (app/api/copilot/critique/route.js,
+// app/api/copilot/answer/route.js) skips the document section entirely —
+// nothing is sent. `submittedDocs` (from useApplicationDocs, the same hook
+// backing the "Submitted for this application" panel) drives both clauses;
+// while its load is still unsettled (`loading`/`idle`) or has failed
+// (`error`), whether a document exists is genuinely unknown, which is why
+// `docsSettled` is true for the status "done" and no other.
+export function submittedDocsFlagsFor(posting, submittedDocs) {
+  return {
+    hasPosting: !!posting,
+    docsSettled: submittedDocs.status === "done",
+    hasSubmittedResume: !!submittedDocs.resume,
+    hasSubmittedCoverLetter: !!submittedDocs.coverLetter,
+  };
+}
+
+// AC-J3: the whole notice practice mode renders, assembled from the raw state
+// PracticeClient.js holds — moved out of that component purely to keep it
+// under this repo's line-count gate (usePracticeHandlers.extraction.test.js),
+// so its output is byte-identical to what used to be inlined there (the
+// combinatorial proof is practiceNotices.buildPracticeNotice.test.js).
+//
+// Derived from state, not hard-coded, and names every destination that
+// actually receives data on the CURRENT engine/switch combination — never a
+// static claim. On the Gemini engine, every critique request sends the
+// answer transcript, the posting details, and the prep-context profile to
+// Google, regardless of the frames switch; that switch only ever controls
+// whether still frames are ALSO sent (AC-C4-5) — unchanged by D1. So frames
+// upload only when the switch is on AND the engine is not the embedded one.
+//
+// F2: `sttProviderName` is passed down from CopilotClient, which learns it
+// from the /api/copilot/token response rather than this component fetching
+// its own — one fetch per page is enough for both modes' notices to agree.
+// D1: `saveEnabled` is the render's live value from useSaveRecordings, since
+// the notice should reflect whatever is true RIGHT NOW (unlike the upload
+// decision itself, which re-reads storage — see useSaveRecordings.js's own
+// doc on `readSaveEnabled`).
+//
+// Final wave (AC-M2): `roomQuestionClause` is roomQuestionPrivacyClause's
+// output, appended after buildPrivacyNotice's full output. It arrives as a
+// finished string rather than being computed here because that function lives
+// in app/copilot/practice/practiceRoomQuestionPrivacy.js, which imports this
+// module's shared sentences — importing it back would close a cycle — and
+// because its caller must pass it `hasCompany` (P1.6) from the same posting.
+export function buildPracticeNotice({
+  sttProviderName,
+  isEmbedded,
+  sendFrames,
+  saveEnabled,
+  hasPosting,
+  docsSettled,
+  hasSubmittedResume,
+  hasSubmittedCoverLetter,
+  roomQuestionClause,
+}) {
+  const framesWillUpload = sendFrames && !isEmbedded;
+  return `${buildPrivacyNotice({
+    sttProviderName,
+    isEmbedded,
+    framesWillUpload,
+    hasPosting,
+    docsSettled,
+    hasSubmittedResume,
+    hasSubmittedCoverLetter,
+    saveEnabled,
+  })} ${roomQuestionClause}`;
+}

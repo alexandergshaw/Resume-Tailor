@@ -202,8 +202,10 @@ function isShownEntry(entry) {
 //   no applicationId, or an embedded engine ........ undefined (omit)
 //   the pool read ERRORED (or timed out) ............ { status: "failed" }
 //   no pool row, or a young 'pending' row ........... { status: "pending" }
-//   'failed', a stale 'pending', or a 'ready' pool
-//     with nothing usable in it ..................... { status: "failed" }
+//   'failed' WITH last-good projects and a matched
+//     shown pick ................................... { status: "stale", ...entry }
+//   any other 'failed', a stale 'pending', or a
+//     'ready' pool with nothing usable in it ....... { status: "failed" }
 //   'ready' and the pick found no close entry ....... { status: "no_match" }
 //   'ready' and the pick matched .................... { status: "ready", ...entry }
 //
@@ -230,7 +232,33 @@ export function buildProjectExample({ pool, pick, applicationId, engine, now, po
   if (pool.status === "pending") {
     return isStalePending(pool, now) ? { status: "failed" } : { status: "pending" };
   }
-  if (pool.status !== "ready") return { status: "failed" };
+  if (pool.status !== "ready") {
+    // A FAILED pool that still holds its last-good projects (a regenerate that
+    // failed does not erase them) serves the matched pick FLAGGED STALE -- a
+    // DISTINCT status, never a fresh 'ready' and never a stale:true flag on one,
+    // so no surface can present an old example as current.
+    if (
+      pool.status === "failed" &&
+      Array.isArray(pool.projects) &&
+      pool.projects.length > 0 &&
+      pick &&
+      pick.outcome === "match" &&
+      pick.entry &&
+      isShownEntry(pick.entry)
+    ) {
+      const stale = pick.entry;
+      return {
+        status: "stale",
+        competency: stale.competency,
+        domain: stale.domain,
+        title: stale.title,
+        bullets: [...stale.bullets],
+        hypothetical: true,
+        engine: pool.engine ?? null,
+      };
+    }
+    return { status: "failed" };
+  }
   if (!Array.isArray(pool.projects) || pool.projects.length === 0) return { status: "failed" };
 
   if (!pick || pick.outcome !== "match" || !pick.entry) return { status: "no_match" };
@@ -250,7 +278,7 @@ export function buildProjectExample({ pool, pick, applicationId, engine, now, po
 const MAX_TAG_CHARS = 120;
 const tagText = (value) => (typeof value === "string" ? value.slice(0, MAX_TAG_CHARS) : "");
 
-// Adds the owner probe's evidence to a ready or no_match value: the WHOLE pool
+// Adds the owner probe's evidence to a ready, stale or no_match value: the WHOLE pool
 // the pick was made from (each entry's competency, domain and title, never its
 // bullets) and the winning fit score. The probe (docs/loop/N143.probe.md) cannot
 // tell "the pool had a better entry" (selection picked wrong) from "every entry
@@ -262,7 +290,7 @@ const tagText = (value) => (typeof value === "string" ? value.slice(0, MAX_TAG_C
 // Any other status passes through untouched, so no pending, failed or omitted
 // value ever gains a field, and a ready entry's own content is not duplicated.
 export function withPoolTags(example, { pool, pick } = {}) {
-  if (!example || (example.status !== "ready" && example.status !== "no_match")) return example;
+  if (!example || (example.status !== "ready" && example.status !== "no_match" && example.status !== "stale")) return example;
   const projects = Array.isArray(pool?.projects) ? pool.projects : [];
   return {
     ...example,

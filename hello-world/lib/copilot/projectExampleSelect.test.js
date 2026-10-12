@@ -227,6 +227,103 @@ describe("buildProjectExample — the five-outcome done-frame status matrix (T8 
     expect(out).toEqual({ status: "failed" });
   });
 
+  // ---- N146a (owner ruling 2026-10-12): the SIXTH outcome, status:"stale" ----
+  // On a FAILED pool regen that still carries previously-good projects, the
+  // last-good pick is served FLAGGED STALE -- a DISTINCT status, never a fresh
+  // "ready" benchmark. Fires ONLY when the DB status==="failed" AND projects is
+  // a non-empty array AND the pick matched AND isShownEntry(pick.entry).
+  // RED on HEAD: buildProjectExample :233 maps every non-ready pool to
+  // {status:"failed"}, so status:"stale" does not exist yet (that is the
+  // hand-off, not a defect).
+  it("[N146a positive] a FAILED pool with good projects + a matching shown pick serves the pick FLAGGED STALE", () => {
+    // The last-good content stays reachable: the prewarm route's 'failed' upsert
+    // omits `projects` (column-wise merge), so the previous pool stands and the
+    // pick carries its invented title/bullets -- exactly like ready, but stale.
+    // The content must come from the PICK, so a distinct entry proves reachability.
+    const lastGood = entry({ title: "Earlier incident story", bullets: ["kept reachable", "second bullet"] });
+    const out = buildProjectExample({
+      pool: { status: "failed", projects: [entry()], engine: "gemini", updated_at: "2026-10-08T00:00:00.000Z", error: "regen failed" },
+      pick: { outcome: "match", entry: lastGood, fitScore: 2 },
+      applicationId: "app-1",
+      engine: "gemini",
+      now: AT,
+    });
+    expect(out.status).toBe("stale");
+    expect(out.competency).toBe("incident response");
+    expect(out.domain).toBe("SRE");
+    expect(out.title).toBe("Earlier incident story");
+    expect(out.bullets).toEqual(["kept reachable", "second bullet"]);
+    expect(out.hypothetical).toBe(true);
+    expect(out.engine).toBe("gemini");
+  });
+
+  it("[N146a no-overclaim canary -- load-bearing] a stale entry's status is NEVER 'ready' and fabricates no content beyond the pick", () => {
+    // The DISTINCT status (NOT a stale:true flag on a 'ready' payload) makes the
+    // overclaim impossible by construction for any reader whitelisting 'ready'.
+    // A mutant that returns status:'ready' for a failed pool reds here. The
+    // honesty floor holds: content is exactly the pick's, with no extra field.
+    const lastGood = entry({ title: "Only the pick's title", bullets: ["only the pick's bullet"] });
+    const out = buildProjectExample({
+      pool: { status: "failed", projects: [entry()], engine: "gemini", updated_at: "2026-10-08T00:00:00.000Z" },
+      pick: { outcome: "match", entry: lastGood },
+      applicationId: "app-1",
+      engine: "gemini",
+      now: AT,
+    });
+    expect(out.status).toBe("stale");
+    expect(out.status).not.toBe("ready");
+    expect(out).not.toHaveProperty("stale"); // distinct status, not a stale:true flag on ready
+    expect(out.title).toBe("Only the pick's title");
+    expect(out.bullets).toEqual(["only the pick's bullet"]);
+    // Same key set as a ready entry -- no invented extra field beyond the pick.
+    expect(Object.keys(out).sort()).toEqual([
+      "bullets", "competency", "domain", "engine", "hypothetical", "status", "title",
+    ]);
+  });
+
+  it("[N146a over-fire control] a FAILED pool with NO projects stays {status:'failed'} (never stale)", () => {
+    // Guards the non-empty-projects floor. Passes vacuously on HEAD (a failed
+    // pool is always failed there); becomes load-bearing once the stale arm
+    // exists -- a build that drops the projects.length>0 guard reds here.
+    const out = buildProjectExample({
+      pool: { status: "failed", projects: [], engine: "gemini", updated_at: "2026-10-08T00:00:00.000Z" },
+      pick: { outcome: "match", entry: entry() },
+      applicationId: "app-1",
+      engine: "gemini",
+      now: AT,
+    });
+    expect(out).toEqual({ status: "failed" });
+  });
+
+  it("[N146a over-fire control] a FAILED pool served a NON-match pick (even one carrying an entry) stays {status:'failed'}", () => {
+    // Guards the outcome gate specifically: stale fires ONLY on
+    // pick.outcome==='match'. A synthetic no_match pick that still carries a
+    // shown entry must not be served as stale. A build that drops the
+    // outcome check reds here.
+    const out = buildProjectExample({
+      pool: { status: "failed", projects: [entry()], engine: "gemini", updated_at: "2026-10-08T00:00:00.000Z" },
+      pick: { outcome: "no_match", entry: entry(), fitScore: 0 },
+      applicationId: "app-1",
+      engine: "gemini",
+      now: AT,
+    });
+    expect(out).toEqual({ status: "failed" });
+  });
+
+  it("[N146a over-fire control] a FAILED pool whose matched pick is a malformed (unshown) entry stays {status:'failed'}", () => {
+    // The honesty floor: a failed pool does not serve a half-built entry as
+    // stale any more than a ready pool would. A build that drops the
+    // isShownEntry guard reds here.
+    const out = buildProjectExample({
+      pool: { status: "failed", projects: [entry()], engine: "gemini", updated_at: "2026-10-08T00:00:00.000Z" },
+      pick: { outcome: "match", entry: entry({ bullets: [] }) },
+      applicationId: "app-1",
+      engine: "gemini",
+      now: AT,
+    });
+    expect(out).toEqual({ status: "failed" });
+  });
+
   it("emits {status:'failed'} for a ready pool with empty/unusable projects (never no_match)", () => {
     // "no close match" would claim a pool was actually searched; an empty
     // ready pool was not.
@@ -251,17 +348,42 @@ describe("buildProjectExample — the five-outcome done-frame status matrix (T8 
     expect(out).toEqual({ status: "no_match" });
   });
 
-  it("[no-overclaim] a non-ready pool NEVER emits a ready entry's title/bullets (AC-14 ii)", () => {
-    for (const pool of [
-      { status: "pending", projects: [entry()], updated_at: "2026-10-08T00:00:00.000Z" },
-      { status: "failed", projects: [entry()], updated_at: "2026-10-08T00:00:00.000Z" },
-    ]) {
-      const now = pool.status === "pending" ? AT : AT; // young pending stays pending; failed stays failed
-      const out = buildProjectExample({ pool, pick: { outcome: "match", entry: entry() }, applicationId: "app-1", engine: "gemini", now });
-      expect(out.status).not.toBe("ready");
-      expect(out).not.toHaveProperty("title");
-      expect(out).not.toHaveProperty("bullets");
-    }
+  it("[no-overclaim, NARROWED by owner ruling 2026-10-12] a non-ready pool NEVER claims 'ready'; a FAILED pool with good projects MAY serve the pick flagged 'stale' (AC-14 ii)", () => {
+    // Owner ruling 2026-10-12 REPLACES the old pin here. The old rule was that a
+    // non-ready pool emits NO title/bullets at all. The narrowed rule: on a
+    // FAILED pool regen with previously-good projects, serve the last-good pick
+    // FLAGGED STALE -- carrying title/bullets -- NEVER as a fresh 'ready'
+    // benchmark. The no-overclaim intent is preserved (never 'ready'/fresh),
+    // just narrowed to allow the DISTINCT 'stale' status to carry the pick.
+
+    // A young PENDING pool is still in flight: no content, and never ready.
+    const pendingOut = buildProjectExample({
+      pool: { status: "pending", projects: [entry()], updated_at: "2026-10-08T00:00:00.000Z" },
+      pick: { outcome: "match", entry: entry() },
+      applicationId: "app-1",
+      engine: "gemini",
+      now: AT, // young pending stays pending
+    });
+    expect(pendingOut.status).toBe("pending");
+    expect(pendingOut.status).not.toBe("ready");
+    expect(pendingOut).not.toHaveProperty("title");
+    expect(pendingOut).not.toHaveProperty("bullets");
+
+    // A FAILED pool with good projects + a matching shown pick: the last-good
+    // pick is served FLAGGED STALE -- it carries title/bullets, but NEVER
+    // claims 'ready'. The pick's content (a distinct entry) stays reachable.
+    const staleOut = buildProjectExample({
+      pool: { status: "failed", projects: [entry()], engine: "gemini", updated_at: "2026-10-08T00:00:00.000Z" },
+      pick: { outcome: "match", entry: entry({ title: "Earlier good story" }) },
+      applicationId: "app-1",
+      engine: "gemini",
+      now: AT, // failed stays failed on the DB; served stale in-memory
+    });
+    expect(staleOut.status).toBe("stale");
+    expect(staleOut.status).not.toBe("ready"); // the preserved no-overclaim canary
+    expect(staleOut.title).toBe("Earlier good story");
+    expect(Array.isArray(staleOut.bullets)).toBe(true);
+    expect(staleOut.bullets.length).toBeGreaterThan(0);
   });
 });
 
