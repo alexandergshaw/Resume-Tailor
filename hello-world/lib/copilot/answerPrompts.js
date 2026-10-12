@@ -49,6 +49,8 @@
 import { submittedDocsPromptParts } from "@/lib/copilot/applicationDocsPrompt";
 import { roleTerms } from "@/lib/copilot/questionVocabulary";
 import { AUTO, codeLanguageLabel } from "@/lib/copilot/codeLanguages";
+import { detectCodingChallenge } from "@/lib/copilot/detectCodingChallenge";
+import { codingLanguageDirective } from "@/lib/copilot/codingSolution";
 
 // AC-2.1/design §4a. The clause this replaces used to end with "if it is
 // thin, give strong generic points instead" — a near-verbatim description of
@@ -216,6 +218,46 @@ export function codeLanguageLines(descriptor, codeLanguage) {
   ];
 }
 
+// N161 — the prompt for a DETECTED coding / pseudocode question
+// (detectCodingChallenge). Both builders below reach it through one early
+// return placed ahead of everything else, gated on that detector re-derived
+// from `question` — never a new argument, the same way the `roleTerms` gate is
+// — so a question that is not a coding ask takes none of this and every
+// existing prompt stays byte-identical (the FROZEN_*_NO_PAGES oracles).
+//
+// A worked solution REPLACES the spoken answer, so this prompt asks for a
+// `codingSolution` object INSTEAD of `points`, and tells the model to disregard
+// the system instruction's talking-points framing: the system instructions stay
+// the same two constants for every question, so the override rides this user
+// turn only. It carries no résumé, project pages or company facts — code is not
+// a claim about the candidate's experience — and uses codingLanguageDirective,
+// which, unlike codeLanguageLines, does not depend on `descriptor.codeBearing`.
+// The `type` enum is unchanged: the coding signal is the separate field.
+function buildCodingPrompt({ question, context, descriptor, codeLanguage }) {
+  const parts = [
+    `The interviewer asked: "${question}"`,
+    "",
+    ...interviewFormatLines(descriptor),
+    "",
+    ...codingLanguageDirective(codeLanguage),
+  ];
+  if (context) {
+    parts.push("", "Recent conversation (most recent last), for context:", context);
+  }
+  parts.push(
+    "",
+    "--- CODING CHALLENGE ---",
+    "This question asks the candidate to produce code or pseudocode, so it is not answered with spoken talking points. Disregard any earlier instruction to return talking points or a spoken answer: write a worked solution the candidate can read from and type. Do not write a story, a STAR answer, or any claim about the candidate's own experience.",
+    'Return ONLY JSON of this exact shape: { "codingSolution": { "approach": string, "language": string, "code": string, "complexity": string, "edgeCases": string[] }, "type": "behavioral" | "technical" | "general" }',
+    "approach: 1-3 plain sentences stating the idea and why it works, in the order the candidate would explain it aloud.",
+    'language: the name of the language the code is written in, or "Pseudocode".',
+    "code: the complete, correct, readable solution as ONE JSON string — line breaks written as \\n, indentation kept exactly as it should be typed, no markdown fences. Comments are welcome.",
+    "complexity: the time and space complexity in Big-O terms, each with a one-clause reason.",
+    "edgeCases: 2-5 short strings, each an edge case worth raising and how the code handles it — for example empty input, a single element, duplicates, or very large input.",
+  );
+  return parts.join("\n");
+}
+
 // AC-H4.15: grounds live mode's talking points in the résumé and cover
 // letter actually submitted for the selected application, in addition to
 // the prep context — but never the posting description (AC-H7.27), which
@@ -283,6 +325,7 @@ export function buildPointsPrompt(
   companyFacts = undefined,
   codeLanguage = undefined,
 ) {
+  if (detectCodingChallenge(question)) return buildCodingPrompt({ question, context, descriptor, codeLanguage });
   const companyKnown = !!companyFacts?.companyKnown;
   const factsBlock = companyKnown && typeof companyFacts.block === "string" ? companyFacts.block : "";
   const parts = [
@@ -465,6 +508,7 @@ export function buildAnswerPrompt({
   pagesBlock,
   codeLanguage,
 }) {
+  if (detectCodingChallenge(question)) return buildCodingPrompt({ question, context, descriptor, codeLanguage });
   const parts = [
     `The interviewer asked: "${question}"`,
     "",

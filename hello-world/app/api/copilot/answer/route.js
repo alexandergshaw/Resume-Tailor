@@ -58,6 +58,8 @@ import { roleTerms, MAX_QUESTION_CHARS } from "@/lib/copilot/questionVocabulary"
 import { geminiRoleTermsFlag, embeddedRoleTermsFlag } from "@/lib/copilot/roleTermsFlag";
 import { normalizeCodeLanguageChoice } from "@/lib/copilot/codeLanguages";
 import { startCodeLanguageResolution, peekCodeLanguage } from "@/lib/copilot/answerCodeLanguage";
+import { detectCodingChallenge } from "@/lib/copilot/detectCodingChallenge";
+import { codingResponseFields, embeddedCodingFallback } from "@/lib/copilot/codingSolution";
 // Row 1 of the invented example-projects group: the pre-warmed pool's best match
 // for THIS question, read and picked fresh per question below. The selector and
 // the status derivation are pure and live in projectExampleSelect.js, which is
@@ -187,6 +189,7 @@ async function streamAnswer({
   // peek that started it lives there too) and handed down unchanged, exactly
   // like `questionRoleTerms` below.
   codeLanguage,
+  isCoding,
   // §4d: this route's own gate, computed once in POST from the (already
   // capped) question and handed down — streamAnswer is Gemini-only, so the
   // role-terms flag below always gets `geminiRoleTermsFlag` with `kb.block`
@@ -271,6 +274,9 @@ async function streamAnswer({
     }
 
     const parsed = parseModelJson(raw.trim());
+    // N161: a whole coding solution is the terminal frame alone (no `points` frame was ever written for it).
+    const coding = codingResponseFields({ parsed, isCoding, codeLanguage, validTypes: VALID_TYPES });
+    if (coding) return write({ t: "done", ...coding });
     const { points, pageIds, factIds } = normalizeModelPoints(parsed, pointsCap);
     if (points.length === 0) {
       write({ t: "error", error: "Could not generate an answer." });
@@ -395,6 +401,8 @@ export async function POST(request) {
     // buildAnswerPrompt, which re-derive this same value from `question`)
     // only ever takes effect on the Gemini path.
     const questionRoleTerms = roleTerms(question);
+    // N161: a coding question gets a worked solution INSTEAD of the spoken answer (lib/copilot/codingSolution.js).
+    const isCoding = detectCodingChallenge(question);
     const context = (body?.context ?? "").toString().slice(0, MAX_CONTEXT_CHARS);
     const profile = (body?.profile ?? "").toString().slice(0, MAX_PROFILE_CHARS);
     const interviewTypeValue = normalizeInterviewType(body?.interviewType);
@@ -643,6 +651,7 @@ export async function POST(request) {
         kb,
         pages,
         codeLanguage,
+        isCoding,
         questionRoleTerms,
         // AC-V5.4: the THUNK, not an already-awaited result — streamAnswer
         // opens the NDJSON body first and settles this inside its own
@@ -652,6 +661,9 @@ export async function POST(request) {
         projectExampleFieldPromise,
       });
     }
+
+    // N161: both embedded branches (no model, no code producer) answer a coding question with the honest marker, before either drafter runs.
+    if (isCoding && wantsEmbedded(body?.engine)) return Response.json(embeddedCodingFallback("technical"));
 
     // The NON-streaming branches build one whole JSON body and have nothing
     // to open early, so this is where their facts wait belongs — the same
@@ -747,6 +759,8 @@ export async function POST(request) {
       });
 
       const parsed = parseModelJson(response.text?.trim() || "");
+      const coding = codingResponseFields({ parsed, isCoding, codeLanguage, validTypes: VALID_TYPES });
+      if (coding) return Response.json(coding);
       const { points, pageIds } = normalizeModelPoints(parsed, MAX_ANSWER_POINTS);
       if (points.length === 0) {
         return Response.json({ error: "Could not generate an answer." }, { status: 502 });
@@ -874,6 +888,8 @@ export async function POST(request) {
     });
 
     const parsed = parseModelJson(response.text?.trim() || "");
+    const coding = codingResponseFields({ parsed, isCoding, codeLanguage, validTypes: VALID_TYPES });
+    if (coding) return Response.json(coding);
     const { points, pageIds, factIds } = normalizeModelPoints(parsed, 6);
     if (points.length === 0) {
       return Response.json({ error: "Could not generate an answer." }, { status: 502 });

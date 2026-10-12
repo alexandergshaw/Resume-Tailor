@@ -13,6 +13,7 @@ import { answerStatusMessage, visuallyHidden } from "@/lib/copilot/answerStatus"
 import { latestQuestionEntry } from "@/lib/copilot/currentQuestion";
 import AnswerLines from "./AnswerLines";
 import AnswerAids from "./AnswerAids";
+import CodeSolution, { CodingFallbackNote } from "./CodeSolution";
 // BUG-3/R-121 group-L: the SAME "what's current" decision CopilotDashboard's
 // panels use, not a second hand-rolled copy of it — see latestQuestionEntry's
 // own doc for why `questions[questions.length - 1]` stopped being that
@@ -83,7 +84,14 @@ export default function QuestionFeed({
   // the direct-index read it replaces.
   const latest = currentOverride !== undefined ? currentOverride : latestQuestionEntry(questions);
   const latestLines = answerLines(latest?.cues, latest?.points, latest?.pageSources);
-  const latestStatusText = answerStatusMessage({ status: latest?.status, bulletCount: latestLines.length });
+  // N161: a done coding answer has no lines, so without these flags this region
+  // would read "Answer ready, 0 points" for a worked code solution.
+  const latestStatusText = answerStatusMessage({
+    status: latest?.status,
+    bulletCount: latestLines.length,
+    hasCodingSolution: !!latest?.codingSolution,
+    hasCodingFallback: !latest?.codingSolution && !!latest?.codingFallback,
+  });
   // BUG-2: see useCurrentQuestionAnnouncement's doc (CopilotDashboard.js) —
   // `latest` can swap to a different, already-`done` entry without a
   // natural loading -> done transition, which a bare answerStatusMessage(...)
@@ -200,7 +208,19 @@ function QuestionCard({ q, onDraft }) {
         </Alert>
       ) : null}
 
-      {done && lines.length ? (
+      {/* N161: REPLACE, not augment -- AnswerLines is reachable only in the
+          else of the coding gate, and a coding card carries no resume anchor,
+          example project or tech buzzwords (D1); CodeSolution keeps the
+          posting's buzzwords alone. */}
+      {done && q.codingSolution ? (
+        <Box sx={{ mb: 1 }}>
+          <CodeSolution solution={q.codingSolution} buzzwords={q.buzzwords} />
+        </Box>
+      ) : done && q.codingFallback ? (
+        <Box sx={{ mb: 1 }}>
+          <CodingFallbackNote message={q.codingFallback} />
+        </Box>
+      ) : done && lines.length ? (
         <Box sx={{ mb: 1 }}>
           <AnswerLines lines={lines} />
           {/* AC-K1.2/AC-K1.3: the posting's own vocabulary to work in, and

@@ -14,6 +14,7 @@ import { pinnedQuestionEntry } from "@/lib/copilot/currentQuestion";
 import { dashboardCopy, PACE_LABEL_TEXT, FILLER_LABEL_TEXT } from "@/lib/copilot/dashboardCopy";
 import AnswerAids from "../AnswerAids";
 import AnswerLines from "../AnswerLines";
+import CodeSolution, { CodingFallbackNote } from "../CodeSolution";
 import { RealPanel } from "./panelShells";
 import { BREAK_LONG_WORDS_SX, TOUCH_TARGET_SX, WRAP_ROW_SX } from "@/app/theme/mobileSx";
 import { confirmRevealLabel } from "@/lib/copilot/confirmReveal";
@@ -269,9 +270,13 @@ function CurrentAnswerPanel({
   // to useCurrentQuestionAnnouncement above as well as used for its own
   // sake — see that hook's doc for why the announcement can't simply be
   // this string on every render.
+  // N161: a done coding answer has no lines; the two flags keep this region
+  // from announcing "Answer ready, 0 points" for a worked code solution.
   const currentAnswerStatusText = answerStatusMessage({
     status: answerHidden && !announceHiddenReadiness ? "idle" : current?.status,
     bulletCount: lines.length,
+    hasCodingSolution: !!current?.codingSolution,
+    hasCodingFallback: !current?.codingSolution && !!current?.codingFallback,
   });
   const currentAnswerRegionText = useCurrentQuestionAnnouncement(current, currentAnswerStatusText);
 
@@ -439,6 +444,14 @@ function CurrentAnswerPanel({
             // role="alert" plus a non-color icon, rather than a plain
             // colored Typography (WCAG 1.4.1).
             <Alert severity="error">{current.error || "Could not draft an answer."}</Alert>
+          ) : current.status === "done" && current.codingSolution ? (
+            // N161: REPLACE, not augment -- AnswerLines is reachable only in
+            // the else of this gate, and a coding answer carries no resume
+            // anchor, example project or tech buzzwords (D1); CodeSolution
+            // keeps the posting's buzzwords alone.
+            <CodeSolution solution={current.codingSolution} buzzwords={current.buzzwords} />
+          ) : current.status === "done" && current.codingFallback ? (
+            <CodingFallbackNote message={current.codingFallback} />
           ) : current.status === "done" && lines.length ? (
             <>
               <AnswerLines lines={lines} />
@@ -742,7 +755,14 @@ function HistoryItem({ entry, copy }) {
       </Button>
       {expanded ? (
         <Box sx={{ px: 1.25, pb: 1.25 }}>
-          {lines.length ? (
+          {/* N161: a revealed PAST coding answer shows its stored worked
+              solution. Same REPLACE gate as CurrentAnswerPanel: AnswerLines
+              is reachable only in the else. */}
+          {entry.codingSolution ? (
+            <CodeSolution solution={entry.codingSolution} buzzwords={entry.buzzwords} />
+          ) : entry.codingFallback ? (
+            <CodingFallbackNote message={entry.codingFallback} />
+          ) : lines.length ? (
             <>
               <AnswerLines lines={lines} />
               {/* A past question: its example rows can only be in a final state

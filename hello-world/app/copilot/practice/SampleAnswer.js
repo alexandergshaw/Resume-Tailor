@@ -11,6 +11,7 @@ import { answerLines } from "@/lib/copilot/answerPoints";
 import { answerStatusMessage, visuallyHidden } from "@/lib/copilot/answerStatus";
 import AnswerLines from "../AnswerLines";
 import AnswerAids from "../AnswerAids";
+import CodeSolution, { CodingFallbackNote } from "../CodeSolution";
 import { TOUCH_TARGET_SX, WRAP_ROW_SX } from "@/app/theme/mobileSx";
 
 // G1: the toggleable sample answer for practice mode's current question.
@@ -115,6 +116,13 @@ export default function SampleAnswer({
   // renders it inside each line's own `<li>`.
   pageSources,
   grounding,
+  // N161: a detected coding question's worked solution
+  // ({ approach, language, code, complexity, edgeCases }), which REPLACES the
+  // spoken answer below -- see CodeSolution.js. `codingFallback` is the
+  // embedded engine's honest "no code here" marker string, rendered in the
+  // same slot. Both are undefined for every non-coding draft.
+  codingSolution,
+  codingFallback,
   error,
   isEmbedded,
   onToggle,
@@ -124,8 +132,9 @@ export default function SampleAnswer({
   const lines = answerLines(cues, points, pageSources);
   // AC-G1-11: only offered once a draft is actually on screen — not while
   // it's loading, not while hidden, and not in the error state (which has
-  // its own "Retry" action instead).
-  const canRegenerate = visible && status === "done" && lines.length > 0;
+  // its own "Retry" action instead). N161: a coding answer has no lines but
+  // IS a draft on screen, so it keeps the control.
+  const canRegenerate = visible && status === "done" && (lines.length > 0 || !!codingSolution);
 
   return (
     <Box sx={{ mt: 1.5 }}>
@@ -158,7 +167,12 @@ export default function SampleAnswer({
           mounted (idle → "") for the whole life of this card so only its
           TEXT changes from here on. */}
       <Box component="span" role="status" aria-live="polite" sx={visuallyHidden}>
-        {answerStatusMessage({ status, bulletCount: lines.length })}
+        {answerStatusMessage({
+          status,
+          bulletCount: lines.length,
+          hasCodingSolution: !!codingSolution,
+          hasCodingFallback: !codingSolution && !!codingFallback,
+        })}
       </Box>
 
       {visible ? (
@@ -217,7 +231,15 @@ export default function SampleAnswer({
             </Alert>
           ) : null}
 
-          {status === "done" && lines.length > 0 ? (
+          {/* N161: REPLACE, not augment -- AnswerLines is reachable only in the
+              else of the coding gate, and a coding card carries no resume
+              anchor, example project, page source or "Drafted by" caption
+              (D1): those are claims about a spoken answer. */}
+          {status === "done" && codingSolution ? (
+            <CodeSolution solution={codingSolution} buzzwords={buzzwords} />
+          ) : status === "done" && codingFallback ? (
+            <CodingFallbackNote message={codingFallback} />
+          ) : status === "done" && lines.length > 0 ? (
             <>
               <AnswerLines lines={lines} />
               <AnswerAids

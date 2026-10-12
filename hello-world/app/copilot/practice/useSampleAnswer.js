@@ -19,6 +19,7 @@ import {
   cachedSampleAnswerFor,
 } from "@/lib/copilot/sampleAnswerState";
 import { normalizeQuestion } from "@/lib/copilot/questions";
+import { codingFieldsOf } from "@/lib/copilot/answerGrounding";
 
 // Row 2 of the example-projects group is requested through a namespace probe
 // because a test file that stubs answerClient with only the exports it uses
@@ -255,9 +256,15 @@ export function useSampleAnswer({ question, profile, interviewType, applicationI
       codeLanguage: cl,
       mode: "answer",
     })
-      .then(({ points, cues, buzzwords, resumeAnchor, pageSources, grounding, projectExample }) => {
+      .then(({ points, cues, buzzwords, resumeAnchor, pageSources, grounding, projectExample, codingSolution, codingFallback }) => {
         if (genRef.current !== gen) return;
         const cleanPoints = Array.isArray(points) ? points : [];
+        // N161: a detected coding question answers with `codingSolution` (or
+        // the embedded engine's `codingFallback` marker) INSTEAD of `points`.
+        // Carried like `pageSources`, as an OUTPUT: it lands in state below and
+        // rides the cache write beneath it, and it is ABSENT (never null/{})
+        // for an ordinary answer. See codingFieldsOf.
+        const coding = codingFieldsOf({ codingSolution, codingFallback });
         // AC-K1: same defensive normalization `points` already gets — a
         // missing or malformed field must land in state as the empty shape,
         // so the render layer's "is there anything to show" checks stay
@@ -284,6 +291,10 @@ export function useSampleAnswer({ question, profile, interviewType, applicationI
           buzzwords: cleanBuzzwords,
           anchor: cleanAnchor,
           pageSources: cleanPageSources,
+          // Written explicitly (undefined when absent), not spread, so a
+          // previous draft's coding answer can never survive this one.
+          codingSolution: coding.codingSolution,
+          codingFallback: coding.codingFallback,
           projectExample: cleanExample,
           projectExampleLive: undefined,
           techTerms: undefined,
@@ -309,6 +320,11 @@ export function useSampleAnswer({ question, profile, interviewType, applicationI
           buzzwords: cleanBuzzwords,
           anchor: cleanAnchor,
           pageSources: cleanPageSources,
+          // N161: the coding answer rides this write too — it is the ONLY
+          // thing admitting a pointless coding entry (see cachedAnswerFor), so
+          // a write that dropped it would refetch on every reveal. Spread, so
+          // an ordinary entry carries no coding key at all.
+          ...coding,
           projectExample: cleanExample,
           grounding: cleanGrounding,
           profile: p,
@@ -421,7 +437,7 @@ export function useSampleAnswer({ question, profile, interviewType, applicationI
       codeLanguage: cl,
       mode: "answer",
     })
-      .then(({ points, cues, buzzwords, resumeAnchor, pageSources, grounding, projectExample }) => {
+      .then(({ points, cues, buzzwords, resumeAnchor, pageSources, grounding, projectExample, codingSolution, codingFallback }) => {
         // A newer queue (or a real `request`) has since started for a
         // different question — this response belongs to a question the
         // user has already moved past, so it writes nothing.
@@ -437,6 +453,11 @@ export function useSampleAnswer({ question, profile, interviewType, applicationI
           // pre-fetched silently while unrevealed must not read back with
           // its citations missing the moment it IS revealed.
           pageSources: Array.isArray(pageSources) ? pageSources : [],
+          // N161: `request`'s cache write carries the coding answer for the
+          // same reason, and this one matters more — a queued coding draft is
+          // only ever read back from this entry, and without the field it
+          // would not even be admitted (see cachedAnswerFor).
+          ...codingFieldsOf({ codingSolution, codingFallback }),
           // Same field `request`'s cache write carries, for the same reason: a
           // draft pre-fetched while unrevealed must still show its Row 1 the
           // moment it IS revealed (in a final state only -- see reveal).
@@ -497,6 +518,10 @@ export function useSampleAnswer({ question, profile, interviewType, applicationI
     buzzwords: active.buzzwords,
     anchor: active.anchor,
     pageSources: active.pageSources,
+    // N161: a detected coding question's worked solution, or the embedded
+    // engine's marker; undefined for an ordinary answer.
+    codingSolution: active.codingSolution,
+    codingFallback: active.codingFallback,
     // Rows 1 and 2 of the example-projects group; undefined when the response
     // carried none (no posting selected, or the embedded engine).
     projectExample: active.projectExample,

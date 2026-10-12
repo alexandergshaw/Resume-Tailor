@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef } from "react";
 import { normalizeQuestion } from "@/lib/copilot/questions";
-import { cachedAnswerFor, groundingFor } from "@/lib/copilot/answerGrounding";
+import { cachedAnswerFor, codingFieldsOf, groundingFor } from "@/lib/copilot/answerGrounding";
 import { getInterviewType } from "./useInterviewType";
 import { getCodeLanguage } from "./useCodeLanguage";
 // Namespace import, not named — see fetchAnswer's own comment for why.
@@ -313,6 +313,7 @@ export function useDraftAnswer({
           // the pool it described has changed. See finalProjectExample.
           const replayedExample = finalProjectExample(cached.projectExample);
           logExampleShown(logEvent, id, replayedExample);
+          const replayedCoding = codingFieldsOf(cached);
           setQuestions((prev) =>
             prev.map((it) =>
               it.id === id
@@ -347,6 +348,14 @@ export function useDraftAnswer({
                     // the same question was asked, with nothing on screen
                     // explaining why.
                     pageSources: Array.isArray(cached.pageSources) ? cached.pageSources : [],
+                    // N161: the coding answer is re-hydrated here INDEPENDENTLY
+                    // of the cache write below — a hit that dropped it would
+                    // pass the admission gate (the entry carries it) and still
+                    // ship a reveal with no solution on it. Written explicitly
+                    // (undefined when the entry has none), not spread, so the
+                    // previous draft's coding answer cannot survive a reuse.
+                    codingSolution: replayedCoding.codingSolution,
+                    codingFallback: replayedCoding.codingFallback,
                     projectExample: replayedExample,
                     // Never copied from the cache (it is not part of a cached
                     // entry): a stale pending or settled Row 2 from a previous
@@ -397,6 +406,12 @@ export function useDraftAnswer({
                 error: "",
                 cached: false,
                 pageSources: [],
+                // N161: a previous draft's coding answer goes with it, for the
+                // same reason `pageSources` does — a redraft (possibly under
+                // the other engine, which answers with the other of the two
+                // fields) must not show the old one while the new lands.
+                codingSolution: undefined,
+                codingFallback: undefined,
                 projectExample: undefined,
                 projectExampleLive: undefined,
                 // The tech buzzwords go with the answer they sat beside.
@@ -427,7 +442,17 @@ export function useDraftAnswer({
         );
       };
       try {
-        const { points, type, cues, buzzwords, resumeAnchor, pageSources, projectExample } = await fetchAnswer(
+        const {
+          points,
+          type,
+          cues,
+          buzzwords,
+          resumeAnchor,
+          pageSources,
+          projectExample,
+          codingSolution,
+          codingFallback,
+        } = await fetchAnswer(
           {
             question,
             context: buildContext(),
@@ -490,6 +515,14 @@ export function useDraftAnswer({
           // partial value; the `onPoints` callback above keeps carrying
           // ONLY `points`, unchanged, during the stream itself.
           pageSources: Array.isArray(pageSources) ? pageSources : [],
+          // N161: a detected coding question's worked solution (or the
+          // embedded engine's marker), which REPLACES `points` — the done
+          // frame carries it with no points at all. Spread, so an ordinary
+          // answer's aids (and therefore its cache entry and its card) carry
+          // no coding key; it is the entry's only admission signal when
+          // `points` is empty (see cachedAnswerFor). An OUTPUT, never part of
+          // the grounding key above.
+          ...codingFieldsOf({ codingSolution, codingFallback }),
           // Row 1 of the example-projects group, picked server-side from the
           // pre-warmed pool for THIS question. ABSENT (not defaulted) when the
           // server omitted it -- see projectExampleFromResponse. Like `anchor`,
@@ -507,7 +540,17 @@ export function useDraftAnswer({
         setQuestions((prev) =>
           prev.map((it) =>
             it.id === id && it.draftToken === token
-              ? { ...it, status: "done", points, ...aids, type: it.type || type }
+              ? {
+                  ...it,
+                  status: "done",
+                  points,
+                  ...aids,
+                  // Explicit as well as spread: `aids` omits the keys for an
+                  // ordinary answer, and the card must end up with them absent.
+                  codingSolution: aids.codingSolution,
+                  codingFallback: aids.codingFallback,
+                  type: it.type || type,
+                }
               : it,
           ),
         );

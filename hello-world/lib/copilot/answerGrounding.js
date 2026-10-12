@@ -97,7 +97,15 @@ export function sameGrounding(a, b) {
 //
 //   - nothing cached for this key at all;
 //   - the cached entry holds no usable points (an empty or malformed array
-//     would render as a blank answer that looks like a finished one);
+//     would render as a blank answer that looks like a finished one) AND
+//     carries no coding answer either — a detected coding question's answer
+//     is a worked `codingSolution` (or the embedded engine's `codingFallback`
+//     marker) that REPLACES the spoken points, so such an entry is
+//     deliberately pointless yet complete. Admitting it here is what lets
+//     both hooks' caches replay a coding answer instead of refetching it on
+//     every reveal. Those two fields only decide admission; they are outputs,
+//     never part of the grounding comparison below, so a language change is
+//     still a miss through `codeLanguage` alone;
 //   - the entry's OWN grounding (re-derived via groundingFor, so a raw
 //     entry that never recorded any of these fields normalizes to "not
 //     applicable" on every field rather than silently matching by
@@ -111,7 +119,25 @@ export function cachedAnswerFor(entry, grounding) {
   const points = Array.isArray(entry.points)
     ? entry.points.filter((p) => typeof p === "string" && p.trim())
     : [];
-  if (points.length === 0) return null;
+  if (points.length === 0 && !entry.codingSolution && !entry.codingFallback) return null;
   if (!sameGrounding(groundingFor(entry), grounding)) return null;
   return entry;
+}
+
+// N161: the coding answer a response carried, as the ONLY keys that should
+// ride a cache entry or a card — `codingSolution` (the AI engine's worked
+// { approach, language, code, complexity, edgeCases }) and/or `codingFallback`
+// (the embedded engine's honest "no code here" marker string). Both hooks
+// call this on a response (or on a cache entry being replayed) so a missing or
+// malformed value is DROPPED rather than defaulted: a non-coding answer gets
+// `{}` back, and its entry/card never sprouts a coding key, not even a
+// null/{}/"" one that a render check would then have to re-guard. This is the
+// same truthiness `cachedAnswerFor`'s admission gate above reads.
+export function codingFieldsOf(source) {
+  const out = {};
+  const solution = source?.codingSolution;
+  if (solution && typeof solution === "object") out.codingSolution = solution;
+  const fallback = source?.codingFallback;
+  if (typeof fallback === "string" && fallback) out.codingFallback = fallback;
+  return out;
 }

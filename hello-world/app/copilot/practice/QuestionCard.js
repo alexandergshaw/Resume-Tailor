@@ -58,6 +58,11 @@ export default function QuestionCard({
   // The tech-buzzwords row, straight through to SampleAnswer's `techTerms`.
   sampleTechTerms,
   sampleGrounding,
+  // N161: a detected coding question's worked solution (or the embedded
+  // engine's marker), straight through to SampleAnswer's `codingSolution` /
+  // `codingFallback` props, where it replaces the spoken answer.
+  sampleCodingSolution,
+  sampleCodingFallback,
   sampleError,
   isEmbedded,
   onToggleSample,
@@ -219,6 +224,8 @@ export default function QuestionCard({
           projectExampleLive={sampleProjectExampleLive}
           techTerms={sampleTechTerms}
           grounding={sampleGrounding}
+          codingSolution={sampleCodingSolution}
+          codingFallback={sampleCodingFallback}
           error={sampleError}
           isEmbedded={isEmbedded}
           onToggle={onToggleSample}

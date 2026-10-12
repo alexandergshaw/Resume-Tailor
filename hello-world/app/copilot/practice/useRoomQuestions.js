@@ -5,6 +5,7 @@ import { shouldTreatAsRoomQuestion } from "@/lib/copilot/roomQuestions";
 import { detectQuestion, normalizeQuestion } from "@/lib/copilot/questions";
 import { confirmQuestion } from "@/lib/copilot/detectClient";
 import { draftAnswer } from "@/lib/copilot/answerClient";
+import { codingFieldsOf } from "@/lib/copilot/answerGrounding";
 // Namespace import for Row 2 only, probed with `in` before use -- see
 // liveFetchAvailable below for why a named import cannot be used here.
 import * as answerClientModule from "@/lib/copilot/answerClient";
@@ -266,6 +267,11 @@ export function useRoomQuestions({ applicationId, profile, myTag, collecting, on
               status: "loading",
               error: "",
               draftToken: token,
+              // N161: a previous draft's coding answer goes with it -- a
+              // redraft may come back from the other engine, which answers
+              // with the other of the two fields, or as an ordinary answer.
+              codingSolution: undefined,
+              codingFallback: undefined,
               projectExample: undefined,
               projectExampleLive: undefined,
               techTerms: undefined,
@@ -274,7 +280,7 @@ export function useRoomQuestions({ applicationId, profile, myTag, collecting, on
       ),
     );
     try {
-      const { points, type, cues, buzzwords, resumeAnchor, pageSources, projectExample } = await draftAnswer({
+      const { points, type, cues, buzzwords, resumeAnchor, pageSources, projectExample, codingSolution, codingFallback } = await draftAnswer({
         question,
         context: "",
         profile: profileRef.current,
@@ -307,6 +313,12 @@ export function useRoomQuestions({ applicationId, profile, myTag, collecting, on
                 // siblings above — which knowledge-base page (if any) each
                 // point came from, rendered by AnswerLines via QuestionFeed.
                 pageSources: Array.isArray(pageSources) ? pageSources : [],
+                // N161: a detected coding question answers with a worked
+                // solution (or the embedded engine's marker) INSTEAD of
+                // points; QuestionFeed renders it. codingFieldsOf drops a
+                // missing or malformed value, so an ordinary answer's card
+                // never sprouts a coding key (same rule as the two other hooks).
+                ...codingFieldsOf({ codingSolution, codingFallback }),
                 projectExample: example,
                 // Row 2 starts below, after this write; never carried over.
                 projectExampleLive: undefined,
@@ -550,6 +562,8 @@ export function useRoomQuestions({ applicationId, profile, myTag, collecting, on
         buzzwords: [],
         anchor: null,
         pageSources: [],
+        codingSolution: undefined,
+        codingFallback: undefined,
         // The two example rows go with the answer they sat beside: a Row 2 still
         // pending would otherwise wait on a settle the token gate now drops.
         projectExample: undefined,

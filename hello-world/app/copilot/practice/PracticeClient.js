@@ -366,6 +366,8 @@ export default function PracticeClient({
         projectExampleLive: sampleAnswer.projectExampleLive,
         // The tech-buzzwords row, read off the entry like the two above.
         techTerms: sampleAnswer.techTerms,
+        codingSolution: sampleAnswer.codingSolution,
+        codingFallback: sampleAnswer.codingFallback,
         error: sampleAnswer.error,
       },
     ];
@@ -380,6 +382,7 @@ export default function PracticeClient({
     sampleAnswer.projectExample,
     sampleAnswer.projectExampleLive,
     sampleAnswer.techTerms,
+    sampleAnswer.codingSolution, sampleAnswer.codingFallback,
     sampleAnswer.error,
   ]);
 
@@ -810,6 +813,8 @@ export default function PracticeClient({
                 sampleProjectExampleLive={sampleAnswer.projectExampleLive}
                 sampleTechTerms={sampleAnswer.techTerms}
                 sampleGrounding={sampleAnswer.grounding}
+                sampleCodingSolution={sampleAnswer.codingSolution}
+                sampleCodingFallback={sampleAnswer.codingFallback}
                 sampleError={sampleAnswer.error}
                 isEmbedded={isEmbedded}
                 onToggleSample={sampleAnswer.toggle}

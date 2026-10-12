@@ -60,6 +60,14 @@ export function emptySampleAnswer() {
     // quiet "no citations" rather than a length-mismatch a reviewer could
     // mistake for a real bug.
     pageSources: [],
+    // N161: a detected coding question's worked solution
+    // ({ approach, language, code, complexity, edgeCases }) or, on the
+    // embedded engine, the honest `codingFallback` marker string. Both are
+    // OUTPUTS of the draft that REPLACE `points`, and both start ABSENT
+    // (undefined), never `{}`/`null`/"": a non-coding draft must keep an
+    // untouched slot so no coding view ever renders beside an ordinary answer.
+    codingSolution: undefined,
+    codingFallback: undefined,
     // { resume: boolean, coverLetter: boolean, pages: boolean } once a draft
     // lands — what the draft was actually grounded in. Null until then.
     //
@@ -177,7 +185,9 @@ export function needsRedraft(active, profile, interviewType, applicationId, code
 //
 //   - nothing cached for this question at all;
 //   - the cached entry holds no usable points (an empty or malformed array
-//     would render as a blank answer that looks like a finished one);
+//     would render as a blank answer that looks like a finished one) and no
+//     coding answer to stand in for them (answerGrounding.js's cachedAnswerFor
+//     admits a pointless entry that carries a codingSolution/codingFallback);
 //   - the entry was built from a different prep profile, interview type, or
 //     application than the reveal is asking about. That is exactly
 //     needsRedraft's "done" comparison above, applied to a cache entry
@@ -231,6 +241,12 @@ export function cachedSampleAnswerFor(entry, question, profile, interviewType, a
     // against an entry cached before the field existed, or a malformed
     // value on the entry.
     pageSources: Array.isArray(hit.pageSources) ? hit.pageSources : [],
+    // N161: the coding answer round-trips the cache like `pageSources`, but
+    // as the entry's own object (never re-derived), and ABSENT stays absent —
+    // an entry cached without one resolves to undefined here, not an empty
+    // value. Neither field is part of the grounding comparison above.
+    codingSolution: hit.codingSolution,
+    codingFallback: hit.codingFallback,
     grounding: hit.grounding || null,
     error: "",
     profile,

@@ -44,9 +44,19 @@
 // draft an answer."). The Alert is the single source of truth for an error
 // announcement; this region just stays silent so it can never repeat or
 // contradict it.
-export function answerStatusMessage({ status, bulletCount } = {}) {
+//
+// N161: a done CODING answer carries no spoken points, so `bulletCount` is 0 and
+// the sentence above would read "Answer ready, 0 points" -- a count that is
+// true of the points list and misleading about the answer. A caller that
+// renders a worked code solution passes `hasCodingSolution` and hears that
+// instead; the embedded engine's honest "no code here" marker passes
+// `hasCodingFallback` and hears that it is unavailable. Both default off, so
+// every existing caller's output is byte for byte what it was.
+export function answerStatusMessage({ status, bulletCount, hasCodingSolution, hasCodingFallback } = {}) {
   if (status === "loading") return "Drafting an answer";
   if (status === "done") {
+    if (hasCodingSolution) return "Code solution ready";
+    if (hasCodingFallback) return "Code solution unavailable on this engine";
     const n = Number.isFinite(bulletCount) && bulletCount > 0 ? bulletCount : 0;
     return `Answer ready, ${n} point${n === 1 ? "" : "s"}`;
   }

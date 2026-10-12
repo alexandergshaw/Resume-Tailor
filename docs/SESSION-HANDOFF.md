@@ -7,7 +7,9 @@ _Last updated: 2026-10-07 by the orchestrator._
 ---
 
 ## 1. In-flight uncommitted work (the dirty tree)
-- About to commit N158 (practice bullet-detail logging) + N159 (ledger.md history extraction) — full suite 20042 green. N161.ac.r1.md also rides this commit (planning doc). NEW FEATURE N161 (coding-answer detection) is mid-loop: AC r1 done + under adversarial check; its decisions D1–D6 ruled (see §2). N160 (last-used-app restore + stale eslint disable) still open.
+- About to commit N161 (coding-answer detection + worked solutions, live + practice) — full suite 20179 green. COMPLETES N161. Nothing pending after.
+- **FLAG:** app/copilot/practice/PracticeClient.js is at EXACTLY the 950-line ceiling (949/950, 1 line slack) — the next practice edit needs an extraction first. File as a follow-up if touched.
+- N160 (last-used-app restore + stale eslint disable) remains the only fresh low item open.
 - (prior) N157 SC-D committed earlier: (D-a studyPlanKnobs + copy; D-b StudyPlanControls/useStudyKnobs + 4 C-c wiring edits + notice.gemini egress append + census reconcile + authorized pin updates). Full suite 20036 green. This COMPLETES N157. Nothing else pending after.
 
 ## 2. Mid-flight waves / active dispatches
