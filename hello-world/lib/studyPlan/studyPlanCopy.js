@@ -43,7 +43,7 @@ export const STUDY_COPY = freezeDeep({
   // What the engine choice sends where, shown before a plan is created.
   notice: {
     gemini:
-      "Creating a plan searches the web for this company. Its name, the job title, the location and the posting text are sent to Google (Gemini) to research it, and that research is sent to Gemini again to write the plan. Your resume and cover letter are not sent. The plan and your progress are saved to your account.",
+      "Creating a plan searches the web for this company. Its name, the job title, the location and the posting text are sent to Google (Gemini) to research it, and that research is sent to Gemini again to write the plan. Your resume and cover letter are not sent. The plan and your progress are saved to your account. Any focus or skip choices you set are sent to Gemini with it.",
     embedded:
       "The embedded engine is on, so nothing is sent to an AI provider. It can only use company research you already have saved.",
   },
@@ -127,5 +127,39 @@ export const STUDY_COPY = freezeDeep({
     switchEngine: "Switch the engine in the top bar to Gemini, then rebuild.",
     armedAnnouncement:
       "Rebuilding writes new cards, so most of your progress on this plan will not carry over. Activate again to confirm.",
+  },
+
+  // The customization controls (N157 SC-D): the disclosure labels, the three
+  // controls, the closed-panel summary pieces and the per-engine captions.
+  // `<max>` is the day cap, filled by the caller from MAX_PLAN_DAYS so a retuned
+  // cap never leaves a stale number in the copy.
+  knobs: {
+    disclosureCreate: "Customize your plan",
+    disclosureOutline: "Plan settings",
+    summaryDays: "<n> days",
+    summaryOneDay: "1 day",
+    summaryCustomMix: "Custom mix",
+    summaryAllAreas: "All areas",
+    summaryAreas: "<focus> focus, <skipped> skipped",
+    daysLegend: "Days until your interview",
+    daysHelper: "Between 1 and <max>. Sizes the plan to fit.",
+    daysError: "Enter a whole number from 1 to <max>.",
+    mixLegend: "Mix of new and review cards",
+    mixMostlyNew: "Mostly new",
+    mixEven: "Even mix",
+    mixMostlyReview: "Mostly review",
+    mixCaption: "About <new> percent new and <review> percent review.",
+    mixCustomCaption: "Custom mix: <new> percent new.",
+    areasLegend: "Areas",
+    areasHelper: "Focus adds extra cards on an area. Skip leaves it out.",
+    focus: "Focus",
+    skip: "Skip",
+    lastIncludedReason: "At least one area stays included.",
+    suggestion: "You missed cards in: <list>.",
+    suggestionButton: "Focus on these",
+    dirtyNote: "Settings changed. Rebuild the plan to apply them.",
+    embeddedCaption:
+      "The embedded engine ignores focus areas and the number of days. It does use the mix and skipped areas.",
+    geminiCaption: "Gemini is asked to follow these; the result can vary.",
   },
 });

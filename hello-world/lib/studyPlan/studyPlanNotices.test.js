@@ -51,6 +51,19 @@ describe("The notices make the egress claim the privacy spec requires (behaviour
     expect(notice).toContain("Your resume and cover letter are not sent.");
   });
 
+  it("PD-SD-3 (N157 SC-D): the gemini notice also names the focus/skip choices as egress", () => {
+    // RULED IN for SC-D: the knob choices (area labels) leave the browser with a
+    // Gemini build, so the egress notice must say so. Asserted through the real
+    // builder against the behaviour the privacy spec now requires -- a build that
+    // still ships the OLD notice (which named only the posting + research) reds.
+    // RED on HEAD until the implementer appends the sentence to STUDY_COPY.notice.gemini.
+    const notice = buildStudyPlanNotice({ engine: "gemini" });
+    expect(notice).toContain("Any focus or skip choices you set are sent to Gemini with it.");
+    // CONTROL: the egress sentence is Gemini-only; the embedded notice (nothing
+    // leaves) must NOT carry it, or the over-fire direction would be wrong.
+    expect(buildStudyPlanNotice({ engine: "embedded" })).not.toContain("sent to Gemini with it");
+  });
+
   it("the embedded notice states NOTHING is sent to an AI provider -- and is NOT the gemini notice (over-fire control)", () => {
     const embedded = buildStudyPlanNotice({ engine: "embedded" });
     expect(embedded).toContain("nothing is sent to an AI provider");

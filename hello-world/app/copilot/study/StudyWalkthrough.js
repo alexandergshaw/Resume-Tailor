@@ -38,6 +38,8 @@ import useStudyWalkthrough from "./useStudyWalkthrough";
 //   onBuild         (intent) => void; OPTIONAL. Absent means no rebuild path
 //                   exists, so no rebuild or remedy control renders anywhere
 //   buildBusy       disables those controls while a build runs
+//   settings        optional { panel, dirty, blockedReason } (N157 SC-D), passed
+//                   through to the outline untouched; absent, nothing renders
 //   now             optional () => ISO string; the clock for `revealedAt`
 //
 // COLD REVEAL. The answer text is not in the DOM until "Show answer" is
@@ -200,6 +202,7 @@ function WalkthroughBody({
   engine,
   onBuild,
   buildBusy,
+  settings,
   now,
 }) {
   const clock = typeof now === "function" ? now : defaultNow;
@@ -267,6 +270,7 @@ function WalkthroughBody({
           onBuild={onBuild}
           buildBusy={buildBusy}
           onJump={walk.onJump}
+          settings={settings}
         />
       </Stack>
     </Stack>
@@ -284,6 +288,7 @@ export default function StudyWalkthrough({
   engine,
   onBuild,
   buildBusy,
+  settings,
   now,
 }) {
   const cards = flattenPlan(plan);
@@ -301,6 +306,7 @@ export default function StudyWalkthrough({
       engine={engine}
       onBuild={onBuild}
       buildBusy={buildBusy}
+      settings={settings}
       now={now}
     />
   );

@@ -21,12 +21,12 @@ Current pinned values, as of the last entry in each section:
 | `ALLOWED_UNREACHABLE_MODULES.length`        | 14     |
 | `UNWIRED_MODULES` (exact list of 5 files)   | 5      |
 | `ORPHAN_EXPORTS.length`                     | 65     |
-| `TEST_REFERENCED.length` (rule TR-1)        | 441    |
-| `UNUSED_IN_SHIPPING_MODULES.length`         | 506    |
+| `TEST_REFERENCED.length` (rule TR-1)        | 444    |
+| `UNUSED_IN_SHIPPING_MODULES.length`         | 509    |
 
 The identity that ties the last three together, and that the test asserts
 directly, is `UNUSED_IN_SHIPPING_MODULES = TEST_REFERENCED + ORPHANS`
-(441 + 65 = 506).
+(444 + 65 = 509).
 
 ---
 
@@ -179,6 +179,24 @@ the nine files this change created, not a separate run. This change moves symbol
 as well: TR-1 438 -> 441 (section 4), total 503 -> 506 (section 5). ORPHAN_EXPORTS
 unmoved (section 3); ALLOWED_UNREACHABLE_MODULES stays 14. The five that remain are the
 N49 modules, each awaiting its own wiring step.
+
+5 -> 5 (N157 SC-D, D-a + D-b reconciled together): NO line added and none removed, measured
+with the sweep's own scan over the finished tree (19 computed unreachable = ALLOWED 14 +
+UNWIRED 5, identical set-for-set to the tree at HEAD, 19). The D-a pure model has no line
+here: by the time the sweep was run over this tree its importer (the D-b shell) was already
+in place, so the module was never measured unreachable. The three NEW modules are all
+reachable from birth, by name:
+lib/studyPlan/studyPlanKnobs.js (imported by study/StudyPlanClient.js for areaOptions,
+isBuildableKnobs and suggestFocusAreas, by study/StudyPlanControls.js for the setters and
+the summary, and by study/useStudyKnobs.js for knobsEqual), app/copilot/study/useStudyKnobs.js
+and app/copilot/study/StudyPlanControls.js (both imported by StudyPlanClient.js, which
+PracticeSurface.js mounts). The edited modules (StudyCreatePanel.js, StudyPlanOverview.js,
+StudyWalkthrough.js, StudyPlanClient.js, studyPlanCopy.js) were already reachable. THIS change
+does move symbol buckets, because lib/tracking/applicationDigest.js#DIGEST_SECTIONS gained its
+first shipping importer (StudyPlanClient.js, which passes it to the model as seedAreas) and
+the new module exports are classified per symbol: TR-1 441 -> 444 (section 4), total
+506 -> 509 (section 5). ORPHAN_EXPORTS unmoved (section 3); ALLOWED_UNREACHABLE_MODULES stays
+14.
 ```
 
 ---
@@ -270,11 +288,15 @@ newly classified study-plan modules exports an orphan: every export with no ship
 importer is imported by a test and lands in TR-1 (section 4). Near miss:
 studyPlanGenerate.js#buildEmbeddedStudyPlan, called only in-module until
 studyPlanGenerate.embedded.test.js imported it; without it, the 66th entry here.
+65 -> 65 (N157 SC-D): UNMOVED, set-for-set identical to the tree at HEAD, measured with the
+sweep's own scan. None of the three new modules (studyPlanKnobs.js, useStudyKnobs.js,
+StudyPlanControls.js) exports an orphan: the four studyPlanKnobs.js exports with no shipping
+importer are all read by name from studyPlanKnobs.test.js and land in TR-1 (section 4).
 ```
 
 ---
 
-## 4. TEST_REFERENCED, rule TR-1 (pinned at 441)
+## 4. TEST_REFERENCED, rule TR-1 (pinned at 444)
 
 Exports unused by shipping code that at least one `.test.js` imports BY NAME.
 A raise is a review event: check the new export is a helper being pinned, not
@@ -899,11 +921,46 @@ studyPlanBuildClient.js#requestStudyPlanBuild; studyPlanNotices.js#buildStudyPla
 #fillStudyCopy; studyWalkthroughModel.js and studyPlanCopy.js, every export). BUILD_INTENTS
 is an object whose members StudyPlanClient.js names, which is what keeps it out of this list.
 ORPHAN_EXPORTS unmoved at 65; ALLOWED_UNREACHABLE_MODULES / UNWIRED_MODULES at 14 / 5.
+N157 SC-D: 441 -> 444 (+4, -1): the customization controls (D-a pure model + D-b hook,
+panel and shell wiring). Measured with the sweep's own scan run over two trees and the TR-1
+key sets diffed: the tree as it stands, and the committed HEAD tree extracted with
+`git archive` into a scratch directory (that run reproduces 441 / 65 / 506 and 19 unreachable
+modules exactly, which is what makes the diff trustworthy). The symmetric difference is the
+five names below, ORPHAN_EXPORTS is identical set-for-set, and the unreachable-module set is
+identical set-for-set.
+IN (+4), by name, each read only by its own module or a test:
+  lib/studyPlan/studyPlanKnobs.js#MIN_PLAN_DAYS -- the lower bound of the days field, used by
+    setDaysUntil in-module; pinned to 1 by studyPlanKnobs.test.js;
+  lib/studyPlan/studyPlanKnobs.js#MAX_AREA_OPTIONS -- the row cap of the Areas list, used by
+    areaOptions in-module; pinned as a positive integer and exercised by the cap rows of
+    studyPlanKnobs.test.js;
+  lib/studyPlan/studyPlanKnobs.js#MAX_AREA_LABEL -- the label slice, used by labelOf in-module;
+    same suite, same reason;
+  lib/studyPlan/studyPlanKnobs.js#areaOf -- the topic-to-area-label helper, called by areaOptions
+    and suggestFocusAreas in-module; oracle rows 1-2 (and the labels-not-ids canary) of
+    studyPlanKnobs.test.js.
+  All four are the retunable caps and one pure helper that a unit suite reads directly, the
+  widened-surface shape this bucket exists to count; none is a feature built and never
+  connected (the controls' own call sites use the other fourteen exports, below).
+OUT (-1), by name, gaining its first shipping importer:
+  lib/tracking/applicationDigest.js#DIGEST_SECTIONS -- recorded when the model was designed as
+    "exported, but its only importers are its own file and its test". app/copilot/study/
+    StudyPlanClient.js now imports it and passes it to areaOptions as `seedAreas`, so the
+    pre-first-plan Areas list is the seven digest headings (the pure model deliberately does
+    not import it).
+NOT in either list, because they have shipping importers from birth: studyPlanKnobs.js's other
+fourteen exports (AREA_STATE, MAX_PLAN_DAYS, RATIO_PRESETS, areaState, setAreaState,
+setNewReviewRatio, ratioPresetId, setDaysUntil, knobEffects and summarizeKnobs, imported by
+study/StudyPlanControls.js; areaOptions, isBuildableKnobs and suggestFocusAreas, by
+study/StudyPlanClient.js; knobsEqual, by study/useStudyKnobs.js), and the default exports of
+useStudyKnobs.js and StudyPlanControls.js (StudyPlanClient.js). studyPlanCopy.js gained no
+export (the knobs group and the notice.gemini sentence are strings inside STUDY_COPY).
+ORPHAN_EXPORTS unmoved at 65; ALLOWED_UNREACHABLE_MODULES / UNWIRED_MODULES unmoved at 14 / 5.
 ```
 
 ---
 
-## 5. UNUSED_IN_SHIPPING_MODULES total (pinned at 506)
+## 5. UNUSED_IN_SHIPPING_MODULES total (pinned at 509)
 
 The sum of the two halves above (`TEST_REFERENCED + ORPHANS`); the test also
 asserts that identity directly, so the split is pinned and not only the total.
@@ -1123,4 +1180,13 @@ suites (the timing constants, the test-only resets, the wrapped POST) plus four 
 helpers that got their promised consumers, and not a feature built and never wired. It
 moves now because the four study-plan modules on section 2's list became reachable, and a
 wholly unreachable module's exports are in neither half. TEST_REFERENCED 441 + ORPHANS 65.
+N157 SC-D: 506 -> 509 (TEST_REFERENCED's +4 -1 = +3, the five symbols named at section 4: IN
+studyPlanKnobs.js#MIN_PLAN_DAYS, #MAX_AREA_OPTIONS, #MAX_AREA_LABEL and #areaOf; OUT
+applicationDigest.js#DIGEST_SECTIONS, gaining its first shipping importer in StudyPlanClient.js;
+ORPHAN_EXPORTS unmoved at 65, section 3, identical set-for-set). The total moving by exactly
+the TR-1 half's net +3 with the orphan half frozen is what says this was a widened export
+surface (three retunable caps and one pure helper, read by name by studyPlanKnobs.test.js) plus
+one widened constant that got its promised consumer, and not a feature built and never wired.
+The three new modules add no unreachable file (section 2), so no export sits in neither half.
+TEST_REFERENCED 444 + ORPHANS 65.
 ```

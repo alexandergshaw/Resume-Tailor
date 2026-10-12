@@ -11,10 +11,14 @@ import { bindStudyPlan } from "@/lib/studyPlan/studyPlanBrowser";
 import { BUILD_INTENTS, run, skipsResearch } from "@/lib/studyPlan/studyPlanBuild";
 import { requestStudyPlanBuild } from "@/lib/studyPlan/studyPlanBuildClient";
 import { STUDY_COPY } from "@/lib/studyPlan/studyPlanCopy";
+import { areaOptions, isBuildableKnobs, suggestFocusAreas } from "@/lib/studyPlan/studyPlanKnobs";
 import { fillStudyCopy } from "@/lib/studyPlan/studyPlanNotices";
+import { DIGEST_SECTIONS } from "@/lib/tracking/applicationDigest";
 import PostingPicker from "../PostingPicker";
 import { BuildSteps, CreateStep, FailureStep, RebuildFailedAlert } from "./StudyCreatePanel";
+import StudyPlanControls from "./StudyPlanControls";
 import StudyWalkthrough from "./StudyWalkthrough";
+import useStudyKnobs from "./useStudyKnobs";
 import useStudyPlanBuild from "./useStudyPlanBuild";
 import useStudyPlanRecord from "./useStudyPlanRecord";
 
@@ -28,7 +32,7 @@ import useStudyPlanRecord from "./useStudyPlanRecord";
 //   S0  no application        a disabled Create and its visible reason
 //   S1  loading the record    (the status line says so; no body)
 //   S2  load failed           the error and Try again
-//   S3  no plan yet           intro, egress notice, Create
+//   S3  no plan yet           intro, egress notice, the customize panel, Create
 //   S4  building              the two-step list (above the plan, on a rebuild)
 //   S5  build failed          the reason, Try again, and for a failed research
 //                             the "general plan" way out
@@ -83,18 +87,39 @@ export default function StudyPlanClient() {
   const { record, hasPlan, planKey, saveError, researchedAt, reload } = useStudyPlanRecord(applicationId, binding);
   const { build, busy } = useStudyPlanBuild(applicationId);
 
+  // The customization draft (N157 SC-D). `effective` is what EVERY build sends, on
+  // every intent: the draft over the stored knobs over the defaults, always an
+  // object. The area list is the plan's own areas, or the digest headings before a
+  // plan exists (the model does not import them; this shell is where they come in).
+  const { effective, dirty, setKnobs } = useStudyKnobs(applicationId, record.knobs);
+  const options = areaOptions({ plan: record.plan, knobs: effective, seedAreas: DIGEST_SECTIONS });
+  const suggestions = suggestFocusAreas({ plan: record.plan, seen: record.progress?.seen });
+  const blockedReason = isBuildableKnobs(effective, options) ? null : STUDY_COPY.knobs.lastIncludedReason;
+
   const startBuild = (intent) => {
     if (!applicationId || busy) return;
-    run(
-      { applicationId, engine, intent, knobs: record.knobs ?? undefined, hadGoodPlan: hasPlan },
-      { ...STATIC_EFFECTS, reload },
-    );
+    run({ applicationId, engine, intent, knobs: effective, hadGoodPlan: hasPlan }, { ...STATIC_EFFECTS, reload });
   };
   const retryBuild = () => startBuild(build.intent ?? BUILD_INTENTS.CREATE);
   const researchFailed = build.kind === "research-failed" || build.kind === "research-error";
 
   const loading = applicationId !== "" && (!record.loaded || record.loading);
   const status = statusFor({ build, company: posting?.company, loading: loading && !hasPlan });
+
+  // ONE panel element for both mounts (the create step and the open outline); the
+  // key drops its local state (open, typed days) when the application changes.
+  const controls = applicationId ? (
+    <StudyPlanControls
+      key={applicationId}
+      label={hasPlan ? STUDY_COPY.knobs.disclosureOutline : STUDY_COPY.knobs.disclosureCreate}
+      knobs={effective}
+      onChange={setKnobs}
+      options={options}
+      suggestions={suggestions}
+      engine={engine}
+      disabled={busy}
+    />
+  ) : null;
 
   let body;
   if (!applicationId) {
@@ -123,6 +148,7 @@ export default function StudyPlanClient() {
           engine={engine}
           onBuild={startBuild}
           buildBusy={busy}
+          settings={{ panel: controls, dirty: hasPlan && dirty, blockedReason }}
         />
       </Stack>
     );
@@ -149,6 +175,8 @@ export default function StudyPlanClient() {
         engine={engine}
         onCreate={() => startBuild(BUILD_INTENTS.CREATE)}
         reasonId={reasonId}
+        settings={controls}
+        createBlockedReason={blockedReason}
       />
     );
   }

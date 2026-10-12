@@ -30,7 +30,11 @@ import { BREAK_LONG_WORDS_SX, TOUCH_TARGET_SX, WRAP_ROW_SX } from "@/app/theme/m
 const SECONDARY_TEXT_SX = { color: "var(--text-secondary)", ...BREAK_LONG_WORDS_SX };
 const ACTION_ROW_SX = { alignItems: "center", columnGap: 1.5, ...WRAP_ROW_SX };
 
-export function CreateStep({ posting, engine, onCreate, reasonId }) {
+// `settings` (optional ReactNode) is the customization panel (N157 SC-D); it sits
+// between the egress notice and Create. `createBlockedReason` (optional string)
+// disables Create and is shown as a visible caption wired by aria-describedby,
+// the same pattern as the disabled S0 Create. Both absent renders as before.
+export function CreateStep({ posting, engine, onCreate, reasonId, settings, createBlockedReason }) {
   if (!posting) {
     return (
       <Stack spacing={1} sx={{ alignItems: "flex-start" }}>
@@ -54,9 +58,21 @@ export function CreateStep({ posting, engine, onCreate, reasonId }) {
       <Typography variant="body2" sx={SECONDARY_TEXT_SX}>
         {buildStudyPlanNotice({ engine })}
       </Typography>
-      <Button variant="contained" onClick={onCreate} sx={TOUCH_TARGET_SX}>
+      {settings}
+      <Button
+        variant="contained"
+        onClick={onCreate}
+        disabled={Boolean(createBlockedReason)}
+        aria-describedby={createBlockedReason ? reasonId : undefined}
+        sx={TOUCH_TARGET_SX}
+      >
         {STUDY_COPY.picker.createButton}
       </Button>
+      {createBlockedReason ? (
+        <Typography id={reasonId} variant="body2" sx={SECONDARY_TEXT_SX}>
+          {createBlockedReason}
+        </Typography>
+      ) : null}
     </Stack>
   );
 }

@@ -203,6 +203,15 @@ export const ALLOWED_UNREACHABLE_MODULES = [
 // exports of a now-reachable module are classified per symbol: TR-1 438 -> 441
 // (+7, -4), total 503 -> 506, ORPHAN_EXPORTS unmoved at 65. Every moved symbol is
 // named in exportReachability.ledger.md, sections 4 and 5.
+//
+// N157 SC-D (the customization controls) added NO line here and removed none: the
+// pure model lib/studyPlan/studyPlanKnobs.js and the D-b hook and panel
+// (app/copilot/study/useStudyKnobs.js, StudyPlanControls.js) are all imported by
+// study/StudyPlanClient.js, so they are reachable from birth, and the computed
+// unreachable set is unchanged (14 + 5). The symbol buckets did move: TR-1 441 -> 444
+// (+4 studyPlanKnobs.js test-pinned caps and helper, -1 applicationDigest.js#DIGEST_SECTIONS
+// gaining StudyPlanClient.js as its first shipping importer), total 506 -> 509, ORPHAN_EXPORTS
+// unmoved at 65. Named in exportReachability.ledger.md, sections 2, 4 and 5.
 export const UNWIRED_MODULES = [
   {
     file: "lib/interviewPrep/prepLog.js",

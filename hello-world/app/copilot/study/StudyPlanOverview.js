@@ -25,6 +25,12 @@ import { BREAK_LONG_WORDS_SX, TOUCH_TARGET_SX, WRAP_ROW_SX } from "@/app/theme/m
 // callback means no rebuild path exists, so neither the button nor the egress
 // notice that explains it renders.
 //
+// SETTINGS (N157 SC-D). An optional `settings = { panel, dirty, blockedReason }`
+// from the shell: `panel` is the customization controls, rendered above the egress
+// notice; `dirty` shows the "Settings changed" note beside Rebuild (a knob change
+// never rebuilds by itself, so the note is how the learner knows it is waiting);
+// `blockedReason` disables Rebuild with a visible reason. Absent, nothing changes.
+//
 // REBUILD CONFIRMATION (the N156 armed-button shape). Rebuilding writes new
 // cards and a rebuilt plan re-words nearly every card, so progress mostly does
 // not carry over. With nothing done there is nothing to lose and one click
@@ -87,11 +93,12 @@ function TopicRow({ topic, slot, unsourced, onJump }) {
   );
 }
 
-export default function StudyPlanOverview({ plan, summary, engine, onBuild, buildBusy, onJump }) {
+export default function StudyPlanOverview({ plan, summary, engine, onBuild, buildBusy, onJump, settings }) {
   const [open, setOpen] = useState(false);
   const [armed, setArmed] = useState(false);
   const armTimerRef = useRef(null);
   const panelId = useId();
+  const blockedId = useId();
 
   useEffect(
     () => () => {
@@ -101,11 +108,12 @@ export default function StudyPlanOverview({ plan, summary, engine, onBuild, buil
   );
 
   const canBuild = typeof onBuild === "function";
+  const blockedReason = settings?.blockedReason || null;
   const hasProgress = summary.done > 0;
   const unsourced = new Set(unsourcedTopicIds(plan));
 
   const onRebuildClick = () => {
-    if (!canBuild || buildBusy === true) return;
+    if (!canBuild || buildBusy === true || blockedReason !== null) return;
     if (!hasProgress) {
       onBuild(REBUILD_INTENT);
       return;
@@ -163,17 +171,29 @@ export default function StudyPlanOverview({ plan, summary, engine, onBuild, buil
             ))}
             {canBuild ? (
               <Stack spacing={1}>
+                {settings?.panel ?? null}
                 <Typography variant="body2" sx={SECONDARY_TEXT_SX}>
                   {notice}
                 </Typography>
+                {settings?.dirty ? (
+                  <Typography variant="body2" sx={SECONDARY_TEXT_SX}>
+                    {STUDY_COPY.knobs.dirtyNote}
+                  </Typography>
+                ) : null}
                 <Button
                   variant="outlined"
                   onClick={onRebuildClick}
-                  disabled={buildBusy === true}
+                  disabled={buildBusy === true || blockedReason !== null}
+                  aria-describedby={blockedReason !== null ? blockedId : undefined}
                   sx={{ ...TOUCH_TARGET_SX, alignSelf: "flex-start" }}
                 >
                   {armed ? STUDY_COPY.remedy.confirmRebuild : STUDY_COPY.remedy.rebuildPlan}
                 </Button>
+                {blockedReason !== null ? (
+                  <Typography id={blockedId} variant="body2" sx={SECONDARY_TEXT_SX}>
+                    {blockedReason}
+                  </Typography>
+                ) : null}
                 {armed ? (
                   <Typography variant="body2" sx={SECONDARY_TEXT_SX}>
                     {STUDY_COPY.remedy.armedAnnouncement}

@@ -64,7 +64,13 @@ const PINNED_STATIC = [
   "Pick a tracked application first. The plan is built from that company's research.",
   "Create study plan",
   // create / notice
-  "Creating a plan searches the web for this company. Its name, the job title, the location and the posting text are sent to Google (Gemini) to research it, and that research is sent to Gemini again to write the plan. Your resume and cover letter are not sent. The plan and your progress are saved to your account.",
+  // PD-SD-3 (N157 SC-D, RULED IN): the Gemini egress notice gains ONE appended
+  // sentence naming the focus/skip choices as egress. This is an AUTHORIZED
+  // pinned-string change (brief: "UPDATE the landed verbatim pins ... to the NEW
+  // notice.gemini"); the previous string (ending "... saved to your account.")
+  // is deliberately replaced here, not kept alongside, so a build that still
+  // ships the OLD under-stating notice reds this pin.
+  "Creating a plan searches the web for this company. Its name, the job title, the location and the posting text are sent to Google (Gemini) to research it, and that research is sent to Gemini again to write the plan. Your resume and cover letter are not sent. The plan and your progress are saved to your account. Any focus or skip choices you set are sent to Gemini with it.",
   "The embedded engine is on, so nothing is sent to an AI provider. It can only use company research you already have saved.",
   // build steps / status
   "Researching the company and the interview process",
