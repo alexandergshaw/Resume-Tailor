@@ -40,6 +40,14 @@ function callExpression(src, marker) {
   return src.slice(start);
 }
 
+// The names destructured from `useApplicationProjectPool(...)` (the target of
+// the `const { ... } =`), order-independent. A destructure target has no nested
+// braces, so `[^}]*` captures exactly the names.
+function poolDestructureNames(src) {
+  const m = src.match(/const\s*\{([^}]*)\}\s*=\s*useApplicationProjectPool\(/);
+  return m ? m[1] : "";
+}
+
 const CLIENT = read("app/copilot/CopilotClient.js");
 const PRACTICE = read("app/copilot/practice/PracticeClient.js");
 const LIVE_SESSION = read("app/copilot/useLiveSession.js");
@@ -81,7 +89,13 @@ describe("live mode: CopilotClient relays noteRowOneStatus into the drafts", () 
   });
 
   it("points the relay at the pool hook's noteRowOneStatus, after both exist", () => {
-    expect(CLIENT).toMatch(/const \{ noteRowOneStatus \} = useApplicationProjectPool\(/);
+    // N145 Wave B: the destructure now takes THREE names -- regenerateOne and
+    // prewarmingIds are USED (the Try again retry + its in-flight state), no
+    // longer discarded. Order-independent so a reorder is not a false red.
+    const names = poolDestructureNames(CLIENT);
+    expect(names).toMatch(/\bnoteRowOneStatus\b/);
+    expect(names).toMatch(/\bregenerateOne\b/);
+    expect(names).toMatch(/\bprewarmingIds\b/);
     expect(CLIENT).toMatch(/useBindRowOneStatus\(bindRowOneStatus, noteRowOneStatus\);/);
     expect(indexOfCode(CLIENT, "useRowOneStatusRelay();")).toBeLessThan(indexOfCode(CLIENT, "useLiveSession("));
     expect(indexOfCode(CLIENT, "useApplicationProjectPool(")).toBeLessThan(indexOfCode(CLIENT, "useBindRowOneStatus("));
@@ -97,7 +111,11 @@ describe("live mode: CopilotClient relays noteRowOneStatus into the drafts", () 
 describe("practice mode: PracticeClient relays noteRowOneStatus into both producers", () => {
   it("creates the stable relay and points it at the pool hook's noteRowOneStatus, after both exist", () => {
     expect(PRACTICE).toMatch(/const \{ onRowOneStatus, bindRowOneStatus \} = useRowOneStatusRelay\(\);/);
-    expect(PRACTICE).toMatch(/const \{ noteRowOneStatus \} = useApplicationProjectPool\(/);
+    // N145 Wave B: same three-name destructure as live mode above.
+    const names = poolDestructureNames(PRACTICE);
+    expect(names).toMatch(/\bnoteRowOneStatus\b/);
+    expect(names).toMatch(/\bregenerateOne\b/);
+    expect(names).toMatch(/\bprewarmingIds\b/);
     expect(PRACTICE).toMatch(/useBindRowOneStatus\(bindRowOneStatus, noteRowOneStatus\);/);
     expect(indexOfCode(PRACTICE, "useRowOneStatusRelay();")).toBeLessThan(indexOfCode(PRACTICE, "useRoomQuestions("));
     expect(indexOfCode(PRACTICE, "useApplicationProjectPool(")).toBeLessThan(indexOfCode(PRACTICE, "useBindRowOneStatus("));

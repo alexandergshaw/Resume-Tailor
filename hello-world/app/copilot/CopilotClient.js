@@ -9,6 +9,7 @@ import { useTheme } from "@mui/material/styles";
 import { postingGroundingNotice as _postingGroundingNotice } from "@/lib/copilot/groundingNotice";
 import { shareInstructionsFor } from "@/lib/copilot/captureNotices";
 import { identityPropsFor } from "@/lib/copilot/identityProps";
+import { copilotTabDescription } from "@/lib/copilot/tabHeaderDescription";
 import { briefStatusMessage } from "@/lib/copilot/companyBrief";
 import { visuallyHidden } from "@/lib/copilot/answerStatus";
 import { useEngine } from "@/app/settings/engine";
@@ -158,14 +159,6 @@ export default function CopilotClient() {
   } = useApplicationDocs(posting?.id || null);
   const { engine } = useEngine();
   const isEmbedded = engine === "embedded";
-
-  // AC-Q10.4/AC-R1.11: the "Speak as" one-liner. BUG (privacy audit):
-  // embedded branch used to claim recording itself "runs on this server" —
-  // false, lib/copilot/stt/ streams audio to Deepgram/ElevenLabs on EVERY
-  // engine; only feedback generation is local, so the guarantee is scoped.
-  const roleModeDescription = isEmbedded
-    ? "Answer a workplace situation out loud in a professional role’s register, then record yourself answering it and reveal a model answer for its cadence and vocabulary — the model answer is generated on this server with no AI provider, so nothing is sent to Google. Recording still sends your audio to a speech-to-text provider, and once you press Done, sends it here for feedback — see the notice above the recording controls for what is sent, and where."
-    : `Answer a workplace situation out loud in a professional role’s register, then record yourself answering it and reveal a model answer for its cadence and vocabulary. Recording sends audio${sttProviderName ? ` to ${sttProviderName}` : ""} for transcription and, once you press Done, sends it for feedback to Google Gemini — see the notice above the recording controls for exactly what that sends. Revealing a model answer also sends the role and the situation text to Google.`;
 
   const isRailBelowMd = useIsRailBelowMd();
 
@@ -381,7 +374,10 @@ export default function CopilotClient() {
   // example group is ready by the first question. A pool that was still cold
   // when a question was answered is warmed once more through noteRowOneStatus
   // (relayed above), so the next question shows it. Renders nothing itself.
-  const { noteRowOneStatus } = useApplicationProjectPool({ selectedApplicationId: posting?.id || null, logEvent });
+  // `regenerateOne` (the explicit, forced retry) and `prewarmingIds` (what is in
+  // flight) become the current answer's "Try again" and its in-flight state. An
+  // absent set reads as nothing in flight (the default is only evaluated then).
+  const { noteRowOneStatus, regenerateOne, prewarmingIds = new Set() } = useApplicationProjectPool({ selectedApplicationId: posting?.id || null, logEvent });
   useBindRowOneStatus(bindRowOneStatus, noteRowOneStatus);
 
   // AC-N18.9/F-A1/m9: the ONE handler behind every confirm control below —
@@ -587,23 +583,7 @@ export default function CopilotClient() {
 
       <TabHeader
         title="Interview copilot"
-        description={
-          live && isMobile
-            ? undefined
-            : mode === "roles"
-              ? roleModeDescription
-              : mode === "practice"
-                ? // "nothing else is recorded or shared" was false: on the Gemini
-                  // engine, the answer transcript, posting details, and prep
-                  // context all go to Google for the critique. The detailed
-                  // notice below (PracticeClient) states exactly what leaves on
-                  // the current engine — this one-liner defers to it rather
-                  // than making its own (previously false) blanket claim.
-                  // F2: the STT destination is only named once it's actually
-                  // known (see the mount-time fetch above) — never guessed.
-                  `Practice speaking out loud with your camera and mic — see the notice below for what's sent ${sttProviderName ? `to ${sttProviderName} or Gemini` : "to Gemini"}.`
-                : "Live transcription, question detection, and suggested answers during interviews."
-        }
+        description={copilotTabDescription({ mode, live, isMobile, isEmbedded, sttProviderName })}
       />
 
       {/* N144b: a phone mid-session needs the screen for the answer, and the
@@ -904,6 +884,9 @@ export default function CopilotClient() {
                   revealLabel={confirmRevealLabel(confirmedCurrent?.status)}
                   announceHiddenReadiness
                   onUnconfirm={unconfirmQuestion}
+                  // N145: the current answer's retry only; history cards get none.
+                  onRetryRowOne={() => regenerateOne(posting?.id)}
+                  rowOneRetrying={prewarmingIds.has(posting?.id)}
                 />
               </Box>
               {!isRailBelowMd ? (

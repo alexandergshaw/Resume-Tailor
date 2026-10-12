@@ -242,7 +242,13 @@ const FILES = [
       /"\/api\/copilot\/question"/,
       /"\/api\/copilot\/answer"/,
     ],
-    keep: [/useCopilotDashboard/, /shouldQueueSampleAnswer/, /sampleAnswer\.queue\(/, /buildPrivacyNotice/],
+    // N145 Wave B: the privacy-notice assembly PracticeClient used to inline
+    // now lives in lib/copilot/practiceNotices.js's buildPracticeNotice, which
+    // PracticeClient CALLS (the Wave A1 extraction). The old /buildPrivacyNotice/
+    // pin survived only on a stale comment mention; repointed to the name
+    // PracticeClient actually imports and calls so this keep tracks the real
+    // assembly again.
+    keep: [/useCopilotDashboard/, /shouldQueueSampleAnswer/, /sampleAnswer\.queue\(/, /buildPracticeNotice/],
   },
   {
     // NOTE: /predict/i would also match this file's pre-existing, unrelated

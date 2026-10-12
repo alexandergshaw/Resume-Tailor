@@ -258,8 +258,11 @@ export default function PracticeClient({
   // No logger: practice's session log observes the sample answer's own values
   // (usePracticeSessionLog) and has no recorder to hand a hook. Its
   // noteRowOneStatus is wired into the relay above, so a pool that was cold when
-  // a question was answered is warmed once more for the next one.
-  const { noteRowOneStatus } = useApplicationProjectPool({ selectedApplicationId: posting?.id || null });
+  // a question was answered is warmed once more for the next one. The same hook
+  // also hands back the explicit retry (`regenerateOne`, the only path that
+  // forces a regeneration) and the ids with a request in flight, which become
+  // the sample answer's "Try again" and its in-flight state below.
+  const { noteRowOneStatus, regenerateOne, prewarmingIds } = useApplicationProjectPool({ selectedApplicationId: posting?.id || null });
   useBindRowOneStatus(bindRowOneStatus, noteRowOneStatus);
 
   // BUG-J4: stays here — onDoneAnswer below reads it for the critique
@@ -771,6 +774,11 @@ export default function PracticeClient({
                 samplePageSources={sampleAnswer.pageSources}
                 sampleProjectExample={sampleAnswer.projectExample}
                 sampleProjectExampleLive={sampleAnswer.projectExampleLive}
+                // N145: the retry for a failed or stale Row 1, on this card (the
+                // current surface) only. The dashboard above shows the same
+                // answer but is given none, so one action is never two buttons.
+                onRetryRowOne={() => regenerateOne(posting?.id)}
+                rowOneRetrying={prewarmingIds.has(posting?.id)}
                 sampleTechTerms={sampleAnswer.techTerms}
                 sampleGrounding={sampleAnswer.grounding}
                 sampleCodingSolution={sampleAnswer.codingSolution}

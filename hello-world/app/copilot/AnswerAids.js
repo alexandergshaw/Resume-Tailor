@@ -2,6 +2,7 @@
 
 import { useId } from "react";
 import Box from "@mui/material/Box";
+import Button from "@mui/material/Button";
 import Chip from "@mui/material/Chip";
 import Skeleton from "@mui/material/Skeleton";
 import Stack from "@mui/material/Stack";
@@ -238,6 +239,15 @@ const EXAMPLE_LEAD_REST = " Numbers are invented; swap in your own.";
 const R1_WARMING = "Still being prepared. Shows from your next question.";
 const R1_NO_MATCH = "No close match for this question.";
 const R1_FAILED = "Couldn't prepare examples for this posting.";
+// N146a: a pool whose latest refresh FAILED but which still holds a previously
+// good example serves that example flagged stale. The label is deliberately NOT
+// EXAMPLE_DT_READY, so an earlier pick can never read as a fresh benchmark; the
+// note says why a retry is on offer.
+const EXAMPLE_DT_STALE = "Earlier example";
+const R1_STALE_NOTE = "Shown from an earlier run. The latest refresh failed.";
+// N145: the one control inside a row. `Trying again` is the in-flight name.
+const R1_RETRY = "Try again";
+const R1_RETRYING = "Trying again";
 const R2_PENDING = "Writing one for this question…";
 const R2_FAILED = "Couldn't write one this time.";
 
@@ -279,12 +289,17 @@ function isShownEntry(entry) {
 // the server omits the field), which is different from any state below. Only a
 // `ready` value that passes the render guard ever shows content; everything
 // else is one quiet line, and the status is read, never the carried fields, so
-// a pending or failed value that still has a title on it shows no title.
+// a pending or failed value that still has a title on it shows no title. The one
+// other value that shows content is `stale` (N146a): a last-good pick served
+// while the pool's latest refresh failed, which must pass the same guard and is
+// its own view kind so it can never be drawn as a fresh `ready` benchmark.
 function rowOneView(example) {
   if (!example || typeof example !== "object") return null;
   switch (example.status) {
     case "ready":
       return isShownEntry(example) ? { kind: "ready", entry: example } : { kind: "no_match" };
+    case "stale":
+      return isShownEntry(example) ? { kind: "stale", entry: example } : { kind: "failed" };
     case "pending":
       return { kind: "warming" };
     case "no_match":
@@ -349,7 +364,44 @@ function ExampleBody({ entry, withCompetency }) {
   );
 }
 
-function RowOne({ view }) {
+// The retry for a pool that failed or went stale. A native <button> whose
+// accessible name is its own text: no Tooltip (it would replace the name) and no
+// aria-label. In flight it STAYS mounted and focusable but is `aria-disabled`
+// with its click ignored, never natively `disabled` and never unmounted, since
+// either drops keyboard focus to <body>. Purely presentational: the in-flight
+// fact and the handler both arrive as props, and a repeat click while NOT in
+// flight is passed straight on, because the single-flight guard belongs to the
+// hook that issues the request (useApplicationProjectPool), not to this view.
+function RetryControl({ onRetry, retrying }) {
+  return (
+    <Button
+      type="button"
+      size="small"
+      variant="text"
+      onClick={retrying ? undefined : () => onRetry()}
+      aria-disabled={retrying ? "true" : undefined}
+      sx={{
+        ...TOUCH_TARGET_SX,
+        mt: LINE_GAP,
+        textTransform: "none",
+        "&[aria-disabled='true']": { color: "var(--text-secondary)", cursor: "default" },
+      }}
+    >
+      {retrying ? R1_RETRYING : R1_RETRY}
+    </Button>
+  );
+}
+
+// `onRetry` is offered only on the two states a regenerated pool can fix: a
+// failed pool and a stale one. Never on `warming` (already in flight), nor on
+// `ready` / `no_match` (a per-question miss is not a pool failure), and never
+// without a handler, so a non-current surface that passes none shows the line
+// as text only.
+function RowOne({ view, onRetry, retrying }) {
+  const retry =
+    typeof onRetry === "function" && (view.kind === "failed" || view.kind === "stale") ? (
+      <RetryControl onRetry={onRetry} retrying={!!retrying} />
+    ) : null;
   if (view.kind === "ready") {
     return (
       <Aid label={EXAMPLE_DT_READY} ddSx={INVENTED_DD_SX}>
@@ -357,10 +409,24 @@ function RowOne({ view }) {
       </Aid>
     );
   }
+  if (view.kind === "stale") {
+    // Still invented content, so the lead and accent rule stay; the lead is read
+    // first, then the content, then why it is old and the way to refresh it.
+    return (
+      <Aid label={EXAMPLE_DT_STALE} ddSx={INVENTED_DD_SX}>
+        <ExampleBody entry={view.entry} withCompetency />
+        <Box sx={{ mt: LINE_GAP }}>
+          <QuietLine>{R1_STALE_NOTE}</QuietLine>
+        </Box>
+        {retry}
+      </Aid>
+    );
+  }
   const line = view.kind === "warming" ? R1_WARMING : view.kind === "no_match" ? R1_NO_MATCH : R1_FAILED;
   return (
     <Aid label={EXAMPLE_DT_READY}>
       <QuietLine>{line}</QuietLine>
+      {retry}
     </Aid>
   );
 }
@@ -402,11 +468,11 @@ function RowTwo({ view }) {
 // that header. Collapsing unmounts the `dl`, so a collapsed group is out of both
 // the accessibility tree and the tab order, and only the header line remains --
 // still honest, because "invented" is in its text.
-function ExampleProjectsGroup({ rowOne, rowTwo }) {
+function ExampleProjectsGroup({ rowOne, rowTwo, onRetryRowOne, rowOneRetrying }) {
   return (
     <CollapsibleAid label={EXAMPLE_GROUP_LABEL} choiceStore={examplesCollapse} labelledGroup>
       <Box component="dl" sx={AID_GRID_SX}>
-        {rowOne ? <RowOne view={rowOne} /> : null}
+        {rowOne ? <RowOne view={rowOne} onRetry={onRetryRowOne} retrying={rowOneRetrying} /> : null}
         {rowTwo ? <RowTwo view={rowTwo} /> : null}
       </Box>
     </CollapsibleAid>
@@ -630,7 +696,20 @@ function TechTermsGroup({ view }) {
   );
 }
 
-export default function AnswerAids({ buzzwords, anchor, projectExample, projectExampleLive, techTerms, finalOnly }) {
+// `onRetryRowOne` / `rowOneRetrying` (N145) are presentational like everything
+// else here: the CURRENT answer surface passes a handler (and whether its
+// request is in flight) so a failed or stale Row 1 can offer "Try again". A
+// non-current card passes neither, so it shows that state as text only.
+export default function AnswerAids({
+  buzzwords,
+  anchor,
+  projectExample,
+  projectExampleLive,
+  techTerms,
+  finalOnly,
+  onRetryRowOne,
+  rowOneRetrying,
+}) {
   const terms = (Array.isArray(buzzwords) ? buzzwords : []).filter((t) => typeof t === "string" && t.trim());
 
   // A plausibility gate upstream (lib/copilot/resumeAnchor.js) can suppress
@@ -812,7 +891,14 @@ export default function AnswerAids({ buzzwords, anchor, projectExample, projectE
         <Box role="separator" sx={{ my: 1.25, borderTop: "1px solid var(--border)" }} />
       ) : null}
 
-      {hasExampleGroup ? <ExampleProjectsGroup rowOne={exampleRowOne} rowTwo={exampleRowTwo} /> : null}
+      {hasExampleGroup ? (
+        <ExampleProjectsGroup
+          rowOne={exampleRowOne}
+          rowTwo={exampleRowTwo}
+          onRetryRowOne={onRetryRowOne}
+          rowOneRetrying={rowOneRetrying}
+        />
+      ) : null}
     </Box>
   );
 }

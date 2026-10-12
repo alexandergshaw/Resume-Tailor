@@ -254,6 +254,12 @@ function CurrentAnswerPanel({
   // at all) hides the control entirely rather than wiring a handler with
   // nothing to call.
   onUnconfirm,
+  // N145: "Try again" for a failed or stale Row 1 of THIS (the current) answer
+  // and whether that request is in flight, handed straight to AnswerAids. Only
+  // this panel receives them: the failure is per application, so one retry here
+  // serves every later question, and HistoryItem's AnswerAids gets none.
+  onRetryRowOne,
+  rowOneRetrying,
 }) {
   // BUG-J6: filtered here (not `current.points` directly) — see
   // lib/copilot/answerPoints.js's doc for why an unfiltered array can reach
@@ -468,6 +474,8 @@ function CurrentAnswerPanel({
                 projectExample={current.projectExample}
                 projectExampleLive={current.projectExampleLive}
                 techTerms={current.techTerms}
+                onRetryRowOne={onRetryRowOne}
+                rowOneRetrying={rowOneRetrying}
               />
             </>
           ) : (
@@ -881,6 +889,11 @@ export default function CopilotDashboard({
   // unless CopilotClient deliberately sets it, which is what keeps every
   // existing caller (practice mode included) byte-identical.
   staleTypeChangeAt = 0,
+  // N145: see CurrentAnswerPanel's own doc above -- threaded to that panel only,
+  // never to HistoryList. Undefined for every caller that predates it, which
+  // shows no control.
+  onRetryRowOne,
+  rowOneRetrying,
 }) {
   // AC-N18.14: `currentOverride` (undefined for every caller that predates
   // N18) is checked explicitly against `undefined`, not merely truthiness —
@@ -934,6 +947,8 @@ export default function CopilotDashboard({
           announceHiddenReadiness={announceHiddenReadiness}
           staleTypeChangeAt={staleTypeChangeAt}
           onUnconfirm={onUnconfirm}
+          onRetryRowOne={onRetryRowOne}
+          rowOneRetrying={rowOneRetrying}
         />
       </Box>
 

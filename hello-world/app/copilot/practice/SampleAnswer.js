@@ -107,6 +107,11 @@ export default function SampleAnswer({
   // undefined when there is no posting selected or the engine is embedded.
   projectExample,
   projectExampleLive,
+  // N145: the "Try again" on a failed or stale Row 1 and whether its request is
+  // in flight, straight through to AnswerAids. The practice client supplies
+  // them for this card (the current surface) only; undefined shows no control.
+  onRetryRowOne,
+  rowOneRetrying,
   // The tech-buzzwords row (LLM-suggested terms, each expandable), straight
   // through to AnswerAids; undefined under the same conditions as the two above.
   techTerms,
@@ -248,6 +253,8 @@ export default function SampleAnswer({
                 projectExample={projectExample}
                 projectExampleLive={projectExampleLive}
                 techTerms={techTerms}
+                onRetryRowOne={onRetryRowOne}
+                rowOneRetrying={rowOneRetrying}
               />
               <Typography variant="caption" sx={{ color: "var(--text-muted)", display: "block", mt: 1 }}>
                 {sourceCaption(isEmbedded, grounding)}

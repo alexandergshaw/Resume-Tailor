@@ -55,6 +55,10 @@ export default function QuestionCard({
   // SampleAnswer's `projectExample` / `projectExampleLive` props.
   sampleProjectExample,
   sampleProjectExampleLive,
+  // N145: the "Try again" for a failed or stale Row 1 and whether its request is
+  // in flight, straight through to SampleAnswer under the same names.
+  onRetryRowOne,
+  rowOneRetrying,
   // The tech-buzzwords row, straight through to SampleAnswer's `techTerms`.
   sampleTechTerms,
   sampleGrounding,
@@ -222,6 +226,8 @@ export default function QuestionCard({
           pageSources={samplePageSources}
           projectExample={sampleProjectExample}
           projectExampleLive={sampleProjectExampleLive}
+          onRetryRowOne={onRetryRowOne}
+          rowOneRetrying={rowOneRetrying}
           techTerms={sampleTechTerms}
           grounding={sampleGrounding}
           codingSolution={sampleCodingSolution}
