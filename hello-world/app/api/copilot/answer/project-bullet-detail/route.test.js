@@ -169,7 +169,6 @@ describe("gates and failure modes", () => {
   it("[D5] 400s when bulletIndex is not an integer >= 0", async () => {
     for (const bad of [undefined, -1, 1.5, "0", null, {}]) {
       supabaseWith();
-      // eslint-disable-next-line no-await-in-loop
       const res = await post({ ...VALID, bulletIndex: bad });
       expect(res.status, `bulletIndex=${String(bad)}`).toBe(400);
     }

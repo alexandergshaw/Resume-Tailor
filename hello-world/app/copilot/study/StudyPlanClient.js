@@ -7,6 +7,7 @@ import Typography from "@mui/material/Typography";
 import { useEngine } from "@/app/settings/engine";
 import { visuallyHidden } from "@/lib/copilot/answerStatus";
 import { ensureStudyDigest, refreshStudyDigest } from "@/lib/studyPlan/ensureStudyDigest";
+import { readLastStudyApplicationId, writeLastStudyApplicationId } from "@/lib/studyPlan/lastStudyApplication";
 import { bindStudyPlan } from "@/lib/studyPlan/studyPlanBrowser";
 import { BUILD_INTENTS, run, skipsResearch } from "@/lib/studyPlan/studyPlanBuild";
 import { requestStudyPlanBuild } from "@/lib/studyPlan/studyPlanBuildClient";
@@ -58,6 +59,12 @@ import useStudyPlanRecord from "./useStudyPlanRecord";
 // reason from the stored research. `engine` is the CLIENT's engine choice, per the
 // StudyWalkthrough contract: the banner reads the engine that built the plan from
 // the plan itself, and the egress notice must follow what the client will send.
+//
+// RESTORE (N160). The application a build was last started for is remembered per
+// viewer (lib/studyPlan/lastStudyApplication.js) and read ONCE, at mount, into
+// PostingPicker's `initialId`, which preselects it only if it matches a loaded
+// option. With nothing remembered the prop is undefined and nothing selects, so a
+// fresh viewer (and every suite that sets no stored id) sees the empty picker.
 
 const LOADING_TEXT = "Loading your study plan...";
 const BUILDING_TEXT_SX = { color: "var(--text-secondary)" };
@@ -80,6 +87,7 @@ function statusFor({ build, company, loading }) {
 export default function StudyPlanClient() {
   const { engine } = useEngine();
   const [posting, setPosting] = useState(null);
+  const [restoreId] = useState(readLastStudyApplicationId);
   const reasonId = useId();
   const applicationId = typeof posting?.id === "string" ? posting.id : "";
 
@@ -98,6 +106,7 @@ export default function StudyPlanClient() {
 
   const startBuild = (intent) => {
     if (!applicationId || busy) return;
+    writeLastStudyApplicationId(applicationId);
     run({ applicationId, engine, intent, knobs: effective, hadGoodPlan: hasPlan }, { ...STATIC_EFFECTS, reload });
   };
   const retryBuild = () => startBuild(build.intent ?? BUILD_INTENTS.CREATE);
@@ -188,6 +197,7 @@ export default function StudyPlanClient() {
       </Typography>
       <PostingPicker
         required
+        initialId={restoreId}
         value={posting}
         onChange={setPosting}
         label={STUDY_COPY.picker.label}

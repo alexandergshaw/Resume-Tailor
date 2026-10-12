@@ -7,7 +7,8 @@ _Last updated: 2026-10-07 by the orchestrator._
 ---
 
 ## 1. In-flight uncommitted work (the dirty tree)
-- About to commit N161 (coding-answer detection + worked solutions, live + practice) — full suite 20179 green. COMPLETES N161. Nothing pending after.
+- About to commit N160 (last-used-app restore + eslint fix) — full suite 20189 green. After this, ALL fresh actionable items (N154–N161) are shipped; what remains is the N1–N100 standing block (triaged 2026-10-05 as mostly shipped-but-listed/owner-gated — being RE-TRIAGED now) + owner/Gemini-env verification owed.
+- (prior) N161 committed e0f33f8 (coding-answer detection, full suite 20179).
 - **FLAG:** app/copilot/practice/PracticeClient.js is at EXACTLY the 950-line ceiling (949/950, 1 line slack) — the next practice edit needs an extraction first. File as a follow-up if touched.
 - N160 (last-used-app restore + stale eslint disable) remains the only fresh low item open.
 - (prior) N157 SC-D committed earlier: (D-a studyPlanKnobs + copy; D-b StudyPlanControls/useStudyKnobs + 4 C-c wiring edits + notice.gemini egress append + census reconcile + authorized pin updates). Full suite 20036 green. This COMPLETES N157. Nothing else pending after.
