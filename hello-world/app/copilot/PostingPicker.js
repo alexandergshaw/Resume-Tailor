@@ -1,11 +1,13 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import Autocomplete from "@mui/material/Autocomplete";
 import TextField from "@mui/material/TextField";
 import { fetchPracticePostings } from "@/lib/copilot/postings";
+import { isRecentCompany, orderRecentFirst } from "@/lib/copilot/recentCompanies";
 import { STUDY_COPY } from "@/lib/studyPlan/studyPlanCopy";
 import { TOUCH_FIELD_SX, TOUCH_ICON_SX } from "@/app/theme/mobileSx";
+import { useRecentCompanies } from "@/app/copilot/useRecentCompanies";
 
 const DEFAULT_LABEL = "Practice for";
 const DEFAULT_BLANK_HINT = "Leave blank to practice with generic questions.";
@@ -18,6 +20,12 @@ const DEFAULT_BLANK_HINT = "Leave blank to practice with generic questions.";
 // caller passed in.
 function lowerFirst(text) {
   return text ? text.charAt(0).toLowerCase() + text.slice(1) : text;
+}
+
+// N124: renders an option group as just its options, with no header and no wrapper,
+// for the ungrouped case (see the `groupBy` comment on the Autocomplete below).
+function renderFlatGroup(params) {
+  return <Fragment key={params.key}>{params.children}</Fragment>;
 }
 
 // Searchable picker over the user's own tracked postings (the same rows the
@@ -41,6 +49,15 @@ function lowerFirst(text) {
 //   `initialId` restores a previously chosen posting: once, after the options
 //               have loaded, `onChange` fires with the option whose id matches.
 //               No match means no call, and an already-chosen value is kept.
+//
+// N124: the company of every posting the user EXPLICITLY picks here is remembered
+// across sessions (app/copilot/useRecentCompanies.js), and the postings of those
+// companies are listed first under a "Recent" header. The field stays single-select
+// and never selects for the user: a remembered company only reorders the options, so
+// blank (generic questions) is still the default and is never overridden. A
+// remembered company with no matching posting is not offered, and with nothing
+// remembered the picker renders exactly as it did before (no grouping, fetch order).
+// A restore through `initialId` and a clear are not explicit picks and record nothing.
 export default function PostingPicker({
   value,
   onChange,
@@ -54,6 +71,12 @@ export default function PostingPicker({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const restoredRef = useRef(false);
+  const { recentCompanies, recordCompany } = useRecentCompanies();
+  // The same array as `options` when there is nothing to surface (the signal to skip
+  // grouping), so the empty case stays byte-identical. `options` itself stays in
+  // fetch order for the `initialId` restore below.
+  const shownOptions = useMemo(() => orderRecentFirst(options, recentCompanies), [options, recentCompanies]);
+  const grouped = shownOptions !== options;
 
   useEffect(() => {
     let cancelled = false;
@@ -107,8 +130,23 @@ export default function PostingPicker({
   return (
     <Autocomplete
       value={value || null}
-      onChange={(_e, newValue) => onChange(newValue || null)}
-      options={options}
+      onChange={(_e, newValue) => {
+        if (newValue) recordCompany(newValue);
+        onChange(newValue || null);
+      }}
+      options={shownOptions}
+      // `groupBy` is ALWAYS a function, never toggled to undefined. MUI keeps the last
+      // rendered option list in a ref for the closing animation, and renders it with
+      // whichever `groupBy` is current: handing it a flat list while `groupBy` has just
+      // appeared (the first pick, which makes the first remembered company) throws
+      // "option.options is undefined". When nothing is surfaced the one group is
+      // unlabelled and `renderFlatGroup` drops the group markup, so the listbox is the
+      // plain option list it always was.
+      groupBy={(option) => {
+        if (!grouped) return "";
+        return isRecentCompany(option.company, recentCompanies) ? "Recent" : "All postings";
+      }}
+      renderGroup={grouped ? undefined : renderFlatGroup}
       loading={loading}
       disabled={disabled}
       isOptionEqualToValue={(option, val) => option.id === val.id}
