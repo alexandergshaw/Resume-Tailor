@@ -95,6 +95,19 @@ blocks this port; unrelated unchanged baseline failures and disabled-supervisor
 diagnostic failures must be reported without converting them into passes or
 silently expanding the task to repair unrelated behavior.
 
+Completing recovery diagnostics requires terminal results for the complete
+configured dispatch inventory, including each original/harmless/designated-mutant/
+restored control. A timeout is not a mutation kill. Evidence reuse after a
+fixture-only correction requires independently accepted exact source-delta and
+executed-path mapping; an old whole-source receipt cannot qualify changed bytes.
+Keep mandatory core results, offline diagnostic qualification and live-provider
+qualification distinct. The source-bound verification report must include exact
+current source/configuration identities, the exhaustive inventory and complete
+observed evidence; missing, failed, incomplete or stale measurements do not
+qualify. If a separate executable readiness helper is justified and implemented,
+it must reject missing, failed, incomplete, tampered or stale evidence for its
+bound source/configuration.
+
 Evidence binds to candidate bytes, policy, relevant environment/external inputs
 and accepted artifact versions. Changes invalidate affected downstream evidence
 without resetting review budgets. Excluded generated artifact directories still

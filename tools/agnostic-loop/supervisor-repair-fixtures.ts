@@ -323,7 +323,19 @@ export async function nonGateControl(mode: 'review' | 'invalidation' | 'paused' 
         await new Promise(resolve => setTimeout(resolve, 10));
       }
       setup(ready, 'real prelaunch gate must reach bounded pause barrier');
-      await controlDispatch(f.store, f.config, 'pause', 'pause wins while real verifier gate is running');
+      let paused = false;
+      while (Date.now() < deadline) {
+        try {
+          await controlDispatch(f.store, f.config, 'pause', 'pause wins while real verifier gate is running');
+          paused = Date.now() < deadline;
+          break;
+        } catch (error) {
+          if (!(error instanceof Error) || error.message !== 'Store locked; do not remove automatically. Explicit recovery requires the observed lock token and operator acknowledgement.') throw error;
+          const remaining = deadline - Date.now();
+          if (remaining > 0) await new Promise(resolve => setTimeout(resolve, Math.min(20, remaining)));
+        }
+      }
+      setup(paused, 'pause control must succeed before the shared readiness deadline');
     } finally {
       await writeFile(path.join(f.captures, 'pause-release'), 'gate may finish');
       await running;
@@ -340,7 +352,7 @@ export async function nonGateControl(mode: 'review' | 'invalidation' | 'paused' 
     const { state } = await until(f, s => Boolean(waveIn(s)), 'direct invalidation wave');
     await invalidateAcceptedWave(f, waveIn(state)!);
   }
-  await until(f, s => s.items[f.selection.id].status === 'shipped', `non-gate ${mode} delivery`);
+  await until(f, s => s.items[f.selection.id]?.status === 'shipped', `non-gate ${mode} delivery`);
   invariant(!Object.values((await f.store.load()).evidence).some(e => e.exitCode !== 0), 'NON_GATE:fixture must not manufacture failed gate evidence');
   for (const record of await packets(f)) invariant(diagnosticRecords(record.request.packet).length === 0, 'NON_GATE:repair purpose/retry prefix alone cannot require or invent gate diagnostics');
 }

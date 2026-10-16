@@ -8,6 +8,8 @@ import { digest } from './json';
 
 const source = path.resolve('tools/agnostic-loop');
 const loader = path.resolve('tools/resolve-ts-hook.ts');
+const REPAIR_HARNESS_TIMEOUT_MS = 720_000;
+const REPAIR_MUTATION_TIMEOUT_MS = 4 * REPAIR_HARNESS_TIMEOUT_MS + 120_000;
 const roots: string[] = [];
 type Mutation = 'reentry' | 'diagnostics-verification' | 'diagnostics-final-report' | 'checkpoint' | 'budget';
 afterEach(async () => { for (const root of roots.splice(0)) await rm(root, { recursive: true, force: true }); });
@@ -41,7 +43,7 @@ finally{restoreRepairEnvironment();await cleanupSupervisorFixtures();}
 }
 function run(harness: string, name: Mutation) {
   const result = spawnSync(process.execPath, ['--experimental-strip-types', '--experimental-default-type=module', '--experimental-loader', pathToFileURL(loader).href, harness, name], {
-    encoding: 'utf8', timeout: 240_000, windowsHide: true, maxBuffer: 2_000_000,
+    encoding: 'utf8', timeout: REPAIR_HARNESS_TIMEOUT_MS, windowsHide: true, maxBuffer: 2_000_000,
   });
   if (result.error) throw result.error;
   let record: { ok: boolean; name: string; message?: string };
@@ -106,6 +108,6 @@ describe('isolated failed-gate repair production mutants', () => {
         expect(digest(await readFile(path.join(source, file)))).toBe(hash);
         expect(digest(await readFile(path.join(f.copy, file)))).toBe(hash);
       }
-    }, 1_100_000);
+    }, REPAIR_MUTATION_TIMEOUT_MS);
   }
 });

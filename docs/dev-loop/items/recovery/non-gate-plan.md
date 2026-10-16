@@ -1,0 +1,17 @@
+# Non-gate fixture bootstrap correction plan
+
+Author `/root/recovery_contract`, 2026-10-16. Proposal pending independent check. No code changes or test execution; the active suite remains immutable. This fixture bootstrap defect class is separate from the mutation harness timing mismatch.
+
+The coordinator reports `nonGateControl('review')` failing with `TypeError` while reading `undefined.status` after 2,463 ms. Preserve the actual final summary/stack before implementation to confirm the exact failing location. Static inspection supports the mechanism: `until` evaluates its predicate before its first `step`; the fresh repair fixture can have no selected item yet. The unconditional final delivery predicate dereferences `s.items[f.selection.id].status`. Review/provider modes can reach that predicate before bootstrap. Existing `nextActions` supports a missing selected item by returning the required bootstrap action, so absence is an expected pre-delivery state rather than proof of delivery or runtime failure.
+
+Only proposed implementation write: `tools/agnostic-loop/supervisor-repair-fixtures.ts`, the final delivery predicate inside `nonGateControl`. Replace `s => s.items[f.selection.id].status === 'shipped'` with `s => s.items[f.selection.id]?.status === 'shipped'` at that exact call. Do not globally replace predicates. The predicate returns false until the real item exists and actually reaches `shipped`; `until` then performs its ordinary checked drive/progress cycle. No item creation, advancement or success is fabricated by the fixture.
+
+Preserve the 180-iteration bound, durable revision-progress invariant, blocked/owner-needed/complete rejection, checked-artifact and review-budget assertions, actual subprocess drive, qualification/context-budget/deadline values and cleanup. Preserve both final non-gate oracles: no nonzero gate evidence exists, and every captured packet contains zero fabricated failure diagnostics. Preserve paused/invalidation branches and provider/review setup exactly. Do not change production routing or relax missing diagnostic integrity checks.
+
+Before editing, obtain independent plan acceptance, collect the active run's complete verdict/stack and source identity, and reconcile its processes/artifacts. Review the resulting one-expression diff independently. Rerun the two affected cases serially using:
+
+`node hello-world/node_modules/vitest/vitest.mjs run --config tools/vitest.dispatch.config.mjs tools/agnostic-loop/supervisor-repair.test.ts --reporter verbose -t "non-gate (review|provider) remains admissible"`
+
+Then run the complete `supervisor-repair.test.ts` file serially with the same launcher/config and `--reporter verbose`, covering unaffected paused/invalidation controls, real failed-verification/final-report repaired delivery, R1/R4/R5 and diagnostic integrity controls. Record exact per-case/final verdicts and source identities; unchanged 450,000 ms per-case bounds remain authoritative for these tests. Follow with affected mutation controls, mandatory `npm.cmd run loop:test` and remaining complete dispatch inventory according to the checked overall execution plan. A repaired fixture file is copied into mutation harnesses, so prior mutation evidence using its old bytes cannot silently qualify the new candidate.
+
+Require independent actual-candidate verification and final-report acceptance. Any further failure remains measured rather than hidden by broader optional chaining or a deadline increase. This plan neither qualifies nor enables a live provider.

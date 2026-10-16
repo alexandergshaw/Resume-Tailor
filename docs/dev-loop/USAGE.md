@@ -197,6 +197,26 @@ Run shared-resource gates serially. No standalone app typecheck is registered.
 Record failed build/environment behavior as failed or unproven. Changed candidate,
 policy, environment or relevant external input makes affected evidence stale.
 
+Run the mandatory engine/manual-port gate separately with `npm.cmd run loop:test`.
+Offline automatic-supervisor diagnostics are a separate instrument:
+`npm.cmd run loop:test:dispatch -- --reporter=verbose`. Its checked configuration
+serializes files; retain verbose progress and the actual final verdict. The earlier
+recovery baseline completed after roughly 53 minutes and reported failures; a
+30-minute interruption cannot establish a pass or a behavioral defect. Adopt a
+finite reviewed overall execution budget before launch. Under the current
+two-hour-per-run policy, use explicit test-name/file shards when needed, record
+the exhaustive configured inventory, and leave incomplete shards pending.
+Mutation timeouts are failed measurements, never successful defect detection.
+
+Preserve source/configuration identity throughout each run. After a fixture timeout
+or interruption, observe and reconcile its process tree and retained side effects
+before retrying; do not remove locks or infer termination from a missing harness
+alone. Offline diagnostic success does not configure or qualify a live provider.
+Templates stay disabled until a concrete target, trusted grant and provider
+qualification are separately established within the owner's authority.
+See the [pending recovery verification report](items/recovery/final.md) for the
+current evidence status; this link does not establish readiness acceptance.
+
 An independent verifier imports a criterion-to-evidence report and records
 `verification.record`; an independent checker accepts its exact bytes. A finalizer
 imports and records `final.record`, including current candidate, verification and

@@ -1,6 +1,6 @@
 {
   "format": "manual-host-record-v1",
-  "revision": 7,
+  "revision": 8,
   "items": [
     {
       "id": "port",
@@ -55,6 +55,31 @@
       "acceptance": "items/main-delivery/final.check.md",
       "publicationObservedCommit": "b182f526bae0dfbce3ce4c299d2516a96143f57e",
       "publicationMeaning": "Implementation normal-pushed and live-verified; any subsequent bookkeeping HEAD must also pass the live delivery guard before overall completion"
+    },
+    {
+      "id": "recovery",
+      "objective": "Complete offline supervisor recovery verification before considering automatic enablement",
+      "owner": "user",
+      "status": "verifying",
+      "criteria": [
+        "C1",
+        "C2",
+        "C3",
+        "C4",
+        "C5",
+        "C6",
+        "C7",
+        "C8"
+      ],
+      "automaticDispatch": "disabled",
+      "contract": "items/recovery/contracts.md",
+      "contractAcceptance": "items/recovery/contracts.check.md",
+      "assumptions": [
+        "Up to two independent test-file fork workers on unique temporary resources",
+        "Reviewed diagnostic window up to two hours; existing finite per-test limits retained",
+        "No provider model, spending, install or login authority inferred"
+      ],
+      "residuals": []
     }
   ],
   "limitations": [

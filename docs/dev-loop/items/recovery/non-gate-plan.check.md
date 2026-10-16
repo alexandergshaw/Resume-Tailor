@@ -1,0 +1,16 @@
+# Independent non-gate correction plan check
+
+Checker `/root/recovery_check`, 2026-10-16. Round 1 verdict: **accepted with bounded verification routing below**. Reviewed `non-gate-plan.md` SHA-256 `4e63f81f5038c26fc898ed9a14263a2737d2b71802a37b1db0ed32673ef8b335`. This worker did not author the plan. No tests or source edits performed.
+
+The one-expression optional chain accurately handles pre-bootstrap absence without manufacturing item creation or delivery. It leaves the positive condition strictly `status === 'shipped'`, ordinary checked driving/progress, finite authority, actual subprocesses and both no-fabricated-failure assertions intact. Final stack confirmation and reconciliation of the immutable run are required before editing. This fixture correction is distinct from the timing-instrument correction; neither implies a runtime recovery failure.
+
+Mandatory affected checks:
+
+- Independently inspect the actual diff: only the identified final `nonGateControl` predicate changes, with no global replacement, changed import initialization, setup or assertions.
+- Execute both named review/provider cases against the corrected source; require actual terminal behavioral success, no nonzero gate evidence and no fabricated diagnostic packets. Preserve complete logs, exact source/configuration identities and cleanup/process observations.
+- Complete every previously timed-out, failed, interrupted or unrun dispatch/mutation obligation. Every affected mutation timing family still requires all original/comment/designated-error/restored controls; timeout is not a behavioral red. Run mandatory engine/manual-port and final delivery gates against the admitted final candidate.
+- Independently map source-snapshot changes to affected evidence and inspect current artifacts before final acceptance. No prior receipt may silently claim an identical whole-source snapshot.
+
+Conditional evidence reuse and optional redundant work: the changed predicate is physically shared by all `nonGateControl` modes, but review/provider alone reach it without prior bootstrap. Paused/invalidation mode oracles remain structurally unchanged after their established bootstrap. The mutation harness imports `runReentry`, `runCheckpoint`, `runGateRepair` and cleanup, and does not invoke `nonGateControl`; their executed functions/import initialization are unchanged by this expression. Therefore a full repair-file rerun and rerun of previously complete unaffected mutation flows are optional when the coordinator records exact before/after hashes, the exclusive expression delta, caller/control-flow mapping and independent acceptance of evidence reuse. This is not a blanket exemption for a changed fixture hash: any additional source or initialization change invalidates this narrow reuse analysis. Run affected cases and all incomplete obligations regardless. Full-file rerun remains a valid conservative alternative within the admitted per-run budget.
+
+Findings: none requiring author correction. Stopping point: nothing for plan acceptance. The bounded reuse interpretation is a coordinator verification-routing ruling, not authority to weaken assertions or label omitted work passed. Runtime readiness and commit/push/live remote delivery remain unproved until their separate evidence lands.

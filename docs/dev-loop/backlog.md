@@ -1,13 +1,14 @@
 # Active implementation obligations
 
-No active implementation obligations remain for the loop port and main-delivery
-control. Independently accepted reports and historical publication observations are
-in `state.json` and `items/main-delivery/`. The current HEAD still requires a live
-`npm.cmd run loop:delivery` observation before overall completion; old local shipped
-records or cached receipts never substitute for that check.
+- **recovery**: Complete the exhaustive offline supervisor/recovery diagnostic and
+  mandatory regression, independently accept source-bound evidence and final report,
+  reconcile tests and remaining qualification limits, then normal-push main and
+  pass the live exact-commit delivery guard. Owner: user. Criteria C1-C8 are in
+  `items/recovery/contracts.md`. Provider templates remain disabled.
 
-Latest publication evidence belongs under ignored
-`.agnostic-loop/main-delivery-receipt.json`, with independent receipt review in
-`.agnostic-loop/main-delivery-review.json`. Receipts are not source commits. Prior
-verification limits remain in the accepted port report. Product obligations remain
-authoritative in `docs/backlog.yml` and were not drained.
+N163-N165 were added to the authoritative product backlog and published in
+`e1689cf`; this request does not authorize implementing those features or draining
+other product work. Existing product priorities remain in `docs/backlog.yml`.
+
+Historical local shipped statuses and old receipts never prove current remote
+publication. Current HEAD requires a new live `npm.cmd run loop:delivery` check.
