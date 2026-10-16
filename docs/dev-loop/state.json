@@ -1,6 +1,6 @@
 {
   "format": "manual-host-record-v1",
-  "revision": 16,
+  "revision": 17,
   "items": [
     {
       "id": "port",
@@ -89,7 +89,7 @@
       "id": "live-provider",
       "objective": "Qualify the existing signed-in Codex provider with bounded live evidence before production automatic dispatch",
       "owner": "user",
-      "status": "verified-awaiting-repository-delivery",
+      "status": "shipped",
       "automaticDispatch": "disabled",
       "contract": "items/live-provider/contracts.md",
       "contractAcceptance": "items/live-provider/contracts.check.md",
@@ -132,13 +132,16 @@
         "expires": 1792260933318,
         "productionConfigured": false,
         "freshness": "Trusted manual manifest comparison required before future configure/drive; router does not transitively rehash source/evidence"
-      }
+      },
+      "publicationObservedCommit": "b3cb828a1bcf7ddb3a5e9a680da14be60cdbb94c",
+      "publicationObservedAt": "2026-10-16T19:04:57.401Z",
+      "publicationMeaning": "Scoped implementation normal-pushed and live-verified on origin/main; subsequent bookkeeping HEAD also requires its own live delivery guard"
     },
     {
       "id": "N97",
       "objective": "Finish preview promotion, active template selection and original Gemini template persistence using existing stores",
       "owner": "user",
-      "status": "verified-awaiting-repository-delivery",
+      "status": "shipped",
       "criteria": [
         "N97-C1",
         "N97-C2",
@@ -187,7 +190,10 @@
           "instrument": "Restore explicitly missing-original historical fixtures; new generations retain immutable originals",
           "step": "When restoring legacy data"
         }
-      ]
+      ],
+      "publicationObservedCommit": "b3cb828a1bcf7ddb3a5e9a680da14be60cdbb94c",
+      "publicationObservedAt": "2026-10-16T19:04:57.401Z",
+      "publicationMeaning": "Scoped implementation normal-pushed and live-verified on origin/main; subsequent bookkeeping HEAD also requires its own live delivery guard"
     }
   ],
   "limitations": [

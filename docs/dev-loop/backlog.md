@@ -2,12 +2,13 @@
 
 - **live-provider**: Bounded qualification is independently accepted and recorded
   through the operator-attestation CLI for analysis, execution and critical profiles.
-  Repository delivery remains pending. Production dispatch needs a separate exact
+  Implementation was published and live-verified at `b3cb828`. Production dispatch needs a separate exact
   grant and fresh manifest comparison; automatic dispatch remains disabled.
 - **N97**: Implementation and independent verification are complete, including
   original Gemini template recovery and fact-derived versions. N97, N89 and N101
   were reconciled in the authoritative backlog; generated backlog checks pass
-  with 156 remaining items. Repository publication is pending. Live RLS, browser
+  with 156 remaining items. Implementation was published and live-verified at
+  `b3cb828`. Live RLS, browser
   and Word measurements retain their explicit receivers in `state.json`.
 
 Offline recovery verification is complete and independently accepted in
