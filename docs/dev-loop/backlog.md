@@ -1,10 +1,13 @@
 # Active implementation obligations
 
-- **main-delivery**: Independently verify the delivery guard/wrapper, accept the
-  final prepublication report, commit the authorized port/control changes on main,
-  push origin/main normally, and inspect a live exact-commit delivery receipt.
-  Owner: user. Requirements: D1-D5 in `items/main-delivery/contracts.md`.
+No active implementation obligations remain for the loop port and main-delivery
+control. Independently accepted reports and historical publication observations are
+in `state.json` and `items/main-delivery/`. The current HEAD still requires a live
+`npm.cmd run loop:delivery` observation before overall completion; old local shipped
+records or cached receipts never substitute for that check.
 
-Prior port local acceptance is historical; it does not prove publication. Runtime
-publication receipts stay ignored to avoid commit identity self-reference. Product
-obligations remain authoritative in `docs/backlog.yml` and are not being drained.
+Latest publication evidence belongs under ignored
+`.agnostic-loop/main-delivery-receipt.json`, with independent receipt review in
+`.agnostic-loop/main-delivery-review.json`. Receipts are not source commits. Prior
+verification limits remain in the accepted port report. Product obligations remain
+authoritative in `docs/backlog.yml` and were not drained.

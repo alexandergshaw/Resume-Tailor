@@ -1,6 +1,6 @@
 {
   "format": "manual-host-record-v1",
-  "revision": 6,
+  "revision": 7,
   "items": [
     {
       "id": "port",
@@ -41,7 +41,7 @@
       "id": "main-delivery",
       "objective": "Require commit and verified normal push to origin/main for repository completion",
       "owner": "user",
-      "status": "local-accepted-awaiting-push",
+      "status": "shipped",
       "criteria": [
         "D1",
         "D2",
@@ -52,7 +52,9 @@
       "publicationReceipt": ".agnostic-loop/main-delivery-receipt.json",
       "residuals": [],
       "report": "items/main-delivery/final.md",
-      "acceptance": "items/main-delivery/final.check.md"
+      "acceptance": "items/main-delivery/final.check.md",
+      "publicationObservedCommit": "b182f526bae0dfbce3ce4c299d2516a96143f57e",
+      "publicationMeaning": "Implementation normal-pushed and live-verified; any subsequent bookkeeping HEAD must also pass the live delivery guard before overall completion"
     }
   ],
   "limitations": [
