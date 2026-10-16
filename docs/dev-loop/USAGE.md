@@ -214,8 +214,8 @@ before retrying; do not remove locks or infer termination from a missing harness
 alone. Offline diagnostic success does not configure or qualify a live provider.
 Templates stay disabled until a concrete target, trusted grant and provider
 qualification are separately established within the owner's authority.
-See the [pending recovery verification report](items/recovery/final.md) for the
-current evidence status; this link does not establish readiness acceptance.
+See the [recovery verification report](items/recovery/final.md) for accepted offline
+evidence, first implementation publication proof and the current delivery boundary.
 
 An independent verifier imports a criterion-to-evidence report and records
 `verification.record`; an independent checker accepts its exact bytes. A finalizer

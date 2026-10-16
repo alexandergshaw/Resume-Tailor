@@ -1,10 +1,15 @@
-# Active implementation obligations
+# Remaining obligations
 
-- **recovery**: Complete the exhaustive offline supervisor/recovery diagnostic and
-  mandatory regression, independently accept source-bound evidence and final report,
-  reconcile tests and remaining qualification limits, then normal-push main and
-  pass the live exact-commit delivery guard. Owner: user. Criteria C1-C8 are in
-  `items/recovery/contracts.md`. Provider templates remain disabled.
+Offline recovery verification is complete and independently accepted in
+`items/recovery/verification.md` and `items/recovery/final.md`. Its implementation
+was normal-pushed and independently live-verified at `cd38b60`. No offline recovery
+implementation obligation remains. Any bookkeeping HEAD still requires its own
+normal push and live exact-commit delivery guard.
+
+Automatic provider dispatch remains disabled and unqualified. A concrete provider,
+target, trusted grant and authorized live qualification are required before
+enablement. Existing privileged symlink and application skipped-coverage obligations
+retain their owners and instruments in `state.json`.
 
 N163-N165 were added to the authoritative product backlog and published in
 `e1689cf`; this request does not authorize implementing those features or draining

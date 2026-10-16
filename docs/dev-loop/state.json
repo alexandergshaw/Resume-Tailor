@@ -1,6 +1,6 @@
 {
   "format": "manual-host-record-v1",
-  "revision": 8,
+  "revision": 9,
   "items": [
     {
       "id": "port",
@@ -9,12 +9,6 @@
       "owner": "user",
       "automaticDispatch": "disabled",
       "residuals": [
-        {
-          "step": "Before considering automatic dispatch; keep disabled until qualified",
-          "requirement": "Full offline supervisor recovery diagnostic",
-          "owner": "Operator before automatic enablement",
-          "instrument": "npm.cmd run loop:test:dispatch with reviewed execution window"
-        },
         {
           "step": "Before claiming those host observations",
           "requirement": "Two privileged symlink store observations",
@@ -35,7 +29,8 @@
         }
       ],
       "report": "items/port/final.md",
-      "acceptance": "items/port/delivery.check.md"
+      "acceptance": "items/port/delivery.check.md",
+      "offlineRecoveryEvidence": "items/recovery/verification.md"
     },
     {
       "id": "main-delivery",
@@ -60,7 +55,7 @@
       "id": "recovery",
       "objective": "Complete offline supervisor recovery verification before considering automatic enablement",
       "owner": "user",
-      "status": "verifying",
+      "status": "shipped",
       "criteria": [
         "C1",
         "C2",
@@ -76,10 +71,19 @@
       "contractAcceptance": "items/recovery/contracts.check.md",
       "assumptions": [
         "Up to two independent test-file fork workers on unique temporary resources",
-        "Reviewed diagnostic window up to two hours; existing finite per-test limits retained",
+        "Two-hour invocation window; checked observation ceilings with unchanged ten-minute fixture authority and ten-second child limits",
         "No provider model, spending, install or login authority inferred"
       ],
-      "residuals": []
+      "residuals": [],
+      "verification": "items/recovery/verification.md",
+      "verificationAcceptance": "items/recovery/verification.check.md",
+      "report": "items/recovery/final.md",
+      "acceptance": "items/recovery/final.check.md",
+      "publicationObservedCommit": "cd38b60b816bffc6eca605d0899a976d682cf8da",
+      "publicationReceipt": ".agnostic-loop/recovery/delivery-first-receipt.json",
+      "publicationReview": ".agnostic-loop/recovery/delivery-first-review.json",
+      "publicationMeaning": "Recovery implementation normal-pushed and independently live-verified; subsequent bookkeeping HEAD must also pass the current live delivery guard",
+      "latestDeliveryReceipt": ".agnostic-loop/recovery/delivery-receipt.json"
     }
   ],
   "limitations": [
