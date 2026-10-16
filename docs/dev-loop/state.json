@@ -1,6 +1,6 @@
 {
   "format": "manual-host-record-v1",
-  "revision": 19,
+  "revision": 20,
   "items": [
     {
       "id": "port",
@@ -199,8 +199,8 @@
       "id": "automatic-dispatch",
       "objective": "Enable qualified bounded backlog dispatch and publish each verified chunk to main",
       "owner": "user",
-      "status": "configured",
-      "automaticDispatch": "bounded-enabled",
+      "status": "expired",
+      "automaticDispatch": "disabled-expired",
       "nextBacklogItem": "N166",
       "authorization": "User explicitly requested automatic backlog dispatch, continued work and verified main pushes on 2026-10-16",
       "plan": "items/automatic-dispatch/plan.md",
@@ -214,7 +214,22 @@
       "runDeadline": 1792190443990,
       "maxJobs": 32,
       "runtimeState": ".agnostic-loop/backlog-dispatch/N166/state",
-      "configurationObservation": "Configure exited 0; state revision 0, journal revision 1, zero jobs. This host record is a historical configuration observation, not live engine status."
+      "configurationObservation": "Configure exited 0; state revision 0, journal revision 1, zero jobs. This host record is a historical configuration observation, not live engine status.",
+      "currentObservation": "Original finite deadline 1792190443990 has elapsed. Recovery controls are delivered; no production grant was renewed and no automatic reentry was executed."
+    },
+    {
+      "id": "N169",
+      "objective": "Reject malformed model output before resume document export and correct Western Wyoming posting metadata",
+      "owner": "user",
+      "status": "shipped",
+      "report": "items/N169/verification.md",
+      "acceptance": "items/N169/verification.check.md",
+      "delivery": "items/N169/delivery.md",
+      "publicationObservedCommit": "1fed5cef2b317976d95dbe18c74d539136f3b65d",
+      "publicationObservedAt": "2026-10-16T23:43:20.027Z",
+      "verificationLimits": [
+        "Offline mocked provider/storage boundaries and synthetic DOCX paragraph verification; no live provider replay or rendered Word-layout claim."
+      ]
     }
   ],
   "limitations": [
