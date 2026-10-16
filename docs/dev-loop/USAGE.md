@@ -308,3 +308,41 @@ Its JSON shape is `schemaVersion: 1`, `id`, `objective`, `owns` (exact relative 
 paths), `verify` (string or null) and nonempty `requirements` IDs. An explicit
 workflow does not override mandatory gates or grant dispatch. The engine's `next`
 schedules already admitted activities; product queue selection is outside this port.
+
+### Exact rejected structured-proposal recovery
+
+These owner controls apply only to an already configured dispatch store and an exact rejected scope, criteria or plan **author** job with rejection `Proposal must equal actual authored JSON artifact`. They do not repair a malformed inbox or turn rejected bytes into accepted work. Keep the original inbox, packet, job, usage and consumed counters unchanged. The next author attempt must get a new job, assignment/context and publication token and pass normal import and independent checking.
+
+Before recovery, inspect the actual store and establish process/descendant termination and side-effect reconciliation. Every operation must be recorded terminated/reconciled; no other assignment or job may retain running/unknown ownership. Missing PIDs or an ended chat are insufficient. The selected assignment must be cancelled, its activity open with zero review rounds, and its item/activity/task/policy bindings must match the original admission. There must be no partial publication from the selected assignment/activity, no reviews or imported events. Already accepted ancestor artifacts do not by themselves authorize editing the rejected result or skipping later independent review. New authority requires remaining job/assignment capacity and unexpired policy/configuration deadlines.
+
+Inspect the selected item with the active, verified configuration:
+
+```powershell
+npm.cmd run loop -- dispatch status --state .agnostic-loop/configured-dispatch --config .agnostic-loop/setup/routing.json --actor EXACT_OWNER --backlog docs/backlog.yml --item EXACT_ID
+```
+
+For a store configured from a separately approved workflow, replace `--backlog docs/backlog.yml` with `--workflow EXACT_WORKFLOW_FILE`. These selection flags belong to status/drive; **recover accepts neither --backlog/--workflow nor --item**. Recovery binds the exact journal job supplied by `--job`:
+
+```powershell
+npm.cmd run loop -- dispatch recover --state .agnostic-loop/configured-dispatch --config .agnostic-loop/setup/routing.json --actor EXACT_OWNER --job EXACT_REJECTED_JOB --acknowledgement authorize-rejected-proposal-reentry
+```
+
+This records one exact owner reentry event; generic assignment reconciliation does not substitute for it. Repeating that same admitted event is idempotent and does not refund usage or create a standing retry permission. Another rejected job needs its own eligibility check and owner action. After successful admission, ordinary bounded drive can schedule a fresh attempt:
+
+```powershell
+npm.cmd run loop -- dispatch drive --state .agnostic-loop/configured-dispatch --config .agnostic-loop/setup/routing.json --actor EXACT_OWNER --backlog docs/backlog.yml --item EXACT_ID --max-steps 1
+```
+
+A separate qualification-only control supports an independently verified repair of dispatch control code before that reentry. First obtain a separately reviewed configuration through the supported qualification/attestation workflow; preserve the old configuration and evidence. This documentation is not authority to create a qualification, claim a live provider passed, change a grant, or hand-edit a configuration/journal. Only qualification `id`, `evidencePath` and `evidenceHash` may differ. Qualification inventory, target/provider/settings/executable identities, profiles, score, expiry, routing, original policy, budgets and deadlines must remain identical. Evidence/target/executable hashes are checked. Rebind additionally requires the selected assignment already reconciled and **no accepted artifact anywhere in its item**, rather than merely no publication from the selected activity.
+
+Use the reviewed successor configuration for this exact command:
+
+```powershell
+npm.cmd run loop -- dispatch recover --state .agnostic-loop/configured-dispatch --config .agnostic-loop/setup/verified-successor-routing.json --actor EXACT_OWNER --job EXACT_REJECTED_JOB --acknowledgement rebind-qualification-after-verified-control-repair
+```
+
+The transaction preserves rejected jobs, results, usage and counters, binds complete old/new state/config/journal snapshots, and retains immutable intent/completion receipts. The journal changes only its configuration identity and revision; the state adds the fixed owner maintenance event/revision. Rebind alone leaves the rejected-proposal scheduling barrier in place: the distinct reentry acknowledgement is still required using the successor configuration.
+
+While a qualification-rebind pending marker exists, ordinary status/drive/import APIs fail closed even if the three new snapshots have already been written. After interruption, preserve all bytes and resume **the same rebind command with the exact same job and successor configuration** so the persisted intent can replay only a legal write prefix. Foreign/tampered state, journal, marker, receipt or a different configuration is a refusal, not permission to delete a marker, rewrite history or refresh grants. Exact completed replay is idempotent; a canonical configuration no-op grants no reentry. Neither replay nor no-op creates a fresh dispatch budget.
+
+An expired original production grant remains expired. These controls never extend its deadlines or qualification expiry, reset consumed attempts, enable a provider, establish a new live qualification, or prove reliable unattended operation. A new local offline verification window does not renew production authority. If capacity/deadline or proof prerequisites are missing, leave dispatch fenced and report the specific blocker.
