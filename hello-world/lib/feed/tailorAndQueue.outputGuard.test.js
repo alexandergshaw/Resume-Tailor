@@ -1,0 +1,30 @@
+import {beforeEach,afterEach,describe,expect,it,vi} from "vitest";
+import {makeSupabase} from "../../test/helpers/supabaseMock.js";
+vi.mock("mammoth",()=>({default:{extractRawText:vi.fn()}}));
+vi.mock("@/lib/config/env",()=>({getServerEnv:vi.fn()}));
+vi.mock("@/lib/llm/geminiClient",()=>({getGeminiClient:vi.fn()}));
+vi.mock("@/lib/supabase/writePosition",()=>({writePositionMerged:vi.fn()}));
+vi.mock("@/lib/supabase/upsertApplication",()=>({upsertApplication:vi.fn()}));
+vi.mock("@/lib/supabase/saveGeneratedResume",()=>({saveGeneratedResume:vi.fn()}));
+vi.mock("@/lib/supabase/saveGeneratedCoverLetter",()=>({saveGeneratedCoverLetter:vi.fn()}));
+vi.mock("@/lib/supabase/applicationStatusWriter",()=>({writeApplicationStatus:vi.fn()}));
+vi.mock("@/lib/feed/selectQueueCandidates",()=>({postingToJob:vi.fn()}));
+import mammoth from "mammoth";
+import {getServerEnv} from "@/lib/config/env";
+import {getGeminiClient} from "@/lib/llm/geminiClient";
+import {writePositionMerged} from "@/lib/supabase/writePosition";
+import {upsertApplication} from "@/lib/supabase/upsertApplication";
+import {saveGeneratedResume} from "@/lib/supabase/saveGeneratedResume";
+import {saveGeneratedCoverLetter} from "@/lib/supabase/saveGeneratedCoverLetter";
+import {writeApplicationStatus} from "@/lib/supabase/applicationStatusWriter";
+import {postingToJob} from "@/lib/feed/selectQueueCandidates";
+import {tailorAndQueueOne} from "./tailorAndQueue";
+const lines=["Alex Example","Platform engineer","Built reliable systems."];
+let generateContent;
+beforeEach(()=>{vi.clearAllMocks();vi.stubEnv("RESUME_ENGINE","gemini");mammoth.extractRawText.mockResolvedValue({value:lines.join("\n")});getServerEnv.mockReturnValue({geminiModel:"test-model"});generateContent=vi.fn();getGeminiClient.mockReturnValue({models:{generateContent}});postingToJob.mockReturnValue({id:"gh-1",title:"Platform Engineer",company:"Example",description:"Build systems",url:"https://example.test/job"});writePositionMerged.mockResolvedValue({id:"position-1",error:null});saveGeneratedResume.mockResolvedValue("generated-1");upsertApplication.mockResolvedValue("application-1");writeApplicationStatus.mockResolvedValue({changed:true});});
+afterEach(()=>vi.unstubAllEnvs());
+function args(){return {admin:makeSupabase({applications:{data:null,error:null},feed_user_state:{data:null,error:null}}),userId:"user-1",posting:{id:"feed-1"},resumeBuffer:Buffer.from("fixture source"),coverLetterBuffer:Buffer.from("fixture cover")};}
+describe("queue consumes only accepted generated output",()=>{
+ it("real queue to headless to Gemini refuses malformed resume before generated persistence or application writes",async()=>{generateContent.mockResolvedValue({text:'```json\n{"resultLines":["unfinished',candidates:[{finishReason:"STOP"}]});await expect(tailorAndQueueOne(args())).rejects.toMatchObject({code:"TAILOR_OUTPUT_INVALID"});expect(writePositionMerged).toHaveBeenCalledTimes(1);expect(saveGeneratedResume).not.toHaveBeenCalled();expect(saveGeneratedCoverLetter).not.toHaveBeenCalled();expect(upsertApplication).not.toHaveBeenCalled();expect(writeApplicationStatus).not.toHaveBeenCalled();expect(generateContent).toHaveBeenCalledTimes(1);});
+ it("valid generated lines still reach ordinary persistence and queue placement",async()=>{generateContent.mockResolvedValue({text:JSON.stringify({jobTitle:"Platform Engineer",companyName:"Example",resultLines:lines}),candidates:[{finishReason:"STOP"}]});const result=await tailorAndQueueOne({...args(),coverLetterBuffer:null});expect(result.generatedResumeId).toBe("generated-1");expect(saveGeneratedResume).toHaveBeenCalledWith(expect.anything(),expect.objectContaining({content:lines.join("\n"),contentLines:lines,sourceResumePath:"user-1/resume"}));expect(upsertApplication).toHaveBeenCalledTimes(1);expect(writeApplicationStatus).toHaveBeenCalledTimes(1);});
+});

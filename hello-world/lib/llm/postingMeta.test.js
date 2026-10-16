@@ -180,3 +180,13 @@ describe("cleanPostingTitle", () => {
     expect(cleanPostingTitle(null)).toBe("");
   });
 });
+
+describe("owner posting metadata regression", () => {
+  it("honors tab-delimited role labels and logo employer without navigation or discipline leakage", () => {
+    const posting = "Skip to Main Content\nWestern Wyoming logo\nToggle navigation\nAdjunct Faculty - Information Systems\n | \nPosting Details\nPosition Summary Information\nPosting Number\tP2318\nJob Title\tAdjunct Faculty - Information Systems\nStudents Only\tNo\nJob Description Summary\t\nTeach Information Systems.";
+    expect(extractPostingMeta(posting)).toEqual({jobTitle:"Adjunct Faculty - Information Systems",companyName:"Western Wyoming"});
+  });
+  it("preserves legitimate Systems employers and role wording", () => {
+    expect(extractPostingMeta("Job Title\tInformation Systems Engineer\nCompany: Acme Systems")).toEqual({jobTitle:"Information Systems Engineer",companyName:"Acme Systems"});
+  });
+});

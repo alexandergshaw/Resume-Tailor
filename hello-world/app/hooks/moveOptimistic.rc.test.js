@@ -122,6 +122,7 @@ let container = null;
 let root = null;
 let putGate = null;
 let putShouldFail = false;
+let moveCompletion = null;
 
 function makeDeferred() {
   let resolve;
@@ -139,6 +140,15 @@ function Probe({ initialMap }) {
   const [tailoringMap, setTailoringMap] = useState(initialMap);
   const [previewReloadKey, setPreviewReloadKey] = useState(0);
   const research = useCompanyResearch({ tailoringMap, setTailoringMap, setPreviewReloadKey });
+  // Observe the real arrow's exact operation, including splice, PUT and reconciliation.
+  const trackedResearch = {
+    ...research,
+    moveInsertedFact(...args) {
+      const completion = research.moveInsertedFact(...args);
+      moveCompletion = completion;
+      return completion;
+    },
+  };
   const preview = useDocumentPreview({
     tailoringMap,
     setTailoringMap,
@@ -159,7 +169,7 @@ function Probe({ initialMap }) {
   return createElement(DocumentPreviewMount, {
     preview,
     tailoringMap,
-    research,
+    research: trackedResearch,
     chat: { askAiAbout: () => {} },
     tailorEngine: "gemini",
     previewReloadKey,
@@ -176,6 +186,7 @@ beforeEach(() => {
   probe = null;
   putGate = null;
   putShouldFail = false;
+  moveCompletion = null;
   globalThis.fetch = vi.fn(async (url, init = {}) => {
     const method = (init.method || "GET").toUpperCase();
     const u = String(url);
@@ -237,17 +248,13 @@ function coverLines() {
   return entry().coverLetterResultLines || [];
 }
 
-async function clickForwardSettle(getButtons = laterButtons, timeoutMs = 400) {
-  const before = coverLines().join("\n");
+async function clickForwardSettle(getButtons = laterButtons) {
+  moveCompletion = null;
   await act(async () => {
     getButtons()[0].click();
+    expect(moveCompletion, "the real arrow did not invoke moveInsertedFact").toBeTruthy();
+    await moveCompletion;
   });
-  for (let n = 0; n < 40; n += 1) {
-    await act(async () => {
-      await new Promise((r) => setTimeout(r, 10));
-    });
-    if (coverLines().join("\n") !== before && putBodies.length > 0) break;
-  }
   await flush();
 }
 

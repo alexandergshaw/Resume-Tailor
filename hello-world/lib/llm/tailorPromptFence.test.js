@@ -110,6 +110,7 @@ function hiringEmailPrompt(over = {}) {
 // actually goes: off the request handed to the Gemini client.
 async function resumePrompt(over = {}) {
   const generateContent = vi.fn().mockResolvedValue({
+    candidates: [{ finishReason: "STOP" }],
     text: JSON.stringify({ jobTitle: "Backend Engineer", companyName: "Acme", resultLines: ["a", "b", "c"] }),
   });
   getServerEnv.mockReturnValue({ geminiModel: "gemini-2.5-flash" });

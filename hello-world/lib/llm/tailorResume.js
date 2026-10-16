@@ -225,53 +225,59 @@ function fitLinesToCount(lines, targetCount) {
   return lines;
 }
 
-function parseStructuredResult(rawText, targetCount) {
-  if (!rawText) {
-    return {
-      resultLines: new Array(targetCount).fill(""),
-      jobTitle: "",
-      companyName: "",
-    };
+// Never attach the model body or a parser exception to this public error.
+export class TailorOutputError extends Error {
+  constructor(code, completionStatus = "unknown") {
+    super(code === "TAILOR_OUTPUT_INCOMPLETE"
+      ? "Unable to generate a complete document. Please try again."
+      : "Unable to generate a valid document. Please try again.");
+    this.name = "TailorOutputError";
+    this.code = code;
+    this.completionStatus = completionStatus;
   }
+}
 
-  const directJsonMatch = rawText.match(/\{[\s\S]*\}/);
-
-  if (directJsonMatch) {
-    try {
-      const parsed = JSON.parse(directJsonMatch[0]);
-      return {
-        resultLines: fitLinesToCount(
-          Array.isArray(parsed.resultLines)
-            ? parsed.resultLines.map((line) => String(line || ""))
-            : [],
-          targetCount,
-        ),
-        jobTitle: typeof parsed.jobTitle === "string" ? parsed.jobTitle.trim() : "",
-        companyName: typeof parsed.companyName === "string" ? parsed.companyName.trim() : "",
-      };
-    } catch {
-      // Fall through to line-based parsing.
-    }
+function readCompleteOutput(response) {
+  const reason = response?.candidates?.[0]?.finishReason;
+  if (reason !== "STOP") {
+    const known = ["MAX_TOKENS", "SAFETY", "RECITATION", "OTHER", "BLOCKLIST", "PROHIBITED_CONTENT", "SPII", "MALFORMED_FUNCTION_CALL", "IMAGE_SAFETY"];
+    throw new TailorOutputError("TAILOR_OUTPUT_INCOMPLETE", known.includes(reason) ? reason : "unknown");
   }
+  // Gemini's text accessor may itself inspect/throw on incomplete candidates.
+  let text;
+  try {
+    text = response.text;
+  } catch {
+    throw new TailorOutputError("TAILOR_OUTPUT_INVALID", "STOP");
+  }
+  if (typeof text !== "string" || !text.trim()) throw new TailorOutputError("TAILOR_OUTPUT_INVALID", "STOP");
+  return text.trim();
+}
 
-  const lineEntries = rawText
-    .split("\n")
-    .map((line) => line.trim())
-    .filter(Boolean)
-    .map((line) => {
-      const colonMatch = line.match(/^\d+[:.)-]\s*(.*)$/);
-      if (colonMatch) {
-        return colonMatch[1];
-      }
-
-      return line;
-    });
-
-  return {
-    resultLines: fitLinesToCount(lineEntries, targetCount),
-    jobTitle: "",
-    companyName: "",
-  };
+function parseStructuredResult(rawText, targetCount, allowPlainCover = false) {
+  const fenced = rawText.match(/^```(?:json)?\s*\n([\s\S]*?)\n```$/i);
+  const jsonText = fenced ? fenced[1].trim() : rawText;
+  let parsed;
+  try {
+    parsed = JSON.parse(jsonText);
+  } catch {
+    // Only genuinely plain legacy cover prose can use line fitting.
+    const structured = /```|^[\s]*[\[{"]|["']?(?:resultLines|jobTitle|companyName)["']?\s*:/i.test(rawText);
+    if (!allowPlainCover || structured) throw new TailorOutputError("TAILOR_OUTPUT_INVALID", "STOP");
+    const lines = rawText.split("\n").map(line => line.trim()).filter(Boolean)
+      .map(line => line.replace(/^\d+[:.)-]\s*/, ""));
+    if (!lines.some(line => line.trim())) throw new TailorOutputError("TAILOR_OUTPUT_INVALID", "STOP");
+    return { resultLines: fitLinesToCount(lines, targetCount), jobTitle: "", companyName: "" };
+  }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)
+    || Object.keys(parsed).some(key => !["jobTitle", "companyName", "resultLines"].includes(key))
+    || !Array.isArray(parsed.resultLines) || parsed.resultLines.length !== targetCount
+    || !parsed.resultLines.every(line => typeof line === "string")
+    || !parsed.resultLines.some(line => line.trim())
+    || ["jobTitle", "companyName"].some(key => parsed[key] !== undefined && typeof parsed[key] !== "string")) {
+    throw new TailorOutputError("TAILOR_OUTPUT_INVALID", "STOP");
+  }
+  return { resultLines: parsed.resultLines, jobTitle: (parsed.jobTitle || "").trim(), companyName: (parsed.companyName || "").trim() };
 }
 
 export async function generateTailoredResumeDraft({
@@ -321,14 +327,11 @@ export async function generateTailoredResumeDraft({
     ...(jobPostingUrl ? { config: { tools: [{ urlContext: {} }] } } : {}),
   });
 
-  const output = response.text?.trim() || "";
+  const output = readCompleteOutput(response);
   const parsedResult = parseStructuredResult(output, normalizedTemplateLines.length);
   const resultLines = parsedResult.resultLines;
   const result = resultLines.join("\n").trim();
 
-  if (!output) {
-    throw new Error("Gemini returned an empty response.");
-  }
 
   return {
     result,
@@ -486,7 +489,7 @@ export async function generateTailoredCoverLetterDraft({
     // everything else, so the top-level form this branch used never reached
     // Google. That left the URL branch sending NEITHER a tool NOR a JSON mime
     // type — a third mode nobody designed, surviving only because
-    // parseStructuredResult is defensive about prose. Both directions are
+    // the legacy cover parser accepted prose. Both directions are
     // pinned on the wire by tailorResume.wire.test.js: URL -> tools and no
     // JSON mime, no URL -> JSON mime and no tools.
     ...(jobPostingUrl
@@ -494,15 +497,9 @@ export async function generateTailoredCoverLetterDraft({
       : { config: { responseMimeType: "application/json" } }),
   });
 
-  const output = response.text?.trim() || "";
-  if (!output) {
-    throw new Error("Gemini returned an empty cover letter response.");
-  }
-  if (process.env.NODE_ENV !== "production") {
-    console.log("[cover-letter] raw output:", output.slice(0, 400));
-  }
+  const output = readCompleteOutput(response);
 
-  const parsed = parseStructuredResult(output, normalizedTemplateLines.length);
+  const parsed = parseStructuredResult(output, normalizedTemplateLines.length, true);
   const hasContent = parsed.resultLines.some((line) => line && line.trim().length > 0);
   if (!hasContent) {
     throw new Error("Cover letter response did not contain any usable lines.");

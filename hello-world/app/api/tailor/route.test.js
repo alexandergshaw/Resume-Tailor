@@ -69,6 +69,7 @@ function tailorRequest({
 function mockGeminiOk(resultLines = ["Jane Doe", "Software Engineer", "Built things."]) {
   getServerEnv.mockReturnValue({ geminiModel: "gemini-2.5-flash" });
   const generateContent = vi.fn().mockResolvedValue({
+    candidates: [{ finishReason: "STOP" }],
     text: JSON.stringify({ jobTitle: "Payments Engineer", companyName: "Acme", resultLines }),
   });
   getGeminiClient.mockReturnValue({ models: { generateContent } });
@@ -108,7 +109,7 @@ describe("POST /api/tailor feeds project pages into the Gemini prompt", () => {
   it("never reads pages from the request body — only formData fields the route already parses reach the engine", async () => {
     signedIn("user-1");
     listPages.mockResolvedValue({ pages: [page()], error: null });
-    const generateContent = mockGeminiOk();
+    const generateContent = mockGeminiOk(["Jane Doe", "Engineer"]);
 
     const fd = new FormData();
     fd.append("jobPosting", "We need an engineer.");

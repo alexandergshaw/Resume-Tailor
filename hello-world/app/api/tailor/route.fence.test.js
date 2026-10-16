@@ -72,6 +72,7 @@ function signedOut() {
 function mockGeminiOk() {
   getServerEnv.mockReturnValue({ geminiModel: "gemini-2.5-flash" });
   const generateContent = vi.fn().mockResolvedValue({
+    candidates: [{ finishReason: "STOP" }],
     text: JSON.stringify({
       jobTitle: "Backend Engineer",
       companyName: "Acme",

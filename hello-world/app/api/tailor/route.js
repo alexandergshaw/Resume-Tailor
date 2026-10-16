@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { TailorOutputError } from "@/lib/llm/tailorResume";
 import mammoth from "mammoth";
 import { getEngine, resolveEngineName } from "@/lib/llm/engines";
 import { combineMatches } from "@/lib/llm/engines/tailor-lite/matchReport";
@@ -760,6 +761,9 @@ export async function POST(request) {
       emailError,
     });
   } catch (error) {
+    if (error instanceof TailorOutputError) {
+      return NextResponse.json({ error: error.message, code: error.code, completionStatus: error.completionStatus }, { status: 502 });
+    }
     console.error("Error generating tailored resume:", error);
     return NextResponse.json(
       {

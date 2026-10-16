@@ -25,7 +25,7 @@ const JUNK_LINE = new RegExp(
   "^(?:" +
     [
       "skip to (?:main )?content",
-      "(?:main )?navigation",
+      "(?:main )?navigation", "toggle navigation", "posting details", "position summary information", ".+ logo",
       "home", "search(?: jobs?)?", "benefits", "choose \\w+",
       "(?:temporary|student) employment", "career development",
       "help(?: and faq)?", "faq", "utility", "log\\s?in", "log\\s?out", "sign in", "sign out",
@@ -189,6 +189,7 @@ function findOrg(lines) {
 export function extractPostingMeta(posting) {
   const lines = String(posting || "")
     .split(/\r?\n/)
+    .flatMap(line => line.split(/\t+/))
     .map(cleanLine)
     .filter(Boolean);
 
@@ -245,7 +246,11 @@ export function extractPostingMeta(posting) {
 
   // 4) An organization name the posting mentions (preferred over a guessed
   //    "second heading", which on a scraped page is usually navigation chrome).
-  if (!companyName) companyName = findOrg(lines);
+  if (!companyName) {
+    const logo = lines.find(line => /^.{2,80} logo$/i.test(line));
+    companyName = logo ? logo.replace(/\s+logo$/i, "").trim() : findOrg(lines.filter(line =>
+      line !== jobTitle && !TITLE_INLINE.test(line) && !TITLE_BLOCK_LABELS.some(label => label.test(line))));
+  }
 
   // 5) Fall back to the first/second heading-shaped lines (the app's clean
   //    job-card shape: title, then "Company in Location").
