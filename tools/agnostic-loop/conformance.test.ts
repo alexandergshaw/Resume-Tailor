@@ -1,15 +1,17 @@
 import { spawn } from 'node:child_process';
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
-import os from 'node:os';
+import { mkdtemp, mkdir, readFile, writeFile } from 'node:fs/promises';
+import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { cliArguments, createDemoFixture, DemoDriver, demoWorker, invokeCli, runDemo } from './demo';
 import type { Policy } from './types';
 
 const directories: string[] = [];
-afterEach(async () => { await Promise.all(directories.splice(0).map(directory => rm(directory, { recursive: true, force: true }))); });
+const fixtureDirectory = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../.agnostic-loop/test-fixtures');
+afterEach(async () => { for (const root of directories.splice(0)) console.info(`[retained-core-fixture] ${root}`); });
 async function fixture(configure?: (policy: Policy) => void) {
-  const root = await mkdtemp(path.join(os.tmpdir(), 'agnostic-conformance-'));
+  await mkdir(fixtureDirectory, { recursive: true });
+  const root = await mkdtemp(path.join(fixtureDirectory, 'agnostic-conformance-'));
   directories.push(root);
   const created = await createDemoFixture(root, configure);
   const d = new DemoDriver(created.root, created.workspace, created.stateDirectory);
@@ -26,7 +28,8 @@ async function assertRejected(d: DemoDriver, type: string, payload: Record<strin
 
 describe('public CLI conformance', () => {
   it('traverses accepted artifacts, actual subprocess gates, verification and local delivery', async () => {
-    const root = await mkdtemp(path.join(os.tmpdir(), 'agnostic-demo-test-'));
+    await mkdir(fixtureDirectory, { recursive: true });
+    const root = await mkdtemp(path.join(fixtureDirectory, 'agnostic-demo-test-'));
     directories.push(root);
     const result = await runDemo(root) as { status: string; stateDirectory: string; evidence: string[]; rejected: string[]; ownerDisposition: { rounds: number; acceptedHash: string } };
     expect(result.status).toBe('shipped');

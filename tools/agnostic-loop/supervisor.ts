@@ -4,7 +4,7 @@ import { canonical } from './json';
 import { validateRoutingConfig, validateJournal } from './routing';
 import { validateBacklogSelection } from './routing-validation';
 import { probeProvider } from './providers';
-import { loadJournal, saveJournal, emptyJournal, atomicJson, configHash } from './dispatch-store';
+import { loadJournal, saveJournal, emptyJournal, atomicJson, configHash, rebindQualifications, requireProposalMaintenance, requireControlCapacity, proposalReentryEvent, hasProposalReentry } from './dispatch-store';
 import { acceptedBodies, verifySelection } from './workflow';
 import { nextActions } from './next-actions';
 import { commitEvent, importJob } from './supervisor-inbox';
@@ -37,6 +37,22 @@ export const controlDispatch:ControlDispatchFunction = async(store,raw,action,re
 };
 export const recoverDispatch:RecoverDispatchFunction = async(store,raw,options)=>{
   const config=validateRoutingConfig(raw);
+  if(options?.acknowledgement==='rebind-qualification-after-verified-control-repair'){
+    requireThat(typeof options.job==='string'&&!!options.job,'Exact rejected job required');
+    await store.locked(()=>rebindQualifications(store,config,options.job!));return statusFor(store,config);
+  }
+  if(options?.acknowledgement==='authorize-rejected-proposal-reentry'){
+    requireThat(typeof options.job==='string'&&!!options.job,'Exact rejected job required');
+    await store.locked(async()=>{
+      const state=await store.load(),journal=await loadJournal(store,config),job=journal.jobs[options.job!];
+      requireThat(config.grant.owner===state.policy.owner,'Fixed owner required');
+      if(job&&hasProposalReentry(state,job))return;
+      requireProposalMaintenance(state,journal,options.job!,false);
+      requireControlCapacity(state,journal,config);
+      requireThat(Date.now()<state.policy.deadline&&Date.now()<config.budget.deadline,'Reentry budget exhausted');
+      const event=proposalReentryEvent(state,job);await commitEvent(store,state,event.id,event.type,event.payload);
+    });return statusFor(store,config);
+  }
   requireThat(options&&options.acknowledgement==='mark-uncertain'||options?.acknowledgement==='operations-stopped-and-side-effects-reconciled','Explicit recovery acknowledgement required');
   await store.locked(async()=>{
     let state=await store.load();const journal=await loadJournal(store,config);

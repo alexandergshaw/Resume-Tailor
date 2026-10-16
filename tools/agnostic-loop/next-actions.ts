@@ -1,5 +1,6 @@
 import type { NextAction, NextActionsFunction } from './dispatch-types';
 import { actionKey, activityId, checkedPlan, taskFor, validatePlanScope } from './workflow';
+import { hasProposalReentry } from './dispatch-store';
 
 export const nextActions: NextActionsFunction = (state,journal,context) => {
   const item = state.items[context.selection.id];
@@ -7,7 +8,7 @@ export const nextActions: NextActionsFunction = (state,journal,context) => {
   const inbox = Object.values(journal.jobs).find(j => j.status === 'terminated' && j.resultHash);
   if (inbox) return [{kind:'import-inbox',key:inbox.actionKey,job:inbox.id}];
   if (Object.values(journal.jobs).some(j => ['prepared','pending','running','unknown'].includes(j.status))) return terminal('blocked','Outstanding launch requires observation or explicit owner recovery');
-  if (Object.values(journal.jobs).some(j => j.item === context.selection.id && j.status === 'rejected' && !j.rejection?.startsWith('retryable-execution:'))) return terminal('blocked',journal.checkpoints[context.selection.id] ?? 'Rejected launch requires explicit reconciliation or corrected manual continuation');
+  if (Object.values(journal.jobs).some(j => j.item === context.selection.id && j.status === 'rejected' && !j.rejection?.startsWith('retryable-execution:') && !hasProposalReentry(state,j))) return terminal('blocked',journal.checkpoints[context.selection.id] ?? 'Rejected launch requires explicit reconciliation or corrected manual continuation');
   if (state.runStatus !== 'running') return terminal('blocked',`Run ${state.runStatus}`);
   if (context.now > context.config.budget.deadline || context.now > state.policy.deadline) return terminal('blocked','Dispatch deadline exhausted');
   if (!item) return [{kind:'bootstrap',key:actionKey(context.selection,context.config),selection:context.selection}];

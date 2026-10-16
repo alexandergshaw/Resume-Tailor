@@ -1,14 +1,16 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
-import os from 'node:os';
+import { mkdtemp, mkdir, readFile, writeFile } from 'node:fs/promises';
+import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import { LoopStore } from './store';
 import { runGate } from './runner';
 import type { Policy } from './types';
 const roots: string[] = [];
-afterEach(async () => { for (const root of roots.splice(0)) await rm(root, {recursive:true,force:true}); delete process.env.AGNOSTIC_RUN_SECRET; });
+const fixtureDirectory = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../.agnostic-loop/test-fixtures');
+afterEach(async () => { for (const root of roots.splice(0)) console.info(`[retained-core-fixture] ${root}`); delete process.env.AGNOSTIC_RUN_SECRET; });
 async function fixture(script: string, commandTimeout=20000) {
-  const root = await mkdtemp(path.join(os.tmpdir(),'agnostic-runner-')); roots.push(root); const workspace = path.join(root,'workspace'); await mkdir(workspace);
+  await mkdir(fixtureDirectory, { recursive: true });
+  const root = await mkdtemp(path.join(fixtureDirectory,'agnostic-runner-')); roots.push(root); const workspace = path.join(root,'workspace'); await mkdir(workspace);
   const store = new LoopStore(path.join(root,'state'));
   const policy: Policy = { owner:'owner',workspace,allowedActions:['run'],candidateExclusions:[],environmentKeys:['AGNOSTIC_RUN_SECRET'],externalFiles:[],gates:{test:{executable:process.execPath,args:['-e',script.replace('FIXTURE_ROOT',JSON.stringify(root))],resources:['workspace']}},concurrency:3,deadline:Date.now()+60_000,maxAssignments:10,commandTimeout };
   await store.init(policy);
