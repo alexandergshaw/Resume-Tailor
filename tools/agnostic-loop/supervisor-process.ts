@@ -23,6 +23,20 @@ class FailedGateExecution extends RetryableExecution {}
 const artifactMetadata=(artifact:Artifact):Artifact=>({id:artifact.id,activity:artifact.activity,version:artifact.version,hash:artifact.hash,path:artifact.path,author:artifact.author,inputs:artifact.inputs});
 const candidateBinding=(candidate:Candidate,paths:string[]):Candidate=>({...candidate,files:Object.fromEntries(paths.filter(p=>candidate.files[p]!==undefined).map(p=>[p,candidate.files[p]]))});
 
+export function assignmentDeadline(now:number,providerTimeout:number,gateTimeout:number,gateCount:number,policyDeadline:number,dispatchDeadline:number):number {
+  requireThat([now,providerTimeout,gateTimeout,gateCount,policyDeadline,dispatchDeadline].every(value=>Number.isSafeInteger(value)&&value>=0),'Assignment deadline requires nonnegative safe integers');
+  const cap=Math.min(policyDeadline,dispatchDeadline),remaining=cap-now;
+  if(remaining<=0)return cap;
+  let allowance=Math.min(providerTimeout,remaining);
+  allowance+=Math.min(30_000,remaining-allowance);
+  // Compare before multiplying: even a huge valid gate count cannot overflow.
+  if(gateTimeout>0&&gateCount>0){
+    const available=remaining-allowance;
+    allowance+=gateCount>=Math.ceil(available/gateTimeout)?available:gateCount*gateTimeout;
+  }
+  return now+allowance;
+}
+
 export function redact(text:string,config:RoutingConfig):string {
   let result = text;
   for (const key of new Set(config.providers.flatMap(p => p.environmentKeys))) { if(['PATH','HOME','USERPROFILE','TEMP','TMP','SYSTEMROOT','COMSPEC','NODE_ENV','LANG','LOCALAPPDATA','APPDATA'].includes(key.toUpperCase()))continue; const value = process.env[key]; if (value) { const escaped=JSON.stringify(value).slice(1,-1),doubleEscaped=JSON.stringify(escaped).slice(1,-1); for(const representation of [...new Set([value,escaped,doubleEscaped])].sort((a,b)=>b.length-a.length))result=result.split(representation).join('[redacted]'); } }
@@ -76,7 +90,7 @@ export async function launchTask(store:LoopStore,config:RoutingConfig,selection:
     journal.jobs[id] = job; journal.reservationsMicroUsd += route.reservedMicroUsd ?? 0; await saveJournal(store,journal);
     context.artifactAllocation = {directory:config.grant.artifactDirectory,paths:task.writePaths.filter(p=>p.startsWith(`${config.grant.artifactDirectory}/`)),configHash:configHash(config)};
     const allowedActions = state.policy.allowedActions.filter(action=>['read','write','review','run','import'].includes(action));
-    state = await commitEvent(store,state,publicationToken,'assignment.start',{id:assignmentId,item:task.item,activity:task.activity,role:task.role,worker,inputs:task.acceptedInputs,writePaths:task.writePaths,affectedPaths:task.affectedPaths,resources:task.resources,allowedActions,deadline:Math.min(state.policy.deadline,config.budget.deadline,context.now+route.provider.timeoutMs+30_000),deliverables:task.artifactIds},context);
+    state = await commitEvent(store,state,publicationToken,'assignment.start',{id:assignmentId,item:task.item,activity:task.activity,role:task.role,worker,inputs:task.acceptedInputs,writePaths:task.writePaths,affectedPaths:task.affectedPaths,resources:task.resources,allowedActions,deadline:assignmentDeadline(context.now,route.provider.timeoutMs,state.policy.commandTimeout,task.gateNames.length,state.policy.deadline,config.budget.deadline),deliverables:task.artifactIds},context);
     await saveJournal(store,journal);
   });
   try {

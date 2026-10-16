@@ -1,0 +1,9 @@
+# Independent deadline-plan check
+
+Reviewer /root/dispatch_check, fresh independent context. Round 1 ACCEPTED, no findings. Artifact docs/dev-loop/items/automatic-dispatch/deadline-plan.md SHA256 3B1EBA36B5819386D7ECF7F73347744D1E0EECA3494FA5FC3CA27CC8CBF6551B. Read actual supervisor-process launch/admission and gate ordering, runner, engine liveAssignment and store monitor.
+
+D1-D4 bound the repair to assignment admission lifetime in supervisor-process.ts and one new focused test file. Serial gate allowances include both pre-provider verification/final-report and post-provider implementation cases; fixed policy/routing caps, no-gate equality, safe saturated arithmetic and unchanged provider child timeout are explicit. The proposed real subprocess gate barrier and engine evidence/import/finish oracles must detect the old deadline defect; helper-only green or import failure is expressly insufficient. Overflow, caps and actual expiry remain independent negative obligations. Isolated mutation controls and existing repair/cancellation diagnostics remain mandatory.
+
+Correction to my earlier informal message: createAssignmentMonitor checks running status, not wall-clock deadline. Engine liveAssignment enforces expiry during publication/evidence transitions; the plan accurately states this limitation and does not claim prompt process termination. This correction does not change the identified publication failure.
+
+The qualification receiver requires executed-path mapping, actual frozen cancellation packet inspection, preserved old evidence and a new independently checked immutable manifest/attestation without extending expiry. This plan alone neither requalifies nor enables anything. Stopping point: implementation, independent actual-diff review and independent measurements; no configuration or generation admitted by this check.
