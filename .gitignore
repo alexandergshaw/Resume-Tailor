@@ -5,3 +5,10 @@
 # and nothing else. A node_modules/ at this level was therefore untracked but not
 # ignored, so a single `git add -A` would have committed the whole tree.
 node_modules/
+
+# Local loop stores, provider settings and bulky evidence are never source.
+/.agnostic-loop/
+/dispatch-artifacts/
+
+# Machine-local permissions/configuration are not part of repository delivery.
+/.claude/settings.local.json

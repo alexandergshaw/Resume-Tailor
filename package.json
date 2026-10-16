@@ -1,0 +1,13 @@
+{
+  "name": "resume-tailor-dev-loop",
+  "private": true,
+  "engines": { "node": ">=22.14.0" },
+  "scripts": {
+    "loop": "node tools/loop.mjs",
+    "loop:test": "node hello-world/node_modules/vitest/vitest.mjs run --config tools/vitest.config.mjs",
+    "loop:test:dispatch": "node hello-world/node_modules/vitest/vitest.mjs run --config tools/vitest.dispatch.config.mjs",
+    "loop:demo": "node tools/loop.mjs demo",
+    "loop:handoff": "node tools/loop.mjs handoff",
+    "loop:delivery": "node tools/main-delivery.mjs"
+  }
+}

@@ -1,0 +1,69 @@
+{
+  "format": "manual-host-record-v1",
+  "revision": 6,
+  "items": [
+    {
+      "id": "port",
+      "objective": "Adapt the provider-agnostic durable development loop to Resume-Tailor",
+      "status": "shipped",
+      "owner": "user",
+      "automaticDispatch": "disabled",
+      "residuals": [
+        {
+          "step": "Before considering automatic dispatch; keep disabled until qualified",
+          "requirement": "Full offline supervisor recovery diagnostic",
+          "owner": "Operator before automatic enablement",
+          "instrument": "npm.cmd run loop:test:dispatch with reviewed execution window"
+        },
+        {
+          "step": "Before claiming those host observations",
+          "requirement": "Two privileged symlink store observations",
+          "owner": "Repository operator",
+          "instrument": "Rerun named store.test.ts cases on symlink-capable host"
+        },
+        {
+          "step": "Before live provider use or unattended reliance",
+          "requirement": "Live provider/integration and arbitrary process-tree behavior",
+          "owner": "Owner of separately authorized integration",
+          "instrument": "Qualified live provider, usage, integration and process-tree instruments"
+        },
+        {
+          "step": "When their required conditions are available",
+          "requirement": "Existing application skipped coverage",
+          "owner": "Application owners",
+          "instrument": "Existing skipped application instruments"
+        }
+      ],
+      "report": "items/port/final.md",
+      "acceptance": "items/port/delivery.check.md"
+    },
+    {
+      "id": "main-delivery",
+      "objective": "Require commit and verified normal push to origin/main for repository completion",
+      "owner": "user",
+      "status": "local-accepted-awaiting-push",
+      "criteria": [
+        "D1",
+        "D2",
+        "D3",
+        "D4",
+        "D5"
+      ],
+      "publicationReceipt": ".agnostic-loop/main-delivery-receipt.json",
+      "residuals": [],
+      "report": "items/main-delivery/final.md",
+      "acceptance": "items/main-delivery/final.check.md"
+    }
+  ],
+  "limitations": [
+    "This host record is not a transactional engine store or independent acceptance."
+  ],
+  "repositoryDeliveryPolicy": {
+    "remote": "origin",
+    "branch": "main",
+    "required": true,
+    "guard": "npm.cmd run loop:delivery",
+    "localStateIsPublicationProof": false,
+    "receipt": ".agnostic-loop/main-delivery-receipt.json"
+  }
+}

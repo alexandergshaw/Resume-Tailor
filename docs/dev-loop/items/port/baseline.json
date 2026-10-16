@@ -1,0 +1,7 @@
+{
+  "command": "npm.cmd run backlog:check",
+  "cwd": "C:\\Users\\alexa\\OneDrive\\Documents\\Projects\\Resume-Tailor\\hello-world",
+  "exitCode": 0,
+  "observed": "Generated backlog matches; 156 items, 0 violations",
+  "limitation": "Node required sandbox escalation for OneDrive ancestor realpath; no product code changed"
+}
