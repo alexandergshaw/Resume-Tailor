@@ -1908,6 +1908,42 @@
   verify_proof: null
   blocked_by: []
 
+- id: "N163"
+  state: "actionable"
+  title: "OWNER 2026-10-16: Score the tailored resume against the position and show detailed reasons inside the preview/edit modal. Outcome: inside the resume preview/edit modal, score how well the current edited tailored resume matches the exact position posting and show detailed, source-grounded reasons for strengths and gaps. Bind the result to that resume/posting version and expose stale, missing-input and failed-analysis states. Reuse survey: existing lib/review contract, posting-grounded detectors and preview review surface supply evidence references and freshness patterns; assess extension rather than duplicate them. Coordinator assumptions for design: the score is an explained advisory assessment, not an ATS or hiring guarantee; unsupported claims must not improve the assessment. Scope exact implementation paths, score rubric and verification instruments through checked design before execution."
+  owed_by: "Checked design and exact scope -> independent criteria/test design -> implement -> verify preview/edit behavior, source-grounded reasons and freshness; implementation gate unset until scoped"
+  evidence: ["Owner 2026-10-16 request verbatim: i need a feature that scores the match of a tailored resume to the position i'm applying to within the preview/edit modal and displays detailed reasons for that score", "Reuse inspected: hello-world/lib/review/contract.js, mechanicalDetectors.js, compareReviewGaps.js and app/components/preview/RegenerateRow.js"]
+  blocked_reason: null
+  instrument: null
+  owns: null
+  verify: null
+  verify_proof: null
+  blocked_by: []
+
+- id: "N164"
+  state: "actionable"
+  title: "OWNER 2026-10-16: Use the match-assessment reasons to guide resume regeneration. Outcome: let the user use reasons from N163's position-match assessment when regenerating the resume against the same posting and resume context/version. Preserve traceability from reasons used to resulting changes. Reuse survey: app/components/preview/RegenerateRow.js already exposes review-driven regeneration, stale-review handling, preservation until success and Undo; extend the existing regeneration/review pipeline rather than create a disconnected path. Coordinator assumptions for design: determine whether per-reason selection is appropriate during checked UX design; refuse or refresh stale assessment inputs, keep changes non-destructive and recoverable, use only supported candidate facts without invented qualifications, and visibly explain failure or reasons that cannot be addressed. Exact selection UX, contracts and implementation gates await checked scope/design."
+  owed_by: "After N163: checked design and exact scope -> independent test design -> implement reason-guided regeneration with freshness and recovery verification; implementation gate unset until scoped"
+  evidence: ["Owner 2026-10-16 request verbatim: i also need the ability to utlize these reasons when regenerating the resume", "Reuse inspected: hello-world/app/components/preview/RegenerateRow.js and hello-world/lib/review/regenerateAvailability.js"]
+  blocked_reason: null
+  instrument: null
+  owns: null
+  verify: null
+  verify_proof: null
+  blocked_by: ["N163"]
+
+- id: "N165"
+  state: "actionable"
+  title: "OWNER 2026-10-16: Let the LLM insert added cover-letter facts at the best contextual spot. Outcome: when adding an accepted fact to a cover letter, use the LLM to choose the best semantic insertion spot in the current letter from the fact and surrounding context. Related N62 (saved/manual placement), N66 (movement granularity) and N92 (movement, transition smoothing and forward preference) describe different capabilities; they do not establish this new LLM semantic-placement outcome. Reuse survey: lib/document/coverLetterWeave.js supplies deterministic fixed anchors and lib/acceptedFacts/factInsertion.js supplies accepted-fact insertion; app/hooks/useCoverFactPlacement.js and preview/InsertedFactsStrip.js are integration candidates. Coordinator assumptions for design: settle explicit precedence with manual/saved placement preferences; preserve accepted fact meaning/provenance, insertion highlights, removal and deduplication; preserve the current letter on failed or unsupported LLM placement and show a visible failure/recovery path. Do not silently replace user placement choices or invent candidate claims. Checked design must define safe insertion boundaries, output validation and exact implementation gates."
+  owed_by: "Checked semantic-placement design and exact scope, including interaction with N62/N66/N92 -> independent test design -> implement -> verify placement quality, preference coherence and failure recovery; implementation gate unset until scoped"
+  evidence: ["Owner 2026-10-16 request verbatim: i also need the facts that are added into the cover eltter to be inserted at the best spot by the llm", "Reuse inspected: hello-world/lib/document/coverLetterWeave.js, lib/acceptedFacts/factInsertion.js, app/hooks/useCoverFactPlacement.js and app/components/preview/InsertedFactsStrip.js; related backlog N62/N66/N92"]
+  blocked_reason: null
+  instrument: null
+  owns: null
+  verify: null
+  verify_proof: null
+  blocked_by: []
+
 # VERIFICATION (1)
 - id: "V1"
   state: "verification"
