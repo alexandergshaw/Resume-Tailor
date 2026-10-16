@@ -7,7 +7,7 @@ export { outcomeSchema } from './provider-schema';
 
 function mergedSettings(request:InvocationRequest):Record<string,string>{
   const settings={...request.provider.settings,...request.target.settings};
-  const supported=request.provider.kind==='codex'?['reasoningEffort','sandbox']:request.provider.kind==='claude'?['permissionMode','allowedTools','maxTurns','effort']:request.provider.kind==='gemini'?['approvalMode','sandbox']:Object.keys(settings);
+  const supported=request.provider.kind==='codex'?['reasoningEffort','sandbox','windowsSandbox']:request.provider.kind==='claude'?['permissionMode','allowedTools','maxTurns','effort']:request.provider.kind==='gemini'?['approvalMode','sandbox']:Object.keys(settings);
   for(const key of Object.keys(settings))if(!supported.includes(key))throw new Error(`Unsupported ${request.provider.kind} model setting: ${key}`);
   return settings;
 }
@@ -25,6 +25,7 @@ export const buildInvocation:InvocationFunction=request=>{
     if(!['read-only','workspace-write'].includes(sandbox))throw new Error('Unsupported Codex sandbox grant');
     args.push('exec','--model',request.target.model,'--json','--ephemeral','--ignore-user-config','--sandbox',sandbox,'-C',request.workspace,'--output-schema',`${request.resultPath}.schema.json`,'--output-last-message',request.resultPath);
     if(settings.reasoningEffort){if(!['none','minimal','low','medium','high','xhigh','max','ultra'].includes(settings.reasoningEffort))throw new Error('Unsupported reasoning effort');args.push('-c',`model_reasoning_effort=${JSON.stringify(settings.reasoningEffort)}`);}
+    if(settings.windowsSandbox!==undefined){if(settings.windowsSandbox!=='elevated')throw new Error('Unsupported Codex Windows sandbox backend');args.push('-c',`windows.sandbox=${JSON.stringify(settings.windowsSandbox)}`);}
     args.push('-');
   }else if(kind==='claude'){
     args.push('--print','--model',request.target.model,'--output-format','json','--json-schema',JSON.stringify(outcomeSchema));

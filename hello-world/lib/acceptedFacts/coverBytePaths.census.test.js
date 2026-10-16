@@ -209,6 +209,7 @@ describe("every cover-capable byte path is one this chunk's tests actually drive
     "app/page.js", // path 3, the chip download (:2066, :2576)
     "lib/document/docx.js", // downloadDocxFiles' own cover branch (paths 1 and 3)
     "lib/document/previewBlob.js", // path 2, the Drive save / preview render seam
+    "lib/document/defaultTemplateCapture.js", // N97 cover rebuild/fact persistence; generatedTemplateLifecycle.integration and commitFactMove.originalTemplate tests.
   ];
   const EXPECTED_RESUME_ONLY = [
     "app/components/StatusBar.js", // path 4, the status-bar drag

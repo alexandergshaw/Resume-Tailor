@@ -17,7 +17,7 @@
 // to useCompanyResearch.js's own module (design N92.design-structure.r1.md
 // section 5), so it cannot move here.
 import { applyCoverDocxEdits } from "./factDocx";
-import { uploadCoverDocx } from "../document/coverDocxStore";
+import { persistCoverFactDocument } from "../document/defaultTemplateCapture";
 
 // @param {object} args
 // @param {string[]} args.lines  the entry's ORIGINAL coverLetterResultLines (pre-move) -- what `edits`' `before` fields are checked against
@@ -34,6 +34,7 @@ import { uploadCoverDocx } from "../document/coverDocxStore";
 // @returns {Promise<{ok:true, coverDocxB64:string, coverDocxPath:string|null, data:object} | {ok:false, reason:string}>}
 export async function commitFactMove({
   jobId,
+  entry,
   lines,
   moved,
   hasCoverBytes,
@@ -52,10 +53,13 @@ export async function commitFactMove({
     const spliced = await applyCoverDocxEdits(resolvedCoverDocxB64, lines, moved.edits);
     coverDocxB64 = spliced.applied ? spliced.docxB64 : "";
     if (spliced.applied) {
-      coverDocxPath = await uploadCoverDocx(supabase, currentUserId, coverDocxB64);
+
     }
   }
 
+  const persisted = await persistCoverFactDocument({entry,lines:moved.lines,candidate:hasCoverBytes && !coverAlreadyEdited ? coverDocxB64 : "",spliceRefused:hasCoverBytes && !coverAlreadyEdited && !coverDocxB64,supabase,userId:currentUserId});
+  if (!persisted.ok) return persisted;
+  coverDocxB64 = persisted.docxB64 || coverDocxB64; coverDocxPath = persisted.docxPath;
   try {
     const res = await fetch("/api/accepted-facts", {
       method: "PUT",

@@ -62,6 +62,8 @@ export function rehydratedEntryFromApp(app, { existing = null, fallbackTitle = "
     // lets a rehydrated preview/accept resolve the faithful engine document
     // instead of only its text.
     coverLetterDocxPath: typeof cover?.docx_path === "string" ? cover.docx_path : "",
+    ...(gen?.id || existing?.resumeTemplateVersionId || existing?.resumeTemplateSource ? { resumeTemplateVersionId: gen?.id || "", resumeTemplateSource: null } : {}),
+    ...(cover?.id || existing?.coverTemplateVersionId || existing?.coverTemplateSource ? { coverTemplateVersionId: cover?.id || "", coverTemplateSource: null } : {}),
     error: "",
   };
 }

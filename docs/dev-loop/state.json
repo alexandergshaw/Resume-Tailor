@@ -1,6 +1,6 @@
 {
   "format": "manual-host-record-v1",
-  "revision": 9,
+  "revision": 16,
   "items": [
     {
       "id": "port",
@@ -84,6 +84,110 @@
       "publicationReview": ".agnostic-loop/recovery/delivery-first-review.json",
       "publicationMeaning": "Recovery implementation normal-pushed and independently live-verified; subsequent bookkeeping HEAD must also pass the current live delivery guard",
       "latestDeliveryReceipt": ".agnostic-loop/recovery/delivery-receipt.json"
+    },
+    {
+      "id": "live-provider",
+      "objective": "Qualify the existing signed-in Codex provider with bounded live evidence before production automatic dispatch",
+      "owner": "user",
+      "status": "verified-awaiting-repository-delivery",
+      "automaticDispatch": "disabled",
+      "contract": "items/live-provider/contracts.md",
+      "contractAcceptance": "items/live-provider/contracts.check.md",
+      "requestedModel": "gpt-6.1-sol",
+      "requestedSettings": {
+        "reasoningEffort": "low",
+        "windowsSandbox": "elevated"
+      },
+      "coordinatorLimits": {
+        "maximumLiveInvocations": 8,
+        "maximumMinutes": 30,
+        "maximumChildSeconds": 180
+      },
+      "liveInvocationsConsumed": 9,
+      "liveAdmission": "Complete: six accepted semantic observations, two counted failed setup calls, one cancelled/reconciled observation; no remaining experiment call authority",
+      "adapterVerification": "items/live-provider/implementation.check.md",
+      "pendingOwnerExtension": {
+        "maximumTotalInvocations": 9,
+        "additionalInvocations": 5,
+        "maximumMinutes": 15,
+        "status": "Explicit owner approval received: Approve five more calls; ignored trusted approval binds exact source and original failed calls remain counted"
+      },
+      "assumptions": [
+        "Use the existing ChatGPT login and account quota; no paid API credential, installation or login",
+        "Model choice is coordinator-selected from advertised local metadata, not an observed runtime identity",
+        "Dollar cost is unavailable; no hard monetary cap is claimed",
+        "Actual frozen experiment and cancellation store require independent acceptance before execution"
+      ],
+      "residuals": [],
+      "qualification": {
+        "id": "operator-gpt-6.1-sol-low-requested-cf9348943a8f",
+        "profiles": [
+          "analysis",
+          "execution",
+          "critical"
+        ],
+        "evidence": "items/live-provider/verification.md",
+        "acceptance": "items/live-provider/verification.check.md",
+        "attestationConfig": ".agnostic-loop/live-provider/qualification-proposal/routing.qualification-only.json",
+        "expires": 1792260933318,
+        "productionConfigured": false,
+        "freshness": "Trusted manual manifest comparison required before future configure/drive; router does not transitively rehash source/evidence"
+      }
+    },
+    {
+      "id": "N97",
+      "objective": "Finish preview promotion, active template selection and original Gemini template persistence using existing stores",
+      "owner": "user",
+      "status": "verified-awaiting-repository-delivery",
+      "criteria": [
+        "N97-C1",
+        "N97-C2",
+        "N97-C3",
+        "N97-C4",
+        "N97-C5",
+        "N97-C6",
+        "N97-C7"
+      ],
+      "contract": "items/N97/contracts.md",
+      "contractAcceptance": "items/N97/contracts.check.md",
+      "persistencePlan": "items/N97/persistence-plan.md",
+      "persistencePlanStatus": "round-2 accepted",
+      "persistencePlanHash": "173b9647e14de065597c3c7847919a07e4bfd96af34e3a9bfb12a5a3d2a677e8",
+      "persistencePlanAcceptance": "items/N97/persistence-plan.check.md",
+      "assumptions": [
+        "All product items are currently unscoped; begin with N97 in the owner's authoritative array order",
+        "Preserve the later N151 template-library ruling and all settled resume/cover-only decisions",
+        "Do not ship the full item until original-template persistence and its downstream paths are verified"
+      ],
+      "implementation": "items/N97/implementation.md",
+      "implementationAcceptance": "items/N97/implementation.check.md",
+      "verification": "items/N97/verification.md",
+      "verificationAcceptance": "items/N97/verification.check.md",
+      "reconciledBacklogItems": [
+        "N97",
+        "N89",
+        "N101"
+      ],
+      "residuals": [
+        {
+          "requirement": "Live schema, private storage namespace and two-user RLS",
+          "owner": "Deployment/environment owner",
+          "instrument": "Separately authorized target schema/policy inspection and two-user access tests",
+          "step": "Before claiming live enforcement"
+        },
+        {
+          "requirement": "Browser/phone/accessibility and Word rendering",
+          "owner": "Product owner",
+          "instrument": "Actual preview keyboard/phone exercise and representative files in Microsoft Word",
+          "step": "Before claiming those host observations"
+        },
+        {
+          "requirement": "Historical originals already lost cannot be reconstructed",
+          "owner": "Product owner",
+          "instrument": "Restore explicitly missing-original historical fixtures; new generations retain immutable originals",
+          "step": "When restoring legacy data"
+        }
+      ]
     }
   ],
   "limitations": [

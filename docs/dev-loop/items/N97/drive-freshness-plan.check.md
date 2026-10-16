@@ -1,0 +1,11 @@
+# N97 Drive freshness amendment independent check — round 1
+
+Reviewer /root/n97_check. Reviewed drive-freshness-plan.md SHA2564F9D6531668C26C9572E5C24464A15C566DD314786FA9557B0FD64724603E9C0 with actual Drive mount-load/save/cache callsites and existing client resolver. Verdict: ACCEPT exact bounded amendment; no blocking defect. New cache-freshness class is distinct from resolved persistence/hash classes. Stopping point: exact-path admission, implementation and measurement.
+
+Actual cache loads once per user and save uses captured defaultTemplates[scope], so after promotion the next generated content can save using old style. Status-bearing fresh read is appropriate: 404 permits null/native, explicit auth/network/timeout/invalid response refuses upload without old cached fallback; legacy File|null wrapper preserves other callers. The documented server-side404 limitation prevents overclaiming substrate diagnostics. Exact same fresh File for blob/hash/cache makes saved output and currency evidence agree.
+
+Epoch rule correctly needs separate user/unmount invalidation from scope save refresh: a delayed mount load cannot overwrite fresh B, and user switch cannot upload under stale identity. Preserve valid sequential batch siblings. Actual implementation should recheck identity/epoch immediately before Drive write as well as after fresh read; async builder/hash may span user switch. Do not let later cache refresh cancel an otherwise valid sibling save merely through one shared counter.
+
+Real hook B-style/new-content multipart oracle plus same-File hash assertion covers actual last hop; delayedA, missing-default, unavailable/unauthorized and user-switch controls meaningfully test races/refusal. Mutation substituting cache for fresh read must fail B-style oracle. Client category tests do not replace hook output assertions. Exact production two paths and admitted tests are narrow; requested connect/Mount fixture-only route additions must preserve all existing assertions/scenarios. No new Drive API, schema or provider action follows.
+
+No source/tests/gates/network/provider calls performed by reviewer for this amendment. Final actual-diff review and candidate-bound gates/mutations remain required.

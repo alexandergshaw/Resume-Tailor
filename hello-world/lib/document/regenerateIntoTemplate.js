@@ -11,6 +11,7 @@
 // thin wrapper and this module stays testable without React.
 
 import { buildPreviewBlob, withEditedScope } from "./previewBlob";
+import { rewriteOriginalMarker } from "./generatedTemplateStore";
 import { bytesToBase64 } from "./docxBytes.js";
 
 // The entry's current document built into `templateFile`, as base64; "" when
@@ -22,7 +23,7 @@ import { bytesToBase64 } from "./docxBytes.js";
 async function renderContentIntoTemplate({ scope, entry, templateFile }) {
   try {
     const blob = await buildPreviewBlob(entry, scope, { formattingTemplate: templateFile });
-    return blob ? bytesToBase64(new Uint8Array(await blob.arrayBuffer())) : "";
+    return blob ? bytesToBase64(await rewriteOriginalMarker(new Uint8Array(await blob.arrayBuffer()))) : "";
   } catch {
     return "";
   }

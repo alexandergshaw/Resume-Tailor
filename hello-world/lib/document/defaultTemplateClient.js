@@ -23,8 +23,8 @@ const ROUTE = "/api/templates/default";
  *  ("resume" | "cover") as a File, or null when signed out, no default is
  *  set, or the object can't be fetched.
  *  @returns {Promise<File | null>} */
-export async function resolveDefaultTemplateFile(userId, kind) {
-  if (!userId || (kind !== "resume" && kind !== "cover")) return null;
+export async function loadDefaultTemplateFile(userId, kind) {
+  if (!userId || (kind !== "resume" && kind !== "cover")) return { status: "unavailable", file: null };
   try {
     const res = await fetch(`${ROUTE}?kind=${encodeURIComponent(kind)}&bytes=1`, {
       credentials: "include",
@@ -33,19 +33,24 @@ export async function resolveDefaultTemplateFile(userId, kind) {
       // "no default" exactly like every other failure mode here (AC-8).
       signal: AbortSignal.timeout(4000),
     });
-    if (!res.ok) return null;
+    if (res.status === 404) return { status: "absent", file: null };
+    if (!res.ok) return { status: "unavailable", file: null };
     // Defensive: only trust a response that actually declares itself a docx.
     // An unrelated 200 (an error page, a JSON body some other layer
     // returned) must never be handed to resolveDocumentBlob's override as if
     // it were the default template -- that would rebuild onto garbage bytes.
     const contentType = res.headers.get("content-type") || "";
-    if (!contentType.includes("wordprocessingml")) return null;
+    if (!contentType.includes("wordprocessingml")) return { status: "unavailable", file: null };
     const buffer = await res.arrayBuffer();
-    if (!buffer || buffer.byteLength === 0) return null;
-    return new File([buffer], `default-${kind}.docx`, { type: DOCX_MIME });
+    if (!buffer || buffer.byteLength === 0) return { status: "unavailable", file: null };
+    return { status: "available", file: new File([buffer], `default-${kind}.docx`, { type: DOCX_MIME }) };
   } catch {
-    return null;
+    return { status: "unavailable", file: null };
   }
+}
+
+export async function resolveDefaultTemplateFile(userId, kind) {
+  return (await loadDefaultTemplateFile(userId, kind)).file;
 }
 
 /** Promote a captured document as the default template for `kind`. Not

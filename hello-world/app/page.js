@@ -1,4 +1,5 @@
 "use client";
+import { templateRunPatch, templateOutcomePatch } from "../lib/document/generatedTemplateStore";
 
 import { memo, useState, useEffect, useRef, useMemo } from "react";
 import styles from "./page.module.css";
@@ -1964,8 +1965,10 @@ export default function Home() {
       const emailSubject = typeof payload.emailSubject === "string" ? payload.emailSubject : "";
       const emailResultLines = Array.isArray(payload.emailResultLines) ? payload.emailResultLines : [];
 
+      const templateRun = templateRunPatch({ engine: engineUsed, resumeFile, coverLetterFile, applyResume, applyCover: regeneratedEditedScopes({ payload, applyResume, applyCover }).includes("cover") });
       updateTailoringJob(job.id, (entry) => ({
         ...entry,
+        ...templateRun,
         status: "done",
         generatedJobTitle,
         engine: engineUsed,
@@ -1989,12 +1992,13 @@ export default function Home() {
           console.error("[handleTailorJob] upsertPosition returned null for job", job?.id, job?.title);
         }
         const { resumeId: generatedResumeId, coverLetterId: generatedCoverLetterId } = await persistGeneratedDocuments(supabase, {
+          onTemplatePersisted: (outcome) => updateTailoringJob(job.id, (latest) => ({ ...latest, ...templateOutcomePatch(latest, templateRun, outcome) })),
           userId: currentUser.id,
           positionId,
-          resume: applyResume ? { content: result, contentLines: resultLines, docxB64 } : null,
+          resume: applyResume ? { content: result, contentLines: resultLines, docxB64, sourceTemplateFile: templateRun.resumeTemplateSource?.file } : null,
           coverLetter:
             applyCover && coverLetterResultLines.length > 0
-              ? { content: coverLetterResult, contentLines: coverLetterResultLines, docxB64: coverLetterDocxB64 }
+              ? { content: coverLetterResult, contentLines: coverLetterResultLines, docxB64: coverLetterDocxB64, sourceTemplateFile: templateRun.coverTemplateSource?.file }
               : null,
           sourceResumePath: `${currentUser.id}/resume`,
           additionalContext: additionalContext || null,
@@ -2254,8 +2258,10 @@ export default function Home() {
             : j,
         ),
       );
+      const templateRun = templateRunPatch({ engine: nextEngine, resumeFile, coverLetterFile, applyResume, applyCover: regeneratedEditedScopes({ payload, applyResume, applyCover }).includes("cover") });
       updateTailoringJob(syntheticJobId, (entry) => ({
         ...entry,
+        ...templateRun,
         status: "done",
         generatedJobTitle: nextJobTitle,
         engine: nextEngine,
@@ -2290,12 +2296,13 @@ export default function Home() {
           startInterviewPrepResearch({ applicationId, triggerClass: "B1" });
         }
         await persistGeneratedDocuments(supabase, {
+          onTemplatePersisted: (outcome) => updateTailoringJob(syntheticJobId, (latest) => ({ ...latest, ...templateOutcomePatch(latest, templateRun, outcome) })),
           userId: currentUser.id,
           positionId,
-          resume: applyResume ? { content: nextResult, contentLines: nextResultLines, docxB64: nextDocxB64 } : null,
+          resume: applyResume ? { content: nextResult, contentLines: nextResultLines, docxB64: nextDocxB64, sourceTemplateFile: templateRun.resumeTemplateSource?.file } : null,
           coverLetter:
             applyCover && nextCoverLetterResultLines.length > 0
-              ? { content: nextCoverLetterResult, contentLines: nextCoverLetterResultLines, docxB64: nextCoverLetterDocxB64 }
+              ? { content: nextCoverLetterResult, contentLines: nextCoverLetterResultLines, docxB64: nextCoverLetterDocxB64, sourceTemplateFile: templateRun.coverTemplateSource?.file }
               : null,
           sourceResumePath: `${currentUser.id}/resume`,
           additionalContext: additionalContext || null,
@@ -2512,8 +2519,10 @@ export default function Home() {
             : j,
         ),
       );
+      const templateRun = templateRunPatch({ engine: nextEngine, resumeFile, coverLetterFile, applyResume: true, applyCover: regeneratedEditedScopes({ payload, applyResume: true, applyCover: true }).includes("cover") });
       updateTailoringJob(syntheticJobId, (entry) => ({
         ...entry,
+        ...templateRun,
         status: "done",
         result: nextResult,
         resultLines: nextResultLines,
@@ -2550,12 +2559,13 @@ export default function Home() {
           startInterviewPrepResearch({ applicationId, triggerClass: "B1" });
         }
         await persistGeneratedDocuments(supabase, {
+          onTemplatePersisted: (outcome) => updateTailoringJob(syntheticJobId, (latest) => ({ ...latest, ...templateOutcomePatch(latest, templateRun, outcome) })),
           userId: currentUser.id,
           positionId,
-          resume: { content: nextResult, contentLines: nextResultLines, docxB64: nextDocxB64 },
+          resume: { content: nextResult, contentLines: nextResultLines, docxB64: nextDocxB64, sourceTemplateFile: templateRun.resumeTemplateSource?.file },
           coverLetter:
             nextCoverLetterResultLines.length > 0
-              ? { content: nextCoverLetterResult, contentLines: nextCoverLetterResultLines, docxB64: nextCoverLetterDocxB64 }
+              ? { content: nextCoverLetterResult, contentLines: nextCoverLetterResultLines, docxB64: nextCoverLetterDocxB64, sourceTemplateFile: templateRun.coverTemplateSource?.file }
               : null,
           sourceResumePath: `${currentUser.id}/resume`,
           additionalContext: additionalContext || null,

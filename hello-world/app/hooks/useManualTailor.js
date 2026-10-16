@@ -1,4 +1,5 @@
 "use client";
+import { templateRunPatch, templateOutcomePatch } from "../../lib/document/generatedTemplateStore";
 
 import { useState } from "react";
 import { buildTemplateLinesForUpload } from "../../lib/document/docx";
@@ -230,8 +231,10 @@ export function useManualTailor({
             : j,
         ),
       );
+      const templateRun = templateRunPatch({ engine: nextEngine, resumeFile, coverLetterFile, applyResume, applyCover: regeneratedEditedScopes({ payload, applyResume, applyCover }).includes("cover") });
       updateTailoringJob(syntheticJobId, (entry) => ({
         ...entry,
+        ...templateRun,
         status: "done",
         generatedJobTitle: nextJobTitle,
         engine: nextEngine,
@@ -306,12 +309,13 @@ export function useManualTailor({
           await upsertApplication(supabase, { userId: currentUser.id, positionId, status: STATUS.TAILORED });
         }
         await persistGeneratedDocuments(supabase, {
+          onTemplatePersisted: (outcome) => updateTailoringJob(syntheticJobId, (latest) => ({ ...latest, ...templateOutcomePatch(latest, templateRun, outcome) })),
           userId: currentUser.id,
           positionId,
-          resume: applyResume ? { content: nextResult, contentLines: nextResultLines, docxB64: nextDocxB64 } : null,
+          resume: applyResume ? { content: nextResult, contentLines: nextResultLines, docxB64: nextDocxB64, sourceTemplateFile: templateRun.resumeTemplateSource?.file } : null,
           coverLetter:
             applyCover && nextCoverLetterResultLines.length > 0
-              ? { content: nextCoverLetterResult, contentLines: nextCoverLetterResultLines, docxB64: nextCoverLetterDocxB64 }
+              ? { content: nextCoverLetterResult, contentLines: nextCoverLetterResultLines, docxB64: nextCoverLetterDocxB64, sourceTemplateFile: templateRun.coverTemplateSource?.file }
               : null,
           sourceResumePath: `${currentUser.id}/resume`,
           additionalContext: additionalContext || null,

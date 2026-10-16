@@ -1,3 +1,4 @@
+import { resolveGeneratedTemplate, sourceTemplateForEntry } from "./generatedTemplateStore";
 // DOCX template parsing, line fitting, and download helpers. Pure helpers are
 // exported directly; the three download wrappers that need component state
 // are exposed through `createDocumentDownloaders(deps)`.
@@ -664,6 +665,7 @@ export async function resolveDocumentBlob({
   // N97: the per-type DEFAULT TEMPLATE override (a .docx File), or null when
   // none is set -- see resolveDocumentBlobBytes below for the precedence.
   formattingTemplate = null,
+  sourceTemplate = null,
 }) {
   const blob = await resolveDocumentBlobBytes({
     engineDocxB64,
@@ -673,6 +675,7 @@ export async function resolveDocumentBlob({
     lines,
     uploadedTemplate,
     formattingTemplate,
+    sourceTemplate,
   });
   if (!blob || !spacing) return blob;
   return applySpacingToDocxBlob(blob, spacing);
@@ -686,6 +689,7 @@ async function resolveDocumentBlobBytes({
   lines = [],
   uploadedTemplate = null,
   formattingTemplate = null,
+  sourceTemplate = null,
 }) {
   const hasText = typeof text === "string" && text.trim().length > 0;
 
@@ -725,6 +729,11 @@ async function resolveDocumentBlobBytes({
       const file = new File([blob], "engine-template.docx", { type: DOCX_MIME });
       return buildDocxFromUploadedTemplate(file, text, lines);
     }
+  }
+
+  if (sourceTemplate) {
+    const file = await resolveGeneratedTemplate(createClient(), sourceTemplate);
+    return file ? buildDocxFromUploadedTemplate(file, text, lines) : null;
   }
 
   // Last resort: the user's uploaded résumé/cover-letter template.
@@ -769,6 +778,8 @@ export function createDocumentDownloaders(deps) {
     // both documents in one call, so résumé and cover each need their own.
     formattingTemplate = null,
     coverFormattingTemplate = null,
+    sourceTemplate = null,
+    coverSourceTemplate = null,
     // N69: whole-document { lineSpacing, paragraphSpacingPt } | null, applied
     // as resolveDocumentBlob's post-pass sweep to BOTH documents below.
     spacing = null,
@@ -804,6 +815,7 @@ export function createDocumentDownloaders(deps) {
           text: result || "",
           lines: resultLines || [],
           uploadedTemplate: resumeFile,
+          sourceTemplate,
           formattingTemplate,
           spacing,
         });
@@ -820,6 +832,7 @@ export function createDocumentDownloaders(deps) {
           text: hasCover ? coverLetterResultLines.join("\n") : "",
           lines: coverLetterResultLines || [],
           uploadedTemplate: coverLetterFile,
+          sourceTemplate: coverSourceTemplate,
           formattingTemplate: coverFormattingTemplate,
           spacing,
         });
@@ -841,7 +854,7 @@ export function createDocumentDownloaders(deps) {
   // resume template. Returns null on success, or an error message string.
   async function downloadAutoTailoredResume(row) {
     if (!row?.resume_used_id) return "No generated resume linked to this posting.";
-    if (!isDocxResume(resumeFile)) return "Upload your source resume as .docx first.";
+
     try {
       const supabase = createClient();
       const { data: gen, error } = await supabase
@@ -860,6 +873,7 @@ export function createDocumentDownloaders(deps) {
         resultLines: lines,
         coverLetterResultLines: [],
         docxPath: gen.docx_path || "",
+        sourceTemplate: { kind: "resume", versionId: row.resume_used_id },
       });
     } catch (err) {
       return err.message || "Unable to download.";
@@ -887,6 +901,7 @@ export function createDocumentDownloaders(deps) {
         ? tailoring.coverLetterDocxB64
         : "";
 
+    let sourceTemplate = sourceTemplateForEntry(tailoring, "resume");
     let text = typeof tailoring.result === "string" ? tailoring.result : "";
     let lines = Array.isArray(tailoring.resultLines) ? tailoring.resultLines : [];
     const coverLines = Array.isArray(tailoring.coverLetterResultLines)
@@ -906,6 +921,7 @@ export function createDocumentDownloaders(deps) {
       );
       const gen = app?.generated_resumes;
       if (!gen?.content) return "No saved resume found for this posting.";
+      sourceTemplate = { kind: "resume", versionId: gen.id || app.resume_used_id };
       text = gen.content;
       lines = Array.isArray(gen.content_lines) ? gen.content_lines : [];
       jobTitle = jobTitle || app?.positions?.title || "";
@@ -914,13 +930,15 @@ export function createDocumentDownloaders(deps) {
     }
 
     // Need a finished doc (in-session, or persisted) or a .docx source resume.
-    if (!docxB64 && !docxPath && !isDocxResume(resumeFile)) {
+    if (!docxB64 && !docxPath && !sourceTemplate && !isDocxResume(resumeFile)) {
       return "Upload your source resume as .docx first.";
     }
 
     return await downloadDocxFiles({
       jobTitle,
       company,
+      sourceTemplate,
+      coverSourceTemplate: sourceTemplateForEntry(tailoring, "cover"),
       result: text,
       resultLines: lines,
       coverLetterResultLines: coverLines,

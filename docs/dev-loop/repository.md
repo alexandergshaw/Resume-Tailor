@@ -26,8 +26,15 @@ must be serialized. Mutation harnesses use isolated temporary copies.
 Initial working tree: only `.claude/settings.local.json` was untracked. Preserve
 it. Base revision: `6c4befea900a4ac239eb95f258c6a708a3708e8c`.
 
-Implementation policy: local reads, scoped writes, offline tests and fixture
+Historical initial-port policy: local reads, scoped writes, offline tests and fixture
 processes are authorized. No installation, login, paid dispatch, deployment or
 external messaging. Provider templates remain disabled and unqualified. Existing
 product backlog work is outside this request. Host coordination records in this
 directory are manual; they are not engine-generated acceptance records.
+
+Later owner authorization (2026-10-16) requests bounded live-provider qualification
+and work through the product backlog. Current accepted contracts and limits are in
+`items/live-provider/` and `items/N97/`, with coordinator intake in `state.json`.
+This extends the historical port scope; it does not authorize deployment or an
+unbounded production provider grant. The standing normal-push/main delivery guard
+continues to apply to every authorized chunk.

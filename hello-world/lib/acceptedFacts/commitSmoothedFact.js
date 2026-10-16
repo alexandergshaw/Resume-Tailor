@@ -42,6 +42,7 @@ export async function commitSmoothedFact({
     jobId,
     lines,
     moved: after,
+    entry,
     hasCoverBytes,
     coverAlreadyEdited: editedForScope(entry, "cover"),
     resolvedCoverDocxB64,

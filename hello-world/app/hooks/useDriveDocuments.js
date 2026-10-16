@@ -14,7 +14,7 @@ import {
   BATCH_ERROR,
 } from "../../lib/drive/driveSaveBatch";
 import { driveErrorMessage, downloadedSummary, driveAnnounceStart } from "../../lib/drive/driveMessages";
-import { resolveDefaultTemplateFile } from "../../lib/document/defaultTemplateClient";
+import { resolveDefaultTemplateFile, loadDefaultTemplateFile } from "../../lib/document/defaultTemplateClient";
 
 // Wave 5A — the client-side Drive state machine (`ARCH.md` §11, module table
 // row 24). This is the hook that finally joins the three Drive components
@@ -157,9 +157,9 @@ async function templateDigestFor(file) {
 export async function computeCurrentHash(entry, scope, { resumeFile, coverLetterFile, text, formattingTemplate } = {}) {
   const args = previewBlobArgs(entry, scope, { resumeFile, coverLetterFile, text, formattingTemplate });
   if (!args) return null;
-  const { text: resolvedText, edited, engineDocxB64, docxPath, uploadedTemplate } = args;
+  const { text: resolvedText, edited, engineDocxB64, docxPath, uploadedTemplate, sourceTemplate } = args;
   const templateDigest =
-    !engineDocxB64 && !docxPath ? await templateDigestFor(uploadedTemplate) : "";
+    !engineDocxB64 && !docxPath && !sourceTemplate && !formattingTemplate ? await templateDigestFor(uploadedTemplate) : "";
   const engineDocxDigest = await sha256Hex(engineDocxB64 || "");
   // N97: a set DEFAULT TEMPLATE overrides every branch above at the actual
   // build (resolveDocumentBlob), so the hash must be sensitive to it too --
@@ -168,6 +168,11 @@ export async function computeCurrentHash(entry, scope, { resumeFile, coverLetter
   // reason for existing).
   const formattingDigest = formattingTemplate ? await templateDigestFor(formattingTemplate) : "";
   const tuple = ["v1", scope, resolvedText, edited, engineDocxDigest, docxPath || "", templateDigest, formattingDigest];
+  if (sourceTemplate && !engineDocxB64 && !docxPath && !formattingTemplate) {
+    const b = sourceTemplate.binding;
+    const exact = b?.kind === scope && b.runToken === sourceTemplate.runToken && (b.versionId || null) === (sourceTemplate.versionId || null);
+    tuple.push([sourceTemplate.kind, sourceTemplate.versionId || "", exact ? await templateDigestFor(b.file) : ""]);
+  }
   return sha256Hex(JSON.stringify(tuple));
 }
 
@@ -290,6 +295,10 @@ export function useDriveDocuments({
   const [announcement, setAnnouncement] = useState(EMPTY_ANNOUNCEMENT);
 
   const isMountedRef = useRef(true);
+  const templateUserEpochRef = useRef(0);
+  const templateCacheEpochRef = useRef({ resume: 0, cover: 0 });
+  const templateEntryRef = useRef(entry);
+  useEffect(() => { templateEntryRef.current = entry; }, [entry]);
   const inFlightRef = useRef(new Set()); // AC-S11a/AC-D10: a ref, not state.
   const popupRef = useRef(null);
   const pendingSaveArgsRef = useRef(null);
@@ -387,6 +396,8 @@ export function useDriveDocuments({
   // comment above).
   useEffect(() => {
     let cancelled = false;
+    templateUserEpochRef.current += 1;
+    const epochs = { resume: ++templateCacheEpochRef.current.resume, cover: ++templateCacheEpochRef.current.cover };
     const userId = currentUser?.id || null;
     (async () => {
       await Promise.resolve();
@@ -400,7 +411,7 @@ export function useDriveDocuments({
         resolveDefaultTemplateFile(userId, "cover"),
       ]);
       if (cancelled || !isMountedRef.current) return;
-      setDefaultTemplates({ resume, cover });
+      setDefaultTemplates((previous) => ({ resume: epochs.resume === templateCacheEpochRef.current.resume ? resume : previous.resume, cover: epochs.cover === templateCacheEpochRef.current.cover ? cover : previous.cover }));
     })();
     return () => {
       cancelled = true;
@@ -629,7 +640,14 @@ export function useDriveDocuments({
       const text = scope === activeScopeArg ? activeText : undefined;
       // N97 (AC-4 egress: Drive save): the resolved default template for
       // this scope, if any -- null is a strict no-op (AC-8).
-      const formattingTemplate = defaultTemplates[scope] || null;
+      const userEpoch = templateUserEpochRef.current;
+      const cacheEpoch = ++templateCacheEpochRef.current[scope];
+      const stillCurrent = () => isMountedRef.current && userEpoch === templateUserEpochRef.current && templateEntryRef.current === entry;
+      const fresh = await loadDefaultTemplateFile(currentUser?.id, scope);
+      if (!stillCurrent()) return { scope, batchAbort: BATCH_ERROR.UNAUTHORIZED };
+      if (fresh.status === "unavailable") return { scope, outcome: { scope, label, result: SCOPE_OUTCOME.ERROR, errorKind: "transient" } };
+      const formattingTemplate = fresh.file;
+      if (cacheEpoch === templateCacheEpochRef.current[scope]) setDefaultTemplates((previous) => ({ ...previous, [scope]: formattingTemplate }));
       const blob = await buildPreviewBlob(entry, scope, { resumeFile, coverLetterFile, text, formattingTemplate });
       if (!blob) {
         // AC-S27/AC-S28: reachable in normal use (a cover letter with no
@@ -665,6 +683,7 @@ export function useDriveDocuments({
       form.append("file", blob, `${name}.docx`);
       form.append("meta", JSON.stringify(meta));
 
+      if (!stillCurrent()) return { scope, batchAbort: BATCH_ERROR.UNAUTHORIZED };
       let res;
       try {
         res = await fetch("/api/drive/save", { method: "POST", body: form, credentials: "include" });
@@ -721,7 +740,7 @@ export function useDriveDocuments({
         },
       };
     },
-    [entry, resumeFile, coverLetterFile, jobId, jobTitle, company, driveRefs, defaultTemplates],
+    [entry, resumeFile, coverLetterFile, jobId, jobTitle, company, driveRefs, currentUser?.id],
   );
 
   // ONE prompt per activation, even when both scopes conflict at once
@@ -756,6 +775,7 @@ export function useDriveDocuments({
       const scopes = DOCX_SCOPES.filter((s) => scopeText(entry, s).trim().length > 0);
       if (scopes.length === 0) return;
 
+      const batchUserEpoch = templateUserEpochRef.current;
       inFlightRef.current.add(BATCH_KEY);
       setDriveBusy(true);
       // WAVE3-SEAMS.md MAJ-2 ("rule 7"): a start sentence clears the alert
@@ -784,6 +804,7 @@ export function useDriveDocuments({
             });
             continue;
           }
+          if (batchUserEpoch !== templateUserEpochRef.current || !isMountedRef.current) return;
           if (result.batchAbort) {
             applyBatchResult(driveSaveBatch([{ batchError: result.batchAbort }]));
             return;
@@ -812,6 +833,7 @@ export function useDriveDocuments({
           }
         }
 
+        if (batchUserEpoch !== templateUserEpochRef.current || !isMountedRef.current) return;
         const newRefs = {};
         finalAttempts.forEach((a) => {
           if (a?.ref) newRefs[a.scope] = a.ref;
@@ -825,8 +847,7 @@ export function useDriveDocuments({
         applyBatchResult(driveSaveBatch(outcomes));
         if (anyReconnect && isMountedRef.current) setReconnectNeeded(true);
       } finally {
-        inFlightRef.current.delete(BATCH_KEY);
-        if (isMountedRef.current) setDriveBusy(false);
+        if (batchUserEpoch === templateUserEpochRef.current) { inFlightRef.current.delete(BATCH_KEY); if (isMountedRef.current) setDriveBusy(false); }
       }
     },
     [entry, attemptOneScope, applyBatchResult, waitForConflictDecision],

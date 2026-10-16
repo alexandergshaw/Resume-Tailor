@@ -1,0 +1,44 @@
+# N97 N89 original provenance — round 2 replacement packet
+
+Author /root/n97_author. Round 2 corrects both round-1 classes: persistent provenance on copy failure and complete derived-writer coverage. Independent acceptance pending. This REPLACES the proposed HTTP-ID/copy approach; no accepted-facts route/factStore/SQL change is requested. The RPC does return cover_version_id, but this design does not need it.
+
+## Mechanism and failure boundary
+
+Keep one immutable original snapshot on its EXISTING generated version ID. Before creating a fact-derived document, establish a verified base-original identity: kind cover, a string UUID, authenticated owner-scoped generated_cover_letters row, and that row's actual raw original snapshot bytes. A reference is never authority. A derived document carries a tiny custom XML part `customXml/resume-tailor-original.xml` containing ONLY closed kind and verified BASE version UUID, with Content_Types override and standard customXml relationship in word/_rels/document.xml.rels. No arbitrary path/URL/userId, no external fetch, no secret or document text in the marker. Marker parsing is strict; malformed, wrong-kind, foreign, missing referenced row/object or unauthorized lookup REFUSES original capture, never falls back to native classification. A valid finished document with NO marker and no original snapshot remains native/N151. Presence of a version UUID alone is not proof of a snapshot.
+
+The marker references a base row whose raw snapshot was actually read, not another derived row. Resolving a marked current row validates that row's ownership and its stored docx path ownership, reads the marker, then validates the referenced base row's ownership/kind and downloads its raw snapshot DIRECTLY. Do not recursively follow markers: no chains/cycles. Emit that same verified base UUID on every later fact version. Deleted/unavailable original means honest refusal to promote original; finished stored document can still be viewed/downloaded. Existing private bucket/RLS live-proof limitations remain.
+
+No new-row copy is necessary. Thus a copy failure cannot erase provenance while leaving a successfully committed derived row. For a new generation whose File exists but persistence has not produced a stable owned version ID, facts durable commit reports `Original template is still saving; try again shortly.` BEFORE upload/RPC. Existing preview/download/revise remain usable with the exact same-run File. If a stable ID exists but its original upload failed, the fact action may retry saveGeneratedTemplate at that SAME base ID with upsert:false, only using the exact same-run binding. On collision, read/compare exact bytes; never overwrite. If original durability cannot be established, refuse BEFORE fact RPC. A native/legacy source with no known original retains existing behavior. No claim that this makes old lost originals recoverable.
+
+## Complete derived writer inventory and common seam
+
+Read source inventory: useCompanyResearch acceptFacts, autoInsertFactsForJob, removeInsertedFact, moveInsertedFact -> commitFactMove, and confirmSmoothTransition -> commitSmoothedFact -> commitFactMove. All use resolveCoverEngineBytes and/or applyCoverDocxEdits and uploadCoverDocx. applyCoverDocxEdits loads/serializes the ZIP, so package parts propagate; this must be measured, not assumed. Edited line-only branches are included: merely relying on splice propagation would leave a null-path new version without provenance.
+
+Add a shared `persistCoverFactDocument` helper in already owned defaultTemplateCapture.js. Inputs: the actual pre-action entry, resulting NEW lines, successfully spliced candidate bytes (if any), authenticated client/user. It resolves verified original provenance through the existing generatedTemplateStore. If original exists: reuse successful splice candidate or rebuild NEW lines onto the exact original when the old flow would have stored line-only output; attach verified base marker; upload through existing uploadCoverDocx; require successful output upload before the fact RPC. Failure returns an explicit error/no RPC/no success. Hand edits are the provided new lines, never stale engine text. Native/no-original positive classification retains existing splice/null-path semantics. This helper does not invent a new store/route or bypass stale-plan refusal: a failed requested splice still refuses as before rather than silently rebuilding it.
+
+Route accept, auto, removal and commitFactMove through that helper before their existing facts PUT. commitFactMove receives optional original entry from both moveInsertedFact and commitSmoothedFact; its caller without new source metadata remains compatible. Every new source-aware derived writer therefore persists marker-bearing bytes even in the edited/line strategy; no writer can silently drop the provenance path. RPC failures may leave an unreferenced output object, as before; no snapshot deletion/overwrite or transactional rollback claim.
+
+For restore/capture, generatedTemplateStore returns a rich source outcome (original File + verified base ID, native/no marker, missing/invalid/unauthorized); the existing File|null resolver remains a wrapper. Query owned current row id/docx_path, reject foreign path prefixes, and validate owned base before reading original. capture examines this outcome BEFORE using faithful finished server bytes. Known provenance failure is refusal; positive native status permits faithful server capture. New native/N151 outputs must not inherit a Gemini marker merely because their chosen formatting template contains one: regenerateIntoTemplate strips this marker/relationship/content-type entry from its local new-version output, then persists the faithful chosen formatting. The selected raw uploaded template itself remains byte-identical; only the new local output is sanitized. Active-default override precedence remains the coordinator's settled rule.
+
+## Exact write addition
+
+Already owned production: generatedTemplateStore.js, defaultTemplateCapture.js, useCompanyResearch.js and existing capture/restore/resolver call sites.
+
+Request EXACT additional production paths (hello-world/ prefix):
+- lib/acceptedFacts/commitFactMove.js
+- lib/acceptedFacts/commitSmoothedFact.js
+- lib/document/regenerateIntoTemplate.js
+
+No new helper path is needed: marker ZIP helpers live in generatedTemplateStore.js (no docx import cycle), high-level rendering/upload in defaultTemplateCapture.js. No accepted-facts route or SQL write.
+
+Request exact tests: lib/acceptedFacts/commitFactMove.originalTemplate.test.js; lib/document/regenerateIntoTemplate.originalTemplate.test.js. Existing owned generatedTemplateStore.test.js, generatedTemplateLifecycle.integration.test.js, useCompanyResearch.templateSnapshot.test.js and preview tests cover the rest. Read existing remove/move/smooth regressions and run them; request fixture-only path additions if an actual changed return contract demands them, never delete/weaken assertions.
+
+## Independent oracles and controls
+
+1. Original A has font/alignment marker and placeholder differing from current text. Persist original -> actual accept/auto -> NEW derived UUID/finished path (different from base ID) -> fresh owned restore -> exact raw A capture. Generated output retains NEW text + fact + original style; raw captured A is byte-identical, not filled output.
+2. Apply accept, remove, move and smooth through the common helper, including hand-edited/line branches. Every resulting ZIP contains the SAME base reference and correct resulting text; one more reload still retrieves raw A. Prove ZIP splice preserves the part. No recursive derived references.
+3. Missing/foreign/malformed/wrong-kind marker, foreign/malformed base UUID/path, missing base object, auth/owned-query failure: no original promotion, no source-aware fact RPC/output upload, no unrelated global File fallback. A marker's own path/owner fields are never accepted. Native/N151 no-marker control still captures faithful server bytes; N151 new output clears inherited marker.
+4. Pending base ID or failed original retry -> precise refusal before fact RPC, in-session preview/revise still usable. Output upload failure likewise no fact commit. No success/durable claim from a fixture-only storage write.
+5. Isolated mutations: remove marker before upload; skip one writer's common helper; ignore marker failure/native fallback; omit base ownership predicate; retain marker on N151 new output. Baseline/harmless/restored green and relevant mutant red. Bind actual current source hashes, no shared mutation.
+
+This is the final substantive design round for this activity. If independent round 2 remains defective, root must apply the repository two-round terminating owner-question protocol; do not relabel/restart design. No code implementing this packet before independent acceptance and exact-path admission.

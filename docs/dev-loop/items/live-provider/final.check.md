@@ -1,0 +1,13 @@
+# Independent final proposal check — round 1
+
+Verdict: ACCEPT the bounded measurement report and qualification-only proposal. This is not a production dispatch grant or repository delivery acceptance.
+
+Reviewed actual final.md SHA256 6148DEF9EDA32975B2DE94B14CC7DE0DAD7892D15621FB73C4CEF8016C11A70F, evidence-manifest.json SHA256 CF9348943A8F33D163ADA4603E3CDE03B4BDCF201480382F020B4F671C6501CA and routing.qualification-only.json SHA256 6166C3F84B44C41D27D2E0C7A6CF2E46711D826AE4ACFD68930664D6147182C1. Independent raw SHA256 comparison of all 117 manifest entries (22 runtime sources and 95 evidence files) found zero mismatches; executable bytes also match. The proposal config is outside the evidence map deliberately: enabling the exact measured provider/target during operator attestation changes that config without rewriting frozen evidence.
+
+The six semantic measurements, failed consumed calls 3/4, thirteen host controls, controlled cancellation and actual recovery agree with the previously independently accepted measurement and verification reports. Cancellation is not a semantic pass; unavailable usage/model/settings/cost remain unknown. All nine model calls are consumed. The report neither creates additional experiment authority nor asserts universal isolation or production integration.
+
+Actual proposal config has provider and target disabled, empty qualifications, no allowConfigure or allowLocalDelivery, synthetic paths, maxJobs one and the original expired experiment deadline. The proposed attestation command targets only this file; it does not configure a production store. Profiles retain score 100 and explicitly accepted requested-model semantics. Expiry ceiling remains 1792260933318; relevant drift invalidates sooner.
+
+The material router limitation is stated accurately: routeModel does not rehash current source or evidence bytes. Before any later configure/drive, a trusted operator must freshly compare all transitive manifest entries, executable, canonical schema/provider/target and expiry, and separately establish exact production scope, gates and budget. The prose does not falsely claim automatic invalidation. Withhold dispatch on mismatch or absent authority. No production source expansion is required for this narrow attestation proposal.
+
+No blocker. Stopping point: root may perform the stated bounded operator attestation after its fresh identity preflight. Production admission, whole-candidate gates, final repository report and verified main remote delivery remain separate obligations. No model calls, configuration writes, grants or tests were performed by this review.

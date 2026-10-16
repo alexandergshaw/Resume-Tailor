@@ -32,6 +32,33 @@ describe('actual provider transport contract',()=>{
     expect(normalizeResult(request('command').provider,captured(JSON.stringify({...sample(),actor:'owner'})),null).outcome).toBeNull();
     expect(normalizeResult(request('command').provider,captured(JSON.stringify(sample()),1),null).outcome).toBeNull();
   });
+  it('preserves the complete default Codex argument vector',()=>{
+    const req=request('codex');
+    expect(buildInvocation(req).args).toEqual(['exec','--model','exact-model','--json','--ephemeral','--ignore-user-config','--sandbox','read-only','-C',req.workspace,'--output-schema',`${req.resultPath}.schema.json`,'--output-last-message',req.resultPath,'-']);
+  });
+  it('keeps elevated Windows backend and reasoning overrides command-local without widening role grants',()=>{
+    for(const role of ['checker','implementer']){
+      const req=request('codex');req.provider.settings={windowsSandbox:'elevated',reasoningEffort:'low'};req.packet={task:{role}};
+      const args=buildInvocation(req).args;
+      expect(args.slice(args.indexOf('exec')+1)).toContain('windows.sandbox="elevated"');
+      expect(args.slice(0,args.indexOf('exec'))).not.toContain('windows.sandbox="elevated"');
+      expect(args.slice(-5)).toEqual(['-c','model_reasoning_effort="low"','-c','windows.sandbox="elevated"','-']);
+      expect(args[args.indexOf('--sandbox')+1]).toBe(role==='implementer'?'workspace-write':'read-only');
+      expect(args.some(arg=>/bypass|yolo|ask-for-approval|network_access|setup/.test(arg))).toBe(false);
+    }
+    const targetOverride=request('codex');targetOverride.provider.settings={windowsSandbox:'invalid'};targetOverride.target.settings={windowsSandbox:'elevated',sandbox:'read-only'};
+    expect(buildInvocation(targetOverride).args).toContain('windows.sandbox="elevated"');
+    expect(buildInvocation(targetOverride).args).toContain('read-only');
+  });
+  it('rejects invalid Windows backends and preserves other adapter setting boundaries',()=>{
+    for(const backend of ['','unelevated','mxc','danger-full-access','arbitrary']){
+      const req=request('codex');req.target.settings={windowsSandbox:backend};
+      expect(()=>buildInvocation(req)).toThrow('Unsupported Codex Windows sandbox backend');
+    }
+    for(const kind of ['claude','gemini'] as const){const req=request(kind);req.provider.settings={windowsSandbox:'elevated'};expect(()=>buildInvocation(req)).toThrow(`Unsupported ${kind} model setting`);}
+    const command=request('command');command.provider.settings={windowsSandbox:'custom'};expect(()=>buildInvocation(command)).not.toThrow();
+    const invalidSandbox=request('codex');invalidSandbox.provider.settings={windowsSandbox:'elevated',sandbox:'danger-full-access'};expect(()=>buildInvocation(invalidSandbox)).toThrow('Unsupported Codex sandbox grant');
+  });
   it('probes and invokes a real generic worker and generates honest operator qualification',async()=>{
     const root=await mkdtemp(path.join(os.tmpdir(),'agnostic-provider-'));roots.push(root);const script=path.join(root,'worker.cjs');
     await writeFile(script,`if(process.argv.includes('--version')){console.log('fixture-v1')}else if(process.argv.includes('--help')){console.log('agnostic-loop-worker-v1')}else{let input='';process.stdin.on('data',v=>input+=v);process.stdin.on('end',()=>{const packet=JSON.parse(input);console.log(JSON.stringify(${JSON.stringify(sample())}));});}`);

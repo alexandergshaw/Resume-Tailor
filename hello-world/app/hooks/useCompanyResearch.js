@@ -1,4 +1,6 @@
 "use client";
+import { sourceTemplateForEntry } from "../../lib/document/generatedTemplateStore";
+import { persistCoverFactDocument, rebuildCoverOriginal } from "../../lib/document/defaultTemplateCapture";
 
 import { useRef, useState } from "react";
 import { weaveSources, DEFAULT_PLACEMENT } from "../../lib/document/coverLetterWeave";
@@ -18,7 +20,7 @@ import { captureCoverSnapshot, moveOptimisticPatch, moveSuccessPatch, moveAccept
 import { commitSmoothedFact } from "../../lib/acceptedFacts/commitSmoothedFact";
 import { applyCoverDocxEdits } from "../../lib/acceptedFacts/factDocx";
 import { recordDecision } from "../../lib/activityLog/appActivityLog";
-import { uploadCoverDocx, fetchCoverDocxB64 } from "../../lib/document/coverDocxStore";
+import { fetchCoverDocxB64 } from "../../lib/document/coverDocxStore";
 import { messageForRefusal } from "../../lib/acceptedFacts/factRefusalMessage";
 import { editedForScope, withEditedScope } from "../../lib/document/previewBlob";
 import { isDocxResume } from "../../lib/document/docx";
@@ -141,10 +143,7 @@ export function useCompanyResearch({
   const [acceptedFactsByJob, setAcceptedFactsByJob] = useState({});
   const researchStartedRef = useRef(new Set());
 
-  // N89 Part 1 (AC-9): Shape B (Gemini, no bytes, but the uploaded template
-  // is still in session) vs the residual Shape C (no bytes, no template --
-  // refuse, unchanged). `canRebuild` is the ONE line Part 2 later widens to
-  // also accept a stored template path.
+  // Bound originals resolve before refusal; legacy in-session uploads retain the line strategy.
   const hasInSessionTemplate = isDocxResume(coverLetterFile);
   const canRebuild = hasInSessionTemplate;
 
@@ -163,9 +162,11 @@ export function useCompanyResearch({
       return entry.coverLetterDocxB64;
     }
     const path = typeof entry?.coverLetterDocxPath === "string" ? entry.coverLetterDocxPath : "";
-    if (!path) return "";
-    const b64 = await fetchCoverDocxB64(supabase, path);
-    return b64 || "";
+    if (path) {
+      const b64 = await fetchCoverDocxB64(supabase, path);
+      if (b64) return b64;
+    }
+    return rebuildCoverOriginal(entry, supabase);
   }
 
   async function fetchResearchInto({ jobId, company, jobTitle, posting }) {
@@ -383,7 +384,7 @@ export function useCompanyResearch({
     // NOR an in-session template to rebuild onto (residual Shape C) -- a
     // Gemini letter with its uploaded template still in session (Shape B)
     // falls through to the line-only path below instead of refusing here.
-    if (hasCoverLetter && !hasCoverBytes && !canRebuild) {
+    if (hasCoverLetter && !hasCoverBytes && !(canRebuild && !sourceTemplateForEntry(entry, "cover"))) {
       setCompanyResearch((prev) => ({ ...prev, acceptError: NO_ENGINE_BYTES_REASON, acceptNotice: "" }));
       return { ok: false, reason: NO_ENGINE_BYTES_REASON };
     }
@@ -407,7 +408,7 @@ export function useCompanyResearch({
       // N89 Part 1: the one selector both siblings use, so they cannot drift
       // (AC-5). hasCoverLetter is true here (the `!hasCoverLetter` refusal
       // above already returned), so "refuse" is unreachable at this point.
-      const strategy = coverFactStrategy({ hasCoverBytes, canRebuild, coverAlreadyEdited });
+      const strategy = coverFactStrategy({ hasCoverBytes, canRebuild: canRebuild && !sourceTemplateForEntry(entry, "cover"), coverAlreadyEdited });
       let coverDocxB64 = entry.coverLetterDocxB64;
       // K10: explicit null unless a splice actually uploads a fresh object
       // below -- never the pre-accept path (stale) and never left absent.
@@ -427,7 +428,7 @@ export function useCompanyResearch({
         // chunk exists for. Best-effort: uploadCoverDocx never throws, and a
         // failed upload still leaves the in-session accept fully usable, just
         // session-only (SESSION_ONLY_NOTICE), same as before this chunk.
-        coverDocxPath = await uploadCoverDocx(supabase, currentUser?.id, coverDocxB64);
+
         notice = coverDocxPath ? PERSISTED_NOTICE : SESSION_ONLY_NOTICE;
       } else if (coverChanged && coverAlreadyEdited) {
         notice = HAND_EDITED_NOTICE;
@@ -445,6 +446,9 @@ export function useCompanyResearch({
       // M2 (verify.r1.md): send the MERGED set (prior + this click's, deduped
       // by normalised text), not just this click's -- otherwise a second
       // accept REPLACES the stored set instead of adding to it.
+      const persisted = coverChanged ? await persistCoverFactDocument({entry,lines:plan.cover.lines,candidate:strategy === "splice" ? coverDocxB64 : "",supabase,userId:currentUser?.id}) : {ok:true,docxB64:coverDocxB64,docxPath:null};
+      if (!persisted.ok) { setCompanyResearch(prev=>({...prev,busy:false,acceptError:persisted.reason})); return persisted; }
+      coverDocxB64 = persisted.docxB64 || coverDocxB64; coverDocxPath = persisted.docxPath;
       const mergedFacts = mergeAcceptedFacts(priorFacts, facts);
 
       const res = await fetch("/api/accepted-facts", {
@@ -571,10 +575,13 @@ export function useCompanyResearch({
       const spliced = await applyCoverDocxEdits(resolvedCoverDocxB64, lines, [removal.edit]);
       coverDocxB64 = spliced.applied ? spliced.docxB64 : "";
       if (spliced.applied) {
-        coverDocxPath = await uploadCoverDocx(supabase, currentUser?.id, coverDocxB64);
+
       }
     }
 
+    const persisted = await persistCoverFactDocument({entry,lines:removal.lines,candidate:hasCoverBytes && !coverAlreadyEdited ? coverDocxB64 : "",spliceRefused:hasCoverBytes && !coverAlreadyEdited && !coverDocxB64,supabase,userId:currentUser?.id});
+    if (!persisted.ok) return persisted;
+    coverDocxB64 = persisted.docxB64 || coverDocxB64; coverDocxPath = persisted.docxPath;
     const remainingFacts = relocateSurvivors(removal.lines, insertedFacts.filter((r) => r.id !== factId));
     const priorRemoved = acceptedFactsByJob[jobId]?.removed || [];
     const removedKey = removedFactKey(record);
@@ -663,6 +670,7 @@ export function useCompanyResearch({
     const hasCoverBytes = resolvedCoverDocxB64.length > 0;
     const coverAlreadyEdited = editedForScope(entry, "cover");
     const commit = await commitFactMove({
+      entry,
       jobId,
       lines,
       moved,
@@ -754,7 +762,7 @@ export function useCompanyResearch({
     // N89 Part 1: refuse only when there is neither a faithful byte source
     // nor an in-session template to rebuild onto (residual Shape C) -- see
     // the identical reasoning in acceptFacts above.
-    if (!hasCoverBytes && !canRebuild) {
+    if (!hasCoverBytes && !(canRebuild && !sourceTemplateForEntry(entry, "cover"))) {
       return { ok: false, reason: NO_ENGINE_BYTES_REASON, severity: "failure", code: "no-engine-bytes" };
     }
     // RULING (settled): suppressing auto-insert into a hand-edited letter is
@@ -769,7 +777,7 @@ export function useCompanyResearch({
     // N89 Part 1: past this point coverAlreadyEdited is always false (the
     // branch above already returned), so this is "splice" (bytes resolved)
     // or "lines" (Shape B -- no bytes, template in session).
-    const strategy = coverFactStrategy({ hasCoverBytes, canRebuild, coverAlreadyEdited: false });
+    const strategy = coverFactStrategy({ hasCoverBytes, canRebuild: canRebuild && !sourceTemplateForEntry(entry, "cover"), coverAlreadyEdited: false });
 
     // N61 (AC-N61.20, cross-session gap): `acceptedFactsByJob[jobId]` is
     // seeded ONLY by the manual research dialog (`openCompanyResearch` ->
@@ -871,12 +879,17 @@ export function useCompanyResearch({
       // reload -- or the next auto-insert run, which itself depends on this
       // resolving -- has something to resolve. Best-effort; a failed upload
       // still lets this run succeed in-session, same as before this chunk.
-      coverDocxPath = await uploadCoverDocx(supabase, currentUser?.id, spliced.docxB64);
+
     }
     // Shape B (strategy === "lines"): no splice, no upload, coverDocxPath
     // stays null. No re-check is needed here -- unlike the splice branch
     // above, nothing awaited since the last isOpen() check.
 
+    const persisted = await persistCoverFactDocument({entry,lines:plan.cover.lines,candidate:spliced?.docxB64 || "",supabase,userId:currentUser?.id});
+    if (!persisted.ok) return {...persisted,severity:"failure"};
+    if (persisted.docxB64) spliced = {applied:true,docxB64:persisted.docxB64};
+    coverDocxPath = persisted.docxPath;
+    if (!isOpen()) return {ok:false,reason:"No open review surface.",severity:"silent",code:"no-open-surface"};
     const mergedFacts = mergeAcceptedFacts(priorFacts, facts);
     let res;
     try {

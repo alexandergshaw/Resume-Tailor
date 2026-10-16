@@ -1,3 +1,4 @@
+import { sourceTemplateForEntry } from "../document/generatedTemplateStore";
 import { resolveDocumentFileName } from "../document/docx";
 
 // The document scopes the tailoring preview UI supports, shared so a new
@@ -127,11 +128,15 @@ export function buildDownloadArgs({ scope, entry, text, lines, serveFinished, ti
     else args.formattingTemplate = formattingTemplate;
   }
   if (scope === "cover") {
+    const source = sourceTemplateForEntry(entry, "cover");
+    if (source) args.coverSourceTemplate = source;
     args.coverLetterResultLines = lines;
     args.coverLetterFileName = fileNameOverride != null ? fileNameOverride : (entry.coverLetterFileName || "");
     args.coverLetterTemplateDocxB64 = typeof entry.coverLetterDocxB64 === "string" ? entry.coverLetterDocxB64 : "";
     if (serveFinished && typeof entry.coverLetterDocxB64 === "string") args.coverLetterDocxB64 = entry.coverLetterDocxB64;
   } else {
+    const source = sourceTemplateForEntry(entry, "resume");
+    if (source) args.sourceTemplate = source;
     args.result = text;
     args.resultLines = lines;
     args.resumeFileName = fileNameOverride != null ? fileNameOverride : (entry.resumeFileName || "");

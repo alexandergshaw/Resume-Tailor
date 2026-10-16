@@ -105,6 +105,7 @@ function makeFetch(state) {
   return vi.fn(async (url, init) => {
     const calls = state.calls;
     calls.push({ url, init });
+    if (url.startsWith("/api/templates/default")) return { ok: false, status: 404 };
     if (url.startsWith("/api/drive/status")) {
       return jsonResponse({ connected: state.connected, configured: state.configured, email: "user@example.com" });
     }
@@ -603,7 +604,8 @@ describe("BLOCKER-1: a failed status fetch is a real, self-healing state", () =>
     vi.stubGlobal(
       "fetch",
       vi.fn(async (url) => {
-        if (url.startsWith("/api/drive/status")) {
+        if (url.startsWith("/api/templates/default")) return { ok: false, status: 404 };
+      if (url.startsWith("/api/drive/status")) {
           return { ok: false, status: 500, json: async () => ({}) };
         }
         throw new Error(`Unhandled fetch in test: ${url}`);

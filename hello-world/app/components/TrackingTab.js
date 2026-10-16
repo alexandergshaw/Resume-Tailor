@@ -346,8 +346,8 @@ export default function TrackingTab({
   // A useCallback for the same reason as renderDigestCell: the desktop rows
   // take it as a prop, so it changes identity only when the resume file does.
   const renderDownloadControl = useCallback((pos, resume) => {
-    const downloadUnavailable = !resumeFile || !isDocxResume(resumeFile);
-    const downloadTitle = !resumeFile
+    const downloadUnavailable = !resume?.id && (!resumeFile || !isDocxResume(resumeFile));
+    const downloadTitle = resume?.id ? "Download or drag to upload tailored .docx" : !resumeFile
       ? "Upload your source resume (.docx) to enable downloads."
       : !isDocxResume(resumeFile)
       ? "Source resume must be a .docx file to download."
@@ -368,6 +368,7 @@ export default function TrackingTab({
               try {
                 const blob = await resolveDocumentBlob({
                   docxPath: resume.docx_path || "",
+                  sourceTemplate: { kind: "resume", versionId: resume.id },
                   edited: false,
                   text: resume.content,
                   lines,
@@ -390,6 +391,7 @@ export default function TrackingTab({
                 resultLines: lines,
                 coverLetterResultLines: [],
                 docxPath: resume.docx_path || "",
+                sourceTemplate: { kind: "resume", versionId: resume.id },
               });
               if (err) window.alert(err);
             }}

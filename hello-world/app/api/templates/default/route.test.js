@@ -13,6 +13,7 @@
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
+vi.mock("@/lib/document/templateSelectionStore.js", () => ({ setSelection: vi.fn(async () => ({ ok: true })), getActiveTemplateBytes: vi.fn(async () => null) }));
 vi.mock("@/lib/supabase/server", () => ({ createClient: vi.fn() }));
 vi.mock("@/lib/document/defaultTemplateStore.js", () => ({
   saveDefaultTemplate: vi.fn(async () => ({ row: { id: "row-1", kind: "resume", name: "Default" }, replaced: false })),

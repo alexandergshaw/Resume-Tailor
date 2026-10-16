@@ -1,4 +1,5 @@
 "use client";
+import { templateRunPatch, templateOutcomePatch, sourceTemplateForEntry } from "../../lib/document/generatedTemplateStore";
 import { useEffect, useRef, useState } from "react";
 import { buildTemplateLinesForUpload } from "../../lib/document/docx";
 import {
@@ -28,7 +29,8 @@ import {
 import { syncTemplateEdits } from "../../lib/tailor/templateEdits";
 import { applyScopeFlags, lockScopesFor } from "../../lib/tailor/previewScopes";
 import { emailPreviewLines, buildDownloadArgs, resolveDownloadPayload } from "../../lib/tailor/documentScopes";
-import { resolveDefaultTemplateFile, promoteDefaultTemplateBlob } from "../../lib/document/defaultTemplateClient";
+import { promotePreviewTemplate, revisionTemplateFiles, appendRevisionSources, templatePersistenceNotices } from "../../lib/document/defaultTemplateCapture";
+import { resolveDefaultTemplateFile } from "../../lib/document/defaultTemplateClient";
 import { readEngine } from "../settings/engine";
 import { createClient } from "../../lib/supabase/client";
 import { persistGeneratedDocuments } from "../../lib/supabase/persistGeneration";
@@ -129,6 +131,8 @@ export function useDocumentPreview({
   // scope's flags — the first to finish never re-enables or clears the
   // other's controls (AC-4).
   function setScopeFlags(scopes, patch) { setResumePreview((prev) => applyScopeFlags(prev, scopes, patch)); }
+
+  useEffect(() => { templatePersistenceNotices(tailoringMap[resumePreview.jobId], setScopeFlags); }, [tailoringMap, resumePreview.jobId]);
 
   // (Re)load the version history for one or more scopes of `jobId` and
   // merge it into state, guarded by `requestId` so a response for a job the
@@ -239,6 +243,8 @@ export function useDocumentPreview({
             // this one) and the facts (they locate the OLD text) -- a
             // version switch must never let a fact painted against a
             // DIFFERENT version's text resurrect silently.
+            coverTemplateVersionId: version.id,
+            coverTemplateSource: null,
             coverLetterDocxB64: "",
             coverLetterDocxPath: version.docx_path || "",
             insertedFacts: [],
@@ -249,6 +255,8 @@ export function useDocumentPreview({
             resumePreviewHtml: undefined,
             // D-1 fix: serve THIS version's own stored docx, not docxB64
             // (newest generation) or the stale reload-pointer docxPath. docx_path is nullable with no backfill, so a pre-migration row (or a failed docx upload) has no pointer here either and degrades to the same uploaded-template fallback the cover letter above uses.
+            resumeTemplateVersionId: version.id,
+            resumeTemplateSource: null,
             docxB64: "",
             docxPath: version.docx_path || "",
           }),
@@ -401,6 +409,7 @@ export function useDocumentPreview({
   async function loadPreviewModel(scope, opts = {}) {
     const entry = tailoringMap[resumePreview.jobId] || {};
     const blob = await buildPreviewBlob(entry, scope, { resumeFile, coverLetterFile });
+    if (!blob && sourceTemplateForEntry(entry, scope)) setScopeFlags(scope, { error: "The original template is unavailable for this version.", notice: "" });
     const model = blob
       ? await parseDocxToModel(await blob.arrayBuffer())
       : linesToModel(
@@ -527,16 +536,15 @@ export function useDocumentPreview({
       inFlightScopesRef.current.delete(downloadKey);
     }
   }
-  async function setDefaultTemplateFromPreview(scope, payload) { // N97: capture is engine-native (AC-2, no formattingTemplate); refuse/promote messaging is in promoteDefaultTemplateBlob (line-capped hook)
-    if (!resumePreview.jobId || scope === "email") return;
-    const blob = await buildPreviewBlob(tailoringMapRef.current[resumePreview.jobId] || {}, scope, { resumeFile, coverLetterFile, text: typeof payload === "string" ? payload : payload?.text || "" });
-    setScopeFlags(scope, await promoteDefaultTemplateBlob(blob, scope)); }
+  async function setDefaultTemplateFromPreview(scope, payload) {
+    return promotePreviewTemplate({ scope, payload, jobId: resumePreview.jobId, locks: inFlightScopesRef.current, getEntry: () => tailoringMapRef.current[resumePreview.jobId] || {}, setFlags: (jobId, patch) => setResumePreview((prev) => prev.jobId === jobId ? applyScopeFlags(prev, scope, patch) : prev), supabase: createClient(), resumeFile, coverLetterFile });
+  }
   // N151c: re-pour the LATEST entry into a chosen template as a new version, no model call; body + guards in lib/document/regenerateIntoTemplate.js (line-capped hook).
   function regenerateActiveIntoTemplate(scope, templateFile) {
     const jobId = resumePreview.jobId;
     return regenerateIntoTemplate({
       scope, templateFile, jobId, entry: tailoringMapRef.current[jobId] || {}, positionId: positionIdRef.current,
-      userId: currentUser?.id, supabase: createClient(), updateTailoringJob, setPreviewReloadKey, persistGeneratedDocuments,
+      userId: currentUser?.id, supabase: createClient(), updateTailoringJob: (id, updater) => updateTailoringJob(id, (entry) => ({ ...updater(entry), ...templateRunPatch({ engine: "local", applyResume: scope !== "cover", applyCover: scope === "cover" }) })), setPreviewReloadKey, persistGeneratedDocuments,
       refreshDocumentVersions, versionsRequestId: versionsRequestIdRef.current, sourceResumePath: `${currentUser?.id}/resume`,
     });
   }
@@ -575,11 +583,15 @@ export function useDocumentPreview({
       });
       return false;
     }
-    if (!resumeFile) {
-      setScopeFlags(lockScopes, { error: "Upload a resume first to revise it.", notice: "" });
-      return false;
-    }
+    lockScopes.forEach((s) => inFlightScopesRef.current.add(s));
+    setScopeFlags(lockScopes, { busy: true, notice: "", error: "" });
+    try {
     const entry = tailoringMapRef.current[jobId] || {};
+    let sources;
+    try { sources = await revisionTemplateFiles(entry, { supabase: createClient(), resumeFile, coverLetterFile }); }
+    catch { setScopeFlags(lockScopes, { error: "Couldn't recover the original template. Try again.", notice: "" }); return false; }
+    const { resumeFile: requestResumeFile, coverLetterFile: requestCoverFile } = sources;
+    if (!requestResumeFile || ((applyCover || focusChange) && sources.hasCoverSource && !requestCoverFile)) { setScopeFlags(lockScopes, { error: "The original template is unavailable. Upload a resume to revise it.", notice: "" }); return false; }
     const posting = (resumePreview.posting || entry.jobDescription || "").trim();
     const url = (resumePreview.url || "").trim();
     if (!posting && !url) {
@@ -587,9 +599,6 @@ export function useDocumentPreview({
       return false;
     }
     fireDuplicateCheckSafely(onCheckDuplicate, { id: jobId, title: resumePreview.title, company: resumePreview.company, url, description: posting }, { jobId, entryPoint: "revise" }); // row 5: a job rehydrated from localStorage may never have been checked this session; fires before the paid call, title/company already known (like E1/E2).
-    lockScopes.forEach((s) => inFlightScopesRef.current.add(s));
-    setScopeFlags(lockScopes, { busy: true, notice: "", error: "" });
-    try {
       const formData = new FormData();
       if (posting) formData.append("jobPosting", posting);
       else formData.append("jobPostingUrl", url);
@@ -622,24 +631,7 @@ export function useDocumentPreview({
       const personaOverride =
         focusChange && typeof opts.persona === "string" ? opts.persona : entry.personaOverride || "";
       if (engine === "embedded" && personaOverride) formData.append("persona", personaOverride);
-      const templateLines = await buildTemplateLinesForUpload(resumeFile);
-      formData.append("templateLines", JSON.stringify(templateLines));
-      contextFiles.forEach((file) => formData.append("contextFiles", file));
-      formData.append("resume", resumeFile);
-      // Cover-only revise: send the résumé already tailored (and possibly
-      // hand-edited) for this job as the letter's content source, instead of
-      // letting the route ground it in a fresh, edit-unaware resume re-run.
-      if (applyCover && Array.isArray(entry.resultLines) && entry.resultLines.length > 0) {
-        formData.append("tailoredResumeLines", JSON.stringify(entry.resultLines));
-      }
-      // Regenerate the cover letter when it's the document being revised, or on
-      // a focus change (both documents carry the focus).
-      const regenCover = (applyCover || focusChange) && coverLetterFile;
-      if (regenCover) {
-        const coverLetterTemplateLines = await buildTemplateLinesForUpload(coverLetterFile);
-        formData.append("coverLetterTemplateLines", JSON.stringify(coverLetterTemplateLines));
-        formData.append("coverLetter", coverLetterFile);
-      }
+      const regenCover = await appendRevisionSources(formData, sources, { applyCover, focusChange, entry, contextFiles }, buildTemplateLinesForUpload);
 
       const response = await fetch("/api/tailor", { method: "POST", body: formData });
       const payload = await response.json();
@@ -648,6 +640,7 @@ export function useDocumentPreview({
       // Captured below so the persistence step after both blocks (AC-3) saves
       // exactly the document(s) this request actually regenerated, without
       // re-deriving them from payload a second time.
+      const templateRun = templateRunPatch({ engine: payload.engine, resumeFile: requestResumeFile, coverLetterFile: requestCoverFile, applyResume: !applyCover, applyCover: !!regenCover });
       let persistResume = null;
       let persistCover = null;
 
@@ -661,6 +654,7 @@ export function useDocumentPreview({
         if (!coverErr && lines.length > 0) {
           updateTailoringJob(jobId, (entry) => ({
             ...entry,
+            coverTemplateSource: templateRun.coverTemplateSource, coverTemplateVersionId: "", coverTemplatePersistenceError: "",
             coverLetterResultLines: lines,
             coverLetterDocxB64: typeof payload.coverLetterDocxB64 === "string" ? payload.coverLetterDocxB64 : "",
             coverLetterPreviewHtml: undefined,
@@ -676,6 +670,7 @@ export function useDocumentPreview({
               typeof payload.coverLetterResult === "string" && payload.coverLetterResult
                 ? payload.coverLetterResult
                 : lines.join("\n"),
+            sourceTemplateFile: templateRun.coverTemplateSource?.file,
             contentLines: lines,
             docxB64: typeof payload.coverLetterDocxB64 === "string" ? payload.coverLetterDocxB64 : "",
           };
@@ -688,6 +683,7 @@ export function useDocumentPreview({
         const nextTitle = typeof payload.jobTitle === "string" ? payload.jobTitle.trim() : "";
         updateTailoringJob(jobId, (entry) => ({
           ...entry,
+          resumeTemplateSource: templateRun.resumeTemplateSource, resumeTemplateVersionId: "", resumeTemplatePersistenceError: "",
           result,
           resultLines: lines,
           docxB64: typeof payload.docxB64 === "string" ? payload.docxB64 : "",
@@ -700,6 +696,7 @@ export function useDocumentPreview({
           status: "done",
         }));
         persistResume = {
+          sourceTemplateFile: templateRun.resumeTemplateSource?.file,
           content: result,
           contentLines: lines,
           docxB64: typeof payload.docxB64 === "string" ? payload.docxB64 : "",
@@ -730,6 +727,7 @@ export function useDocumentPreview({
             .maybeSingle();
           const positionId = posRow?.id || null;
           await persistGeneratedDocuments(supabase, {
+            onTemplatePersisted: (outcome) => updateTailoringJob(jobId, (latest) => ({ ...latest, ...templateOutcomePatch(latest, templateRun, outcome) })),
             userId: currentUser.id,
             positionId,
             resume: persistResume,

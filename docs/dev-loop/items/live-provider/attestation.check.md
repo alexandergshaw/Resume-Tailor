@@ -1,0 +1,11 @@
+# Independent operator-attestation observation check
+
+Verdict: ACCEPT the actual qualification-only configuration and root observation as faithful to the accepted proposal. No production admission or repository delivery is established.
+
+Actual routing.qualification-only.json raw SHA256 3D73569EB90C4D2F72078BB44DFD57AE85E2EABD9FF29282ECAA3392E7D012C6 matches root-attestation-observation.json's recorded config identity. Observation raw SHA256 06A42AF7252B6669CE260BA8229E3B9DC42B3DA0F6983079B699910135DC5557. The actual single qualification equals the observation: operator-gpt-6.1-sol-low-requested-cf9348943a8f, three profiles, score100, operator-attestation-v1, expiry1792260933318, targetHash85006c224407f45641924910baf90f901052186143330521497758cf7e13b4c7 and immutable evidenceHashcf9348943a8f33d163ada4603e3cde03b4bdcf201480382f020b4f671c6501ca. ExecutableHashd98fc53051414ffdc6a9b2da231bfedd3d7d5ca7aaec5374e878933494131f47 is the engine probe/config identity, not raw executable SHA; those are correctly distinct.
+
+The intended provider/target are enabled only in this isolated file. Settings, prefix, profiles, role mapping, expired experiment deadline, synthetic paths and false allowConfigure/allowLocalDelivery remain unchanged. No new live-call authority follows. The root reports actual CLI exit0; this review independently establishes the resulting file and observation consistency rather than claiming a second CLI execution.
+
+Manual state revision14 accurately says verified-awaiting-repository-delivery, consumed9 and automaticDispatch disabled. Events preserve revisions10–14, prior failures and explicit owner extension. The historical pendingOwnerExtension key now contains the actual approval disposition, so it is not an outstanding unanswered decision. Backlog preserves repository delivery, separate production grant and freshness duties; repository.md marks initial disabled/unqualified language as historical and points to later authorization. These records do not falsely label the current item shipped.
+
+The report's manual transitive freshness preflight remains binding before future configure/drive; routeModel does not implement that source/evidence check. Current qualification acceptance cannot be used as perpetual freshness or a production grant. No blocker; no source/config/ledger edits or model calls performed by this review.

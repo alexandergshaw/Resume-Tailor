@@ -93,7 +93,7 @@ function ApplicationCard({
   const stages = applicationStages[app.id] || [];
   const emailClassification = emailClassificationsByAppId[app.id] ?? null;
   const emailChip = emailClassification ? EMAIL_CHIP_STYLES[emailClassification] : null;
-  const canDownloadResume = !!resume?.content && !!resumeFile && isDocxResume(resumeFile);
+  const canDownloadResume = !!resume?.content && (!!resume.id || (!!resumeFile && isDocxResume(resumeFile)));
 
   return (
     <Box
@@ -212,7 +212,7 @@ function ApplicationCard({
               const lines = Array.isArray(resume.content_lines) && resume.content_lines.length > 0
                 ? resume.content_lines
                 : (resume.content || "").split("\n");
-              const err = await downloadDocxFiles({ jobTitle: pos?.title || "resume", company: pos?.company, result: resume.content, resultLines: lines, coverLetterResultLines: [], docxPath: resume.docx_path || "" });
+              const err = await downloadDocxFiles({ jobTitle: pos?.title || "resume", company: pos?.company, result: resume.content, resultLines: lines, coverLetterResultLines: [], docxPath: resume.docx_path || "", sourceTemplate: { kind: "resume", versionId: resume.id } });
               if (err) window.alert(err);
             }}
           >

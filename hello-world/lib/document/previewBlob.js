@@ -25,6 +25,7 @@
 // the correct half; unifying the two paths would change the local
 // download's shipped bytes and is a follow-up, not part of this extraction.
 
+import { sourceTemplateForEntry } from "./generatedTemplateStore";
 import { resolveDocumentBlob, normalizeResultLines } from "./docx";
 
 // edited/*: the tailoring entry's hand-edit flag, per scope ({ resume, cover }) —
@@ -114,6 +115,8 @@ export function previewBlobArgs(entry, scope, { resumeFile, coverLetterFile, tex
     // "returns no keys resolveDocumentBlob does not accept" guard pins the
     // key set for every call that omits it (the common case: no default
     // template set), so this can never widen that shape unexpectedly.
+    const source = sourceTemplateForEntry(e, "cover");
+    if (source) coverArgs.sourceTemplate = source;
     if (formattingTemplate) coverArgs.formattingTemplate = formattingTemplate;
     return coverArgs;
   }
@@ -136,6 +139,8 @@ export function previewBlobArgs(entry, scope, { resumeFile, coverLetterFile, tex
     lines: textChanged ? normalizeResultLines(text) : lines,
     uploadedTemplate: resumeFile ?? null,
   };
+  const source = sourceTemplateForEntry(e, "resume");
+  if (source) resumeArgs.sourceTemplate = source;
   if (formattingTemplate) resumeArgs.formattingTemplate = formattingTemplate;
   return resumeArgs;
 }

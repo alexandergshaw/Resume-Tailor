@@ -1,3 +1,4 @@
+import { saveGeneratedTemplate } from "../document/generatedTemplateStore";
 import { saveGeneratedResume } from "./saveGeneratedResume";
 import { saveGeneratedCoverLetter } from "./saveGeneratedCoverLetter";
 
@@ -48,6 +49,7 @@ export async function persistGeneratedDocuments(supabase, {
   coverLetter = null,
   additionalContext = null,
   sourceResumePath = null,
+  onTemplatePersisted,
 } = {}) {
   const outcome = { resumeId: null, coverLetterId: null };
   if (!supabase || !userId) return outcome;
@@ -76,6 +78,15 @@ export async function persistGeneratedDocuments(supabase, {
         docxB64: coverLetter.docxB64 || null,
       });
     }
+
+    for (const [kind, document, versionId] of [["resume", resume, outcome.resumeId], ["cover", coverLetter, outcome.coverLetterId]]) {
+      if (!document?.sourceTemplateFile) continue;
+      outcome.templatePersistence ||= {};
+      outcome.templatePersistence[kind] = versionId
+        ? await saveGeneratedTemplate(supabase, { userId, kind, versionId, file: document.sourceTemplateFile })
+        : { ok: false, code: "unavailable" };
+    }
+    try { onTemplatePersisted?.(outcome); } catch { /* UI callback cannot prevent pointer persistence. */ }
 
     // Move the application's pointer(s) to the newest generation(s). Only
     // touches the columns for documents actually written on this call, so a

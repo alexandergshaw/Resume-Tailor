@@ -300,7 +300,8 @@ describe("DocumentPreviewMount join: the real Save-to-Drive wrapper reaches real
   function makeFetch(state) {
     return vi.fn(async (url, init) => {
       state.calls.push({ url, init });
-      if (url.startsWith("/api/drive/status")) {
+      if (url.startsWith("/api/templates/default")) return { ok: false, status: 404 };
+    if (url.startsWith("/api/drive/status")) {
         return { ok: true, status: 200, json: async () => ({ connected: true, configured: true, email: "u@example.com" }) };
       }
       if (url.startsWith("/api/drive/documents")) {

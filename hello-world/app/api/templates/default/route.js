@@ -25,7 +25,7 @@ import {
   getDefaultTemplate,
   clearDefaultTemplate,
 } from "@/lib/document/defaultTemplateStore.js";
-import { getActiveTemplateBytes } from "@/lib/document/templateSelectionStore.js";
+import { getActiveTemplateBytes, setSelection } from "@/lib/document/templateSelectionStore.js";
 
 export const runtime = "nodejs";
 
@@ -80,6 +80,8 @@ export async function POST(request) {
   const bytes = new Uint8Array(await file.arrayBuffer());
   const result = await saveDefaultTemplate(supabase, { userId: user.id, kind, bytes });
   if (result.error) return Response.json({ error: result.error }, { status: 500 });
+  const active = await setSelection(supabase, { userId: user.id, kind, templateId: result.row.id });
+  if (active.error) return Response.json({ error: "Template saved, but activation failed. Try setting it again." }, { status: 503 });
   return Response.json({ row: result.row, replaced: result.replaced });
 }
 

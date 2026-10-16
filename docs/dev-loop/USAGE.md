@@ -78,6 +78,15 @@ or local-delivery dispatch grant. Do not add `--grant` or enable/qualify provide
 for this bounded manual workflow. Generic templates have intentionally failing
 placeholder gates; they cannot count as repository verification.
 
+On Windows with an already configured elevated Codex sandbox, optionally set
+provider or target `settings.windowsSandbox` to `"elevated"`. The adapter emits
+this setting after `exec`, alongside other command-local config overrides;
+`--ignore-user-config` otherwise omits the user's saved Windows backend selection.
+Only `elevated` is accepted. This setting does not provision a sandbox or widen
+the role's read-only/workspace-write grant. Other platforms can omit it. Changed
+settings/runtime identities require fresh qualification; this option does not
+enable a provider or establish live model access.
+
 ## Manual event and assignment handoff
 
 All mutations go through the CLI. Never edit `state.json`, stored blobs, or events
