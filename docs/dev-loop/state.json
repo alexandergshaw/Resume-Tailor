@@ -1,6 +1,6 @@
 {
   "format": "manual-host-record-v1",
-  "revision": 34,
+  "revision": 37,
   "items": [
     {
       "id": "port",
@@ -333,7 +333,32 @@
       "automaticDispatch": "unchanged-disabled-expired",
       "verification": "items/N174/verification.md",
       "independentAcceptance": "items/N174/verification.check.md",
-      "repositoryDelivery": "Exact main publication requires live loop:delivery; runtime receipt outside tracked source"
+      "repositoryDelivery": "Exact main publication requires live loop:delivery; runtime receipt outside tracked source",
+      "liveVerification": "items/live-app-enforcement/live.check.md"
+    },
+    {
+      "id": "live-app-enforcement",
+      "objective": "Enforce independently accepted current live-app verification at engine completion and verify N174 in production",
+      "owner": "user",
+      "plan": "items/live-app-enforcement/plan.md",
+      "planAcceptance": "items/live-app-enforcement/plan.check.md",
+      "runtimeEvidence": ".agnostic-loop/live-app-enforcement",
+      "sourceFreeze": ".agnostic-loop/live-app-enforcement/source-freeze-r2.json",
+      "implementationAcceptance": "items/live-app-enforcement/implementation.check.md",
+      "automaticDispatch": "unchanged-disabled-expired",
+      "status": "verified",
+      "verification": "items/live-app-enforcement/verification.md",
+      "independentAcceptance": "items/live-app-enforcement/verification.check.md",
+      "liveVerification": "items/live-app-enforcement/real-live-assessment.check.md",
+      "liveEvidenceCandidate": "45ba3057b91b24b182778c674f09b4bec8908fa76a7ce5884d6389914648e06b",
+      "observedProgress": [
+        "Current mandatory engine exit0:187 passed,two existing Windows skips.",
+        "Current selected supervisor/CLI/MCP/compact exit0:four passed,four filtered; R1 full diagnostics remain historical exit1:63 passed,three failed.",
+        "Isolated guard mutation detected the intended missing-live defect and restored exact bytes; historical completion boundary passed.",
+        "Actual N174 production flow and exact disposable-row cleanup independently accepted; later navigation smoke separately accepted.",
+        "Current real live-evidence report accepted by fresh shared guard; eight proof assignments finished,zero operations,original grant and review budgets preserved."
+      ],
+      "repositoryDelivery": "Exact clean main publication requires successful live loop:delivery; final commit identity and receipt stay outside tracked source"
     }
   ],
   "limitations": [

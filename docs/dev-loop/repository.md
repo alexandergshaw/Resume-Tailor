@@ -7,8 +7,10 @@ Record candidate/deployment identity, time, user-flow steps, expected/observed
 results and sanitized evidence; independently review it. Include relevant error,
 recovery and persistence paths. Documentation/engine-only work requires a live
 smoke check as separate regression evidence. Missing deployment/access/authority
-is pending verification, never a pass. This host requirement is not implemented
-by the engine's current completion guard or the Git-only delivery command.
+is pending verification, never a pass. The engine completion guard enforces a
+current independently accepted live-verification report; the Git-only delivery
+command checks publication separately. Browser truth still requires actual host
+observations and independent review of the evidence.
 
 The product application is in `hello-world/`. The authoritative product backlog is
 `docs/backlog.yml`; `docs/BACKLOG.md` is generated. Existing `.claude/` workflows

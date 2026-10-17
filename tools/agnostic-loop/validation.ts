@@ -25,6 +25,7 @@ const review = object({ artifact: string, hash, verdict: literal('clean', 'defec
 const evidence = object({ id: string, assignment: string, worker, gate: string, candidate, executable: string, args: array(text), cwd: string, started: integer, finished: integer, exitCode: nullable((v,p) => { if (typeof v !== 'number' || !Number.isSafeInteger(v)) fail(p,'integer required'); }), outputHash: hash, outputPath: string, limitations: strings, kind: literal('gate', 'mutation') });
 const operation = object({ id: string, assignment: string, resource: string, status: literal('pending', 'running', 'terminated', 'unknown'), publicationToken: string, pid: nullable(integer), reconciled: bool });
 const verification = object({ candidate, worker, criteria: map(strings), limitations: strings });
+const liveVerification = object({ schemaVersion:literal(1),candidate,worker,mode:literal('affected-flow','smoke'),scopeRationale:string,url:string,started:integer,finished:integer,deployedRevision:nullable(string),candidateBinding:object({explanation:string,evidence:strings}),steps:array(object({id:string,expected:string,observed:string,status:literal('passed','failed','pending'),evidence:strings})),criteria:map(object({steps:strings,nonLiveReason:nullable(string)})),cleanup:object({status:literal('complete','not-needed','pending'),details:string,evidence:strings}),limitations:strings });
 const finalReport = object({ candidate, verificationArtifact: string, regressionEvidence: strings, wholeChangeReviewArtifact: string, residuals: array(residual), delivery: literal('local') });
 const itemFields = { id: string, objective: string, owner: string, affectedPaths: strings, dependencies: strings, criteria: strings, requiredArtifacts: map(strings), requiredGates: strings, triage: map(string) };
 const statuses = ['queued', 'scoped', 'criteria-accepted', 'design-accepted', 'ready-to-build', 'implemented', 'verified', 'regression-passed', 'shipped'];
@@ -49,6 +50,7 @@ export const eventPayloads: Record<string, Schema> = {
   'operation.finish': object({ operation }), 'operation.unknown': object({ operation }),
   'evidence.record': object({ evidence }),
   'verification.record': object({ assignment: string, artifact: string, report: verification }),
+  'live-verification.record': object({ assignment:string,artifact:string,report:liveVerification }),
   'final.record': object({ assignment: string, artifact: string, report: finalReport }),
   'item.advance': object({ item: string, status: literal(...statuses), artifacts: strings, evidence: strings }),
   'item.block': object({ item: string, needs: strings }),
@@ -63,11 +65,11 @@ export function validateEvent(value: unknown): Envelope {
 const policySchema = object({ owner: string, workspace: string, allowedActions: strings, candidateExclusions: strings, environmentKeys: strings, externalFiles: strings, gates: map(object({ executable: string, args: array(text), resources: strings })), concurrency: integer, deadline: integer, maxAssignments: integer, commandTimeout: integer });
 export function validatePolicy(value: unknown): Policy { policySchema(value,'policy'); const p = value as Policy; if (!p.concurrency || !p.maxAssignments || !p.commandTimeout) fail('policy','positive budgets required'); const result = structuredClone(p); Object.setPrototypeOf(result.gates,null); return result; }
 export function validateContext(value: unknown): Context {
-  object({ manualPolicyContinuation:optional(bool),now:integer,candidate,artifacts:map((v,p) => { const r = v as Record<string,unknown>; if (r && typeof r === 'object' && 'assignment' in r) object({...artifactFields,assignment:string,acceptedHash:nullable(hash),candidate})(v,p); else artifact(v,p); }), evidence:map(evidence),operations:optional(map(operation)),approvedPatches:optional(map(patch)),verificationReports:optional(map(verification)),finalReports:optional(map(finalReport)),artifactAllocation:optional(object({directory:string,paths:strings,configHash:hash})),configuration:optional(object({configHash:hash,grant:object({owner:string,pathPrefixes:strings,gateNames:strings,artifactDirectory:string,allowConfigure:bool,allowLocalDelivery:bool}),scope:object({artifact:string,hash,proposal:object({schemaVersion:literal(1),item:string,affectedPaths:strings,writePaths:strings,gateNames:strings,triage:map(string),limitations:strings})}),criteria:object({artifact:string,hash,proposal:object({schemaVersion:literal(1),item:string,criteria:map(string),leverage:string,diagnostics:string,limitations:strings})})})) })(value,'context');
+  object({ liveVerificationReports:optional(map(liveVerification)),manualPolicyContinuation:optional(bool),now:integer,candidate,artifacts:map((v,p) => { const r = v as Record<string,unknown>; if (r && typeof r === 'object' && 'assignment' in r) object({...artifactFields,assignment:string,acceptedHash:nullable(hash),candidate})(v,p); else artifact(v,p); }), evidence:map(evidence),operations:optional(map(operation)),approvedPatches:optional(map(patch)),verificationReports:optional(map(verification)),finalReports:optional(map(finalReport)),artifactAllocation:optional(object({directory:string,paths:strings,configHash:hash})),configuration:optional(object({configHash:hash,grant:object({owner:string,pathPrefixes:strings,gateNames:strings,artifactDirectory:string,allowConfigure:bool,allowLocalDelivery:bool}),scope:object({artifact:string,hash,proposal:object({schemaVersion:literal(1),item:string,affectedPaths:strings,writePaths:strings,gateNames:strings,triage:map(string),limitations:strings})}),criteria:object({artifact:string,hash,proposal:object({schemaVersion:literal(1),item:string,criteria:map(string),leverage:string,diagnostics:string,limitations:strings})})})) })(value,'context');
   return structuredClone(value) as Context;
 }
 export function validateState(value: unknown): LoopState {
-  object({ schemaVersion: literal(1), revision: integer, policy: policySchema, runStatus: literal('running','paused','cancelled'),
+  object({ schemaVersion: literal(1),liveVerificationReports:optional(map(liveVerification)), revision: integer, policy: policySchema, runStatus: literal('running','paused','cancelled'),
     items: map(object({ ...itemFields, status: literal(...statuses), needs: strings, escalation: nullable(string) })),
     activities: map(object({ ...activityFields, status: literal('open','accepted','owner-needed','withdrawn'), rounds: integer, authors: array(worker), reviews: array(review) })),
     assignments: map(object({ ...assignmentFields, baseline: candidate, policyHash: hash, publicationToken: string, status: literal('running','finished','cancelled','quarantined'), reconciled: bool, reason: nullable(string) })),
@@ -75,6 +77,7 @@ export function validateState(value: unknown): LoopState {
     decisions: map(object({ ...decisionFields, verified: bool })), operations: map(operation), verificationReports: map(verification), finalReports: map(finalReport), events: array((v) => { validateEvent(v); }),
   })(value,'state');
   const s = structuredClone(value) as LoopState;
+  s.liveVerificationReports ??= {};
   for (const name of ['items','activities','assignments','artifacts','evidence','decisions','operations'] as const) for (const [id, record] of Object.entries(s[name])) if (record.id !== id) fail(name,'map ID mismatch');
   if (s.events.length !== s.revision || new Set(s.events.map(e => e.id)).size !== s.events.length) fail('state','revision/event history mismatch');
   if (s.events.some((e,i) => e.expectedRevision !== i)) fail('state','event revision sequence mismatch');
@@ -86,8 +89,8 @@ export function validateState(value: unknown): LoopState {
   for (const e of Object.values(s.evidence)) if (!s.assignments[e.assignment] || !s.policy.gates[e.gate]) fail('evidence','missing assignment/gate');
   for (const op of Object.values(s.operations)) if (!s.assignments[op.assignment]) fail('operation','missing assignment');
   for (const d of Object.values(s.decisions)) if (!s.activities[d.activity] || !s.artifacts[d.originalArtifact] || (d.disposition !== 'withdrawal' && !s.artifacts[d.resultingArtifact])) fail('decision','missing parent/artifact');
-  for (const id of [...Object.keys(s.verificationReports),...Object.keys(s.finalReports)]) if (!s.artifacts[id]) fail('report','missing bound artifact');
-  for (const key of ['items','activities','assignments','artifacts','evidence','decisions','operations','verificationReports','finalReports'] as const) Object.setPrototypeOf(s[key],null);
+  for (const id of [...Object.keys(s.verificationReports),...Object.keys(s.finalReports),...Object.keys(s.liveVerificationReports)]) if (!s.artifacts[id]) fail('report','missing bound artifact');
+  for (const key of ['items','activities','assignments','artifacts','evidence','decisions','operations','verificationReports','finalReports','liveVerificationReports'] as const) Object.setPrototypeOf(s[key],null);
   Object.setPrototypeOf(s.policy.gates,null);
   return s;
 }

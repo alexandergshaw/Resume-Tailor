@@ -46,10 +46,15 @@ verification reported separately. This instruction does not authorize deployment
 commands, new login, spending, destructive actions or external messages. Use
 authorized sessions and bounded disposable data; reconcile test data afterward.
 
-This is a mandatory host workflow obligation. The current engine completion and
-`loop:delivery` commands do not mechanically enforce live-app verification; their
-success must not be reported as satisfying it. Historical local-only verification
-remains historical and must not be relabeled as live evidence.
+The engine enforces this through a current, independently accepted
+`live-verification.record` artifact before `shipped` or overall handoff completion.
+Historical shipped markers without that evidence remain pending. The report must
+bind the full candidate, canonical live URL, known deployed revision, accepted
+evidence inputs, criterion coverage, passing steps and reconciled cleanup.
+The Git-only `loop:delivery` command still checks repository publication alone.
+Record validation cannot prove browser truth: actual host observations and an
+independent review of their meaning remain mandatory. Historical local-only
+verification must not be relabeled as live evidence.
 
 ## Operating contract
 

@@ -1,3 +1,4 @@
+import { importSyntheticLiveVerification } from './live-verification-fixtures';
 import { mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { LoopStore } from './store';
@@ -134,6 +135,7 @@ export async function until(f: RepairFixture, predicate: (state: LoopState, stat
   for (let i = 0; i < 180; i++) {
     const state = await f.store.load(), status = await dispatchStatus(f.store, f.config, f.selection);
     if (predicate(state, status)) return { state, status };
+    if (state.items[f.selection.id]?.status === 'regression-passed' && status.actions[0]?.kind === 'blocked' && status.actions[0].reasons.some(reason => reason.includes('Live verification'))) { await importSyntheticLiveVerification(f.store,f.selection.id); continue; }
     setup(!['blocked', 'owner-needed', 'complete'].includes(status.actions[0]?.kind ?? ''), `${name}: ${canonical(status.checkpoints)} ${canonical(status.actions)}`);
     const oldRevision = state.revision;
     await step(f);

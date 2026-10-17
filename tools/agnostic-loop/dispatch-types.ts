@@ -41,7 +41,7 @@ export type NextAction =
   | { kind: 'configure'; key: string; item: string; scopeArtifact: string; criteriaArtifact: string }
   | { kind: 'advance'; key: string; item: string; status: string; artifacts: string[]; evidence: string[] }
   | { kind: 'owner-needed' | 'blocked' | 'complete'; key: string; item: string; reasons: string[] };
-export type ActionContext = { candidate: Candidate; now: number; selection: BacklogSelection; config: RoutingConfig; acceptedBodies: Record<string, AcceptedBody> };
+export type ActionContext = { artifacts?: import('./types').Context['artifacts']; candidate: Candidate; now: number; selection: BacklogSelection; config: RoutingConfig; acceptedBodies: Record<string, AcceptedBody> };
 export type DispatchStatus = { runStatus: LoopState['runStatus']; revision: number; journalRevision: number; candidate: Candidate; actions: NextAction[]; jobs: LaunchRecord[]; checkpoints: Record<string, string>; limitations: string[] };
 export type DriveResult = { steps: number; status: DispatchStatus };
 

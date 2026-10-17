@@ -1,3 +1,4 @@
+import { importSyntheticLiveVerification } from './live-verification-fixtures';
 import { execFile, spawn } from 'node:child_process';
 import { promisify } from 'node:util';
 import { mkdtemp, mkdir, readFile, writeFile, rm } from 'node:fs/promises';
@@ -72,28 +73,32 @@ describe('automatic dispatch public entry', () => {
       await expect(loadDispatchSelection(file, 'fixture', 'workflow')).rejects.toThrow('Path');
     } finally { await rm(directory, { recursive: true, force: true }); }
   });
-  it('public CLI and actual MCP drive each complete the offline role loop without manual stage events', async () => {
+  it.each(['cli','mcp'])('public CLI and actual MCP drive each complete the offline role loop without manual stage events: %s', async transport => {
     try {
       const expectedRoles = ['specialist', 'checker', 'criteria', 'checker', 'architect', 'checker', 'planner', 'checker', 'test-designer', 'checker', 'implementer', 'checker', 'implementer', 'checker', 'verifier', 'checker', 'specialist', 'checker', 'finalizer', 'checker'];
-      for (const transport of ['cli', 'mcp']) {
-        const fixture = await supervisorFixture();
-        const configPath = path.join(fixture.root, 'routing-source.json'); await writeFile(configPath, JSON.stringify(fixture.config));
-        await writeFile(fixture.selection.sourcePath, JSON.stringify({ schemaVersion: 1, id: fixture.selection.id, objective: fixture.selection.objective, owns: [], verify: null, requirements: ['result'] }));
-        const parameters = ['--state', fixture.store.directory, '--config', configPath, '--actor', 'owner', '--workflow', fixture.selection.sourcePath];
-        let result: { steps: number; status: { jobs: { task: { role: string } }[]; checkpoints: Record<string, string> } };
+      const fixture = await supervisorFixture();
+      const configPath = path.join(fixture.root, 'routing-source.json'); await writeFile(configPath, JSON.stringify(fixture.config));
+      await writeFile(fixture.selection.sourcePath, JSON.stringify({ schemaVersion: 1, id: fixture.selection.id, objective: fixture.selection.objective, owns: [], verify: null, requirements: ['result'] }));
+      const parameters = ['--state', fixture.store.directory, '--config', configPath, '--actor', 'owner', '--workflow', fixture.selection.sourcePath];
+      type EntryDriveResult = { steps:number;status:{jobs:{task:{role:string}}[];checkpoints:Record<string,string>;actions:{kind:string;reasons:string[]}[]} };
+      const driveTransport=async ():Promise<EntryDriveResult> => {
         if (transport === 'cli') {
-          const executed = await execute(process.execPath, [...args, 'drive', '--item', fixture.selection.id, ...parameters], { timeout: 180000, maxBuffer: 4194304, windowsHide: true });
-          const envelope = JSON.parse(executed.stdout); expect(envelope.ok).toBe(true); result = envelope.result;
-        } else {
-          const replies = await mcpCli(parameters, [{ jsonrpc: '2.0', id: 2, method: 'tools/call', params: { name: 'loop_drive', arguments: { item: fixture.selection.id } } }]);
-          const reply = replies.find(r => r.id === 2)!.result as { isError: boolean; content: { text: string }[] };
-          expect(reply.isError).toBe(false); result = JSON.parse(reply.content[0].text);
+          const executed=await execute(process.execPath,[...args,'drive','--item',fixture.selection.id,...parameters],{timeout:180000,maxBuffer:4194304,windowsHide:true});
+          const envelope=JSON.parse(executed.stdout);expect(envelope.ok).toBe(true);return envelope.result;
         }
-        expect(result.status.checkpoints, JSON.stringify(result.status.checkpoints)).toEqual({});
-        expect(result.status.jobs.map(j => j.task.role)).toEqual(expectedRoles);
-        expect((await fixture.store.load()).items[fixture.selection.id].status).toBe('shipped');
-        expect(await readFile(path.join(fixture.workspace, 'output.txt'), 'utf8')).toBe('done');
-      }
+        const replies=await mcpCli(parameters,[{jsonrpc:'2.0',id:2,method:'tools/call',params:{name:'loop_drive',arguments:{item:fixture.selection.id}}}]);
+        const reply=replies.find(r=>r.id===2)!.result as {isError:boolean;content:{text:string}[]};
+        expect(reply.isError).toBe(false);return JSON.parse(reply.content[0].text);
+      };
+      const result=await driveTransport();
+      expect(result.status.checkpoints).toEqual({[fixture.selection.id]:'Dispatch stopped: stage=regression-passed; action=blocked; blocked: Live verification pending: current independently accepted live-app report required'});
+      expect(result.status.actions[0]).toMatchObject({kind:'blocked',reasons:['Live verification pending: current independently accepted live-app report required']});
+      expect(result.status.jobs.map(j => j.task.role)).toEqual(expectedRoles);
+      expect((await fixture.store.load()).items[fixture.selection.id].status).toBe('regression-passed');
+      await importSyntheticLiveVerification(fixture.store,fixture.selection.id,true); const resumed=await driveTransport();
+      expect(resumed.status.checkpoints).toEqual({});expect(resumed.status.actions[0].kind).toBe('complete');expect(resumed.status.jobs.map(j=>j.task.role)).toEqual(expectedRoles);
+      expect((await fixture.store.load()).items[fixture.selection.id].status).toBe('shipped');
+      expect(await readFile(path.join(fixture.workspace, 'output.txt'), 'utf8')).toBe('done');
     } finally { await cleanupSupervisorFixtures(); }
   }, 240000);
 });
@@ -117,8 +122,8 @@ describe('validated legacy compact status',()=>{
    const full=await cli(['status','--state',store.directory]) as {result:Record<string,unknown>};expect(full.result).toEqual(JSON.parse(JSON.stringify(expected)));
    const compact=await cli(['status','--output','summary','--state',store.directory]) as {result:Record<string,unknown>};
    expect(Object.keys(compact.result).sort()).toEqual(['revision','runStatus','items','assignments','operations','candidate','staleArtifacts','scheduling','limitations'].sort());
-   expect(compact.result).toEqual({revision:S.revision,runStatus:S.runStatus,items:[{id:'item',status:'queued',needs:['owner prerequisite'],escalation:'inspect fixture'}],assignments:[{id:'assignment',item:'item',role:'criteria',status:'cancelled',reconciled:false,reason:'owner cancelled'}],operations:[{id:'operation',assignment:'assignment',status:'unknown',reconciled:false}],candidate:expected.candidate.digest,staleArtifacts:expected.staleArtifacts,scheduling:expected.scheduling,limitations:expected.limitations});
-   const forbidden=new Set(['events','files','artifacts','verificationReports','finalReports','outputPath','policy']);
+   expect(compact.result).toEqual({revision:S.revision,runStatus:S.runStatus,items:[{id:'item',status:'queued',needs:['owner prerequisite'],escalation:'inspect fixture',liveVerification:'Live verification pending: current independently accepted live-app report required'}],assignments:[{id:'assignment',item:'item',role:'criteria',status:'cancelled',reconciled:false,reason:'owner cancelled'}],operations:[{id:'operation',assignment:'assignment',status:'unknown',reconciled:false}],candidate:expected.candidate.digest,staleArtifacts:expected.staleArtifacts,scheduling:expected.scheduling,limitations:expected.limitations});
+   const forbidden=new Set(['events','files','artifacts','verificationReports','finalReports','liveVerificationReports','outputPath','policy']);
    const inspect=(v:unknown)=>{if(v&&typeof v==='object')for(const [key,value]of Object.entries(v)){expect(forbidden.has(key),key).toBe(false);inspect(value);}};inspect(compact.result);
    expect(Buffer.byteLength(JSON.stringify(compact.result))).toBeLessThan(Buffer.byteLength(JSON.stringify(full.result)));
    const bytes=await readFile(path.join(store.directory,'state.json'));

@@ -9,7 +9,44 @@ candidate is available in the live app, exercise it and record URL, time, deploy
 revision, expected/observed results and sanitized evidence for independent review.
 If blocked, record the exact blocker and next measurement, push verified source
 when possible, and report live verification pending. The commands below establish
-repository publication only; they do not enforce or replace this live check.
+repository publication only; the engine's shipped and handoff completion guards
+separately require an accepted current live-verification record.
+
+### Record live verification in the engine
+
+Use an admitted `verifier` assignment on a `live-verification` activity. Import
+sanitized browser/deployment evidence as same-item artifacts, independently
+accept them, then declare their IDs/hashes as inputs to the live-report assignment.
+Keep evidence/report paths in the artifact directory excluded by the original
+candidate policy; do not change exclusions to manufacture freshness.
+
+Write/import the exact `LiveVerificationReport` JSON defined in
+`tools/agnostic-loop/types.ts`, then apply `live-verification.record` with payload
+`{ assignment, artifact, report }` through the normal `apply` event transport.
+The observer binds the payload to imported immutable bytes. The report includes
+the full current candidate and worker, canonical live URL, observation interval,
+known deployed revision, candidate-binding evidence IDs, passing browser steps
+with expected/observed results and evidence IDs, every criterion's live step IDs
+or explicit non-live rationale, scope rationale, cleanup and limitations. Use
+`affected-flow` for product behavior; `smoke` requires a justified engine/docs-only
+scope and is separate from testing the engine itself.
+
+Smoke scope may also declare the exact report path and its accepted same-item
+`live-observation` input paths under `.agnostic-loop/`, provided those paths were
+excluded by the startup candidate policy. This does not exempt arbitrary runtime
+files, other exclusions or product source. Keep manual assignment write paths in
+the item's declared scope; the evidence directory is not implicit write authority.
+An observation interval may span at most one hour and remain eligible for at most
+24 hours after it finishes. Preserve actual timestamps when rebinding evidence
+for unchanged application code; later smoke observations have their own interval.
+
+Finish the report author, admit a distinct checker instance/context, independently
+review the current report through `review.record`, and finish the checker before
+shipping. Reporter and checker must also be independent of implementation authors.
+Missing/stale/invalidated evidence, unknown deployment, pending/failed steps or
+cleanup block completion, even for historical shipped items. Offline fixtures
+simulate this protocol only; they are never production observations. Automated
+dispatch stops for host live measurement rather than inventing browser results.
 
 The owner requires every authorized change to be committed and pushed to
 `origin/main`. After verification and independent acceptance, stage only scoped

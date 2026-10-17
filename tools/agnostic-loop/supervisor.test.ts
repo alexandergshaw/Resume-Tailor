@@ -1,3 +1,4 @@
+import { importSyntheticLiveVerification } from './live-verification-fixtures';
 import { afterEach, describe, expect, it } from 'vitest';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
@@ -7,8 +8,8 @@ import { supervisorFixture, cleanupSupervisorFixtures } from './supervisor-fixtu
 afterEach(cleanupSupervisorFixtures);
 describe('automatic supervisor',()=>{
  it('drives real subprocess roles from unscoped selection to independently checked local delivery',async()=>{
-  const f=await supervisorFixture();const result=await drive(f.store,f.config,f.selection);const state=await f.store.load();
-  expect(result.status.checkpoints).toEqual({});expect(state.items['fixture-item'].status).toBe('shipped');expect(await readFile(path.join(f.workspace,'output.txt'),'utf8')).toBe('done');
+  const f=await supervisorFixture();const result=await drive(f.store,f.config,f.selection);expect((await f.store.load()).items[f.selection.id].status).toBe('regression-passed');expect(result.status.actions[0]).toMatchObject({kind:'blocked',reasons:['Live verification pending: current independently accepted live-app report required']});expect(result.status.checkpoints).toEqual({[f.selection.id]:'Dispatch stopped: stage=regression-passed; action=blocked; blocked: Live verification pending: current independently accepted live-app report required'});await importSyntheticLiveVerification(f.store,f.selection.id);const resumed=await drive(f.store,f.config,f.selection);const state=await f.store.load();
+  expect(resumed.status.checkpoints).toEqual({});expect(resumed.status.actions[0].kind).toBe('complete');expect(resumed.status.jobs.map(j=>j.task.role)).toEqual(result.status.jobs.map(j=>j.task.role));expect(state.items['fixture-item'].status).toBe('shipped');expect(await readFile(path.join(f.workspace,'output.txt'),'utf8')).toBe('done');
   const roles=result.status.jobs.map(j=>j.task.role);expect(roles).toEqual(['specialist','checker','criteria','checker','architect','checker','planner','checker','test-designer','checker','implementer','checker','implementer','checker','verifier','checker','specialist','checker','finalizer','checker']);
   expect(new Set(result.status.jobs.map(j=>j.worker.context)).size).toBe(20);expect(Object.values(state.evidence).every(e=>e.exitCode===0)).toBe(true);
  },180_000);

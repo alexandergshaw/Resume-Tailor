@@ -73,7 +73,7 @@ export class LoopStore {
       await this.verifiedBlob(path.join(this.directory, 'blobs', artifact.hash), artifact.hash);
     }
     for (const evidence of Object.values(state.evidence)) await this.verifiedBlob(evidence.outputPath, evidence.outputHash);
-    for (const [id, report] of Object.entries({ ...state.verificationReports, ...state.finalReports })) {
+    for (const [id, report] of Object.entries({ ...state.verificationReports, ...state.finalReports, ...state.liveVerificationReports })) {
       const artifact = state.artifacts[id];
       if (!artifact || canonical(JSON.parse((await this.verifiedBlob(path.join(this.directory, 'blobs', artifact.hash), artifact.hash)).toString('utf8'))) !== canonical(report)) throw new Error('Report bytes do not bind stored report');
     }

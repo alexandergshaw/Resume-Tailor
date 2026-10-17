@@ -4,7 +4,7 @@ import { LoopStore } from './store';
 import { digest, canonical } from './json';
 import path from 'node:path';
 import { contained, safeFile } from './paths';
-import type { ApprovedPatch, Artifact, Context, Envelope, FinalReport, VerificationReport } from './types';
+import type { ApprovedPatch, Artifact, Context, Envelope, FinalReport, VerificationReport, LiveVerificationReport } from './types';
 
 export function applyApprovedPatch(original: Buffer, patch: ApprovedPatch): Buffer {
   if (digest(original) !== patch.originalHash) throw new Error('Approved patch original hash mismatch');
@@ -47,12 +47,12 @@ export async function observeEvent(store: LoopStore, event: Envelope): Promise<P
     if (!actual.equals(expected)) throw new Error('Result artifact differs from exact owner-approved byte patch');
     return { approvedPatches: { [String(decision.id)]: patch } };
   }
-  if (event.type === 'verification.record' || event.type === 'final.record') {
+  if (event.type === 'verification.record' || event.type === 'final.record' || event.type === 'live-verification.record') {
     const id = String(event.payload.artifact); const artifact = state.artifacts[id];
     if (!artifact) throw new Error('Report requires imported artifact');
     const report = JSON.parse((await store.verifiedBlob(path.join(store.directory, 'blobs', artifact.hash), artifact.hash)).toString('utf8'));
     if (canonical(report) !== canonical(event.payload.report)) throw new Error('Report payload differs from observed immutable bytes');
-    return event.type === 'verification.record' ? { verificationReports: { [id]: report as VerificationReport } } : { finalReports: { [id]: report as FinalReport } };
+    return event.type === 'live-verification.record' ? { liveVerificationReports: { [id]: report as LiveVerificationReport } } : event.type === 'verification.record' ? { verificationReports: { [id]: report as VerificationReport } } : { finalReports: { [id]: report as FinalReport } };
   }
   return {};
 }

@@ -1,3 +1,4 @@
+import { requireLiveVerification } from './live-verification';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { readFile } from 'node:fs/promises';
@@ -43,7 +44,7 @@ export async function dispatch(args: string[]): Promise<unknown> {
     const status = { ...state, candidate: context.candidate, staleArtifacts: Object.keys(state.artifacts).filter(id => !context.artifacts[id]), scheduling: nextAssignments(state, context), limitations: ['Provider identity is operator-attested', 'No hostile-worker sandbox', 'Whole-candidate evidence only'] };
     if (flags['--output'] === 'summary') return {
       revision: state.revision, runStatus: state.runStatus,
-      items: Object.values(state.items).map(({ id, status, needs, escalation }) => ({ id, status, needs, escalation })),
+      items: Object.values(state.items).map(item => { let liveVerification: string; try { liveVerification = requireLiveVerification(state,item,context); } catch (error) { liveVerification = error instanceof Error ? error.message : 'Live verification pending'; } return { id:item.id,status:item.status,needs:item.needs,escalation:item.escalation,liveVerification }; }),
       assignments: Object.values(state.assignments).map(({ id, item, role, status, reconciled, reason }) => ({ id, item, role, status, reconciled, reason })),
       operations: Object.values(state.operations).map(({ id, assignment, status, reconciled }) => ({ id, assignment, status, reconciled })),
       candidate: context.candidate.digest, staleArtifacts: status.staleArtifacts, scheduling: status.scheduling, limitations: status.limitations,

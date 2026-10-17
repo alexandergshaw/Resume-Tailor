@@ -1,3 +1,4 @@
+import { requireLiveVerification } from './live-verification';
 import type { NextAction, NextActionsFunction } from './dispatch-types';
 import { actionKey, activityId, checkedPlan, taskFor, validatePlanScope } from './workflow';
 import { hasProposalReentry } from './dispatch-store';
@@ -12,7 +13,7 @@ export const nextActions: NextActionsFunction = (state,journal,context) => {
   if (state.runStatus !== 'running') return terminal('blocked',`Run ${state.runStatus}`);
   if (context.now > context.config.budget.deadline || context.now > state.policy.deadline) return terminal('blocked','Dispatch deadline exhausted');
   if (!item) return [{kind:'bootstrap',key:actionKey(context.selection,context.config),selection:context.selection}];
-  if (item.status === 'shipped') return terminal('complete','Local delivery recorded');
+  if (item.status === 'shipped') { try { requireLiveVerification(state,item,{...context,artifacts:context.artifacts ?? {},evidence:state.evidence}); return terminal('complete','Local delivery and live verification recorded'); } catch (error) { return terminal('blocked',error instanceof Error ? error.message : 'Live verification pending'); } }
   if (item.needs.length) return terminal('blocked',item.needs.join('; '));
   if (Object.values(state.assignments).some(a => a.status !== 'finished' && !a.reconciled)) return terminal('blocked','Existing manual or uncertain assignment retains locks; finish or reconcile it');
   const owner = Object.values(state.activities).find(a => a.item === item.id && (a.status === 'owner-needed' || a.status === 'withdrawn'));
@@ -60,6 +61,7 @@ export const nextActions: NextActionsFunction = (state,journal,context) => {
   if (item.status === 'verified') return activity('whole-change-review') ?? activity('final-report') ?? advance('regression-passed',['final-report']);
   if (item.status === 'regression-passed') {
     if (!context.config.grant.allowLocalDelivery) return terminal('blocked','Owner local-delivery grant required');
+    try { requireLiveVerification(state,item,{...context,artifacts:context.artifacts ?? {},evidence:state.evidence}); } catch (error) { return terminal('blocked',error instanceof Error ? error.message : 'Live verification pending; admit authorized host measurement and independent check'); }
     return advance('shipped',['final-report']);
   }
   return terminal('blocked','Unsupported workflow state');

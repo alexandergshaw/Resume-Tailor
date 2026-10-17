@@ -86,7 +86,11 @@ steps/results and limits. Documentation/engine-only work still gets a live smoke
 check, separately from its own validation. A missing deployment, session or
 authority leaves this obligation pending and blocks full completion; source may
 be pushed with that limitation explicit. Local fixtures and Git delivery checks
-are separate evidence. Existing completion commands do not enforce this host gate.
+are separate evidence. The engine's shipped transition, manual/root handoff and
+supervisor completion paths require current accepted live-verification evidence;
+old shipped markers alone fail closed. The Git-only delivery command remains
+publication proof. Mechanical validation enforces recorded attestation contracts,
+not whether the host truly performed the browser actions.
 
 An independent verifier reads the actual diff and surrounding code, maps every
 criterion to examined object, instrument, expected and observed result, and labels

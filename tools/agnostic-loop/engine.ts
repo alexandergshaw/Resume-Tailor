@@ -1,9 +1,10 @@
-import type { Activity, Artifact, Assignment, Context, Decision, Envelope, Evidence, FinalReport, Item, ItemStatus, LoopState, Operation, VerificationReport, Worker } from './types';
+import { requireLiveVerification, validateLiveReport } from './live-verification';
+import type { Activity, Artifact, Assignment, Context, Decision, Envelope, Evidence, FinalReport, Item, ItemStatus, LoopState, Operation, VerificationReport, LiveVerificationReport, Worker } from './types';
 import { validateContext, validateEvent, validatePolicy, validateState } from './validation';
 import { continuePolicy } from './policy-continuation';
 
 export function createState(policy: unknown): LoopState {
-  return { schemaVersion: 1, revision: 0, policy: validatePolicy(policy), runStatus: 'running', items: {}, activities: {}, assignments: {}, artifacts: {}, evidence: {}, decisions: {}, operations: {}, verificationReports: {}, finalReports: {}, events: [] };
+  return { schemaVersion: 1, liveVerificationReports: {}, revision: 0, policy: validatePolicy(policy), runStatus: 'running', items: {}, activities: {}, assignments: {}, artifacts: {}, evidence: {}, decisions: {}, operations: {}, verificationReports: {}, finalReports: {}, events: [] };
 }
 export const equal = (a: unknown, b: unknown): boolean => {
   if (a === b) return true;
@@ -124,7 +125,8 @@ export function applyEvent(state: LoopState, raw: unknown, context: Context): Lo
       const a = p as unknown as Omit<Assignment,'baseline'|'policyHash'|'publicationToken'|'status'|'reconciled'|'reason'>;
       unique(s.assignments,a.id); const item = s.items[a.item], activity = s.activities[a.activity];
       requireThat(item && activity?.item === a.item,'assignment parent mismatch');
-      const blockers = assignmentBlockers(s,item,c).filter(reason => a.role === 'transcriber' && reason === 'owner disposition required' ? false : true); requireThat(!blockers.length,blockers.join('; '));
+      const liveRecovery = (activity.kind === 'live-verification' && ['verifier','checker'].includes(a.role)) || (activity.kind === 'live-observation' && ['specialist','checker'].includes(a.role));
+      const blockers = assignmentBlockers(s,item,c).filter(reason => reason === 'already shipped' && liveRecovery ? false : a.role === 'transcriber' && reason === 'owner disposition required' ? false : true); requireThat(!blockers.length,blockers.join('; '));
       requireThat(activity.dependencies.every(d => s.activities[d].status === 'accepted'),'activity dependencies unsettled');
       requireThat(a.deadline > c.now && a.deadline <= s.policy.deadline,'assignment deadline outside budget');
       requireThat(a.allowedActions.every(x => s.policy.allowedActions.includes(x)),'action outside policy');
@@ -144,7 +146,7 @@ export function applyEvent(state: LoopState, raw: unknown, context: Context): Lo
       requireThat(p.publicationToken === a.publicationToken,'publication token fenced'); unique(s.artifacts,artifact.id);
       requireThat(equal(c.artifacts[artifact.id],artifact),'artifact lacks observed IO bytes');
       requireThat(artifact.activity === a.activity && equal(artifact.author,a.worker),'artifact author/activity mismatch');
-      const roles: Record<string,string> = { scope:'specialist',criteria:'criteria',design:'architect',plan:'planner','test-design':'test-designer',implementation:'implementer',verification:'verifier','verification-report':'verifier','final-report':'finalizer' };
+      const roles: Record<string,string> = { scope:'specialist',criteria:'criteria',design:'architect',plan:'planner','test-design':'test-designer',implementation:'implementer',verification:'verifier','verification-report':'verifier','live-verification':'verifier','live-observation':'specialist','final-report':'finalizer' };
       const requiredRole = roles[s.activities[a.activity].kind];
       requireThat(!requiredRole || a.role === requiredRole || (a.role === 'transcriber' && s.activities[a.activity].status === 'owner-needed'),'artifact role/activity contract mismatch');
       if (s.activities[a.activity].kind === 'whole-change-review') independent(a.worker,Object.values(s.artifacts).filter(x => s.activities[x.activity].item === a.item && s.activities[x.activity].kind === 'implementation').map(x => x.author));
@@ -235,6 +237,12 @@ export function applyEvent(state: LoopState, raw: unknown, context: Context): Lo
       requireThat(a.role === 'verifier' && s.artifacts[id]?.assignment === a.id,'verifier report ownership required'); currentArtifact(s,id,c,false);
       requireThat(equal(c.verificationReports?.[id],report),'report bytes not observed'); verifyReport(s,a,report,c); unique(s.verificationReports,id); s.verificationReports[id] = report; break;
     }
+    case 'live-verification.record': {
+      const a = liveAssignment(s,p.assignment as string,c), id = p.artifact as string, report = p.report as LiveVerificationReport;
+      requireThat(a.role === 'verifier' && s.artifacts[id]?.assignment === a.id,'live report verifier ownership required'); currentArtifact(s,id,c,false);
+      requireThat(equal(c.liveVerificationReports?.[id],report),'live report bytes not observed');
+      validateLiveReport(s,s.items[a.item],report,c,id); s.liveVerificationReports ??= {}; unique(s.liveVerificationReports,id); s.liveVerificationReports[id] = report; break;
+    }
     case 'final.record': {
       const a = liveAssignment(s,p.assignment as string,c), id = p.artifact as string, report = p.report as FinalReport;
       requireThat(a.role === 'finalizer' && s.artifacts[id]?.assignment === a.id,'final report ownership required'); currentArtifact(s,id,c,false);
@@ -252,6 +260,7 @@ export function applyEvent(state: LoopState, raw: unknown, context: Context): Lo
       if (p.status === 'implemented') gates(s,item,p.evidence as string[],c);
       if (p.status === 'verified') requireThat(ids.some(id => { const report = s.verificationReports[id]; if (!report) return false; verifyReport(s,s.assignments[s.artifacts[id].assignment],report,c); return true; }),'accepted criterion-bound verification required');
       if (p.status === 'regression-passed' || p.status === 'shipped') requireThat(ids.some(id => { const report = s.finalReports[id]; if (!report) return false; verifyFinal(s,item,report,c); return true; }),'accepted final report required');
+      if (p.status === 'shipped') requireLiveVerification(s,item,c);
       item.status = p.status as ItemStatus; break;
     }
     case 'item.block': case 'item.escalate': {

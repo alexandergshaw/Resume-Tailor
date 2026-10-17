@@ -1,3 +1,5 @@
+import { importSyntheticLiveVerification } from './live-verification-fixtures';
+import { LoopStore } from './store';
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { mkdir, readFile, readdir, writeFile } from 'node:fs/promises';
@@ -183,6 +185,7 @@ export async function runDemo(directory: string): Promise<unknown> {
   await d.finish('finalize');
   await d.review('final-report');
   await d.advance('regression-passed', ['final-report'], evidence);
+  await importSyntheticLiveVerification(new LoopStore(fixture.stateDirectory),'transform',true);
   await d.advance('shipped', ['final-report'], evidence);
   await d.event('item.create', {
     id: 'owner-example', objective: 'Demonstrate exact owner disposition after two defective rounds', owner: 'operator',

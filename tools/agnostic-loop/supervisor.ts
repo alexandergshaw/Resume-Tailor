@@ -26,7 +26,7 @@ export const configureDispatch:ConfigureDispatchFunction = async(store,raw)=>{
 };
 async function statusFor(store:LoopStore,config:RoutingConfig,selection?:BacklogSelection):Promise<DispatchStatus>{
   const state=await store.load(),journal=await loadJournal(store,config),context=await store.context(state);
-  const actions=selection?nextActions(state,journal,{candidate:context.candidate,now:context.now,selection,config,acceptedBodies:await acceptedBodies(store,state)}):[];
+  const actions=selection?nextActions(state,journal,{artifacts:context.artifacts,candidate:context.candidate,now:context.now,selection,config,acceptedBodies:await acceptedBodies(store,state)}):[];
   return {runStatus:state.runStatus,revision:state.revision,journalRevision:journal.revision,candidate:context.candidate,actions,jobs:Object.values(journal.jobs),checkpoints:journal.checkpoints,limitations:['Cooperative same-user workers; no OS sandbox','Canonical writer and read-only work are fully serialized','Recursive provider delegation is unsupported; tool restrictions are cooperative unless adapter enforces them','Installed/version probe is not a live model qualification','Estimated reservations are not hard billing limits; unavailable usage remains reserved']};
 }
 export const dispatchStatus:DispatchStatusFunction = async(store,raw,selection)=>statusFor(store,validateRoutingConfig(raw),selection&&validateBacklogSelection(selection));
@@ -97,7 +97,7 @@ export const drive:DriveFunction = async(store,raw,input,options={})=>{
       else if(action.kind==='gate')throw new Error('Standalone gate action requires the durable verifier assignment');
       else await store.locked(async()=>{
         let state=await store.load();const revision=state.revision,journal=await loadJournal(store,config),context=await store.context(state),bodies=await acceptedBodies(store,state);
-        const current=nextActions(state,journal,{candidate:context.candidate,now:context.now,selection,config,acceptedBodies:bodies});requireThat(current.some(a=>canonical(a)===canonical(action)),'Workflow action changed before commit');
+        const current=nextActions(state,journal,{artifacts:context.artifacts,candidate:context.candidate,now:context.now,selection,config,acceptedBodies:bodies});requireThat(current.some(a=>canonical(a)===canonical(action)),'Workflow action changed before commit');
         if(action.kind==='bootstrap'){
           const requirements=selection.requirements.length?selection.requirements:[`${selection.id}:requested-outcome`];
           state=await commitEvent(store,state,`dispatch:${action.key}`,'item.create',{id:selection.id,objective:selection.objective,owner:config.grant.owner,affectedPaths:selection.owns,dependencies:[],criteria:requirements,requiredArtifacts:{},requiredGates:[],triage:{}});
@@ -116,7 +116,7 @@ export const drive:DriveFunction = async(store,raw,input,options={})=>{
   }
   if(limit>0)await store.locked(async()=>{
     const state=await store.load(),journal=await loadJournal(store,config),context=await store.context(state);
-    const action=nextActions(state,journal,{candidate:context.candidate,now:context.now,selection,config,acceptedBodies:await acceptedBodies(store,state)})[0];
+    const action=nextActions(state,journal,{artifacts:context.artifacts,candidate:context.candidate,now:context.now,selection,config,acceptedBodies:await acceptedBodies(store,state)})[0];
     if(action?.kind==='complete')return;
     const stage=state.items[selection.id]?.status??'uncreated';
     const reason=action&&(action.kind==='blocked'||action.kind==='owner-needed')?`${action.kind}: ${action.reasons.join('; ')}`:unchanged?'unchanged progress':steps>=limit?`step limit ${limit} exhausted`:null;
