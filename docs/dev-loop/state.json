@@ -1,6 +1,6 @@
 {
   "format": "manual-host-record-v1",
-  "revision": 31,
+  "revision": 34,
   "items": [
     {
       "id": "port",
@@ -320,6 +320,19 @@
       "automaticDispatch": "unchanged-disabled-expired",
       "verification": "items/N173/verification.md",
       "independentAcceptance": "items/N173/verification.check.md",
+      "repositoryDelivery": "Exact main publication requires live loop:delivery; runtime receipt outside tracked source"
+    },
+    {
+      "id": "N174",
+      "objective": "Automatically suggest an editable search name in Setup chat",
+      "owner": "user",
+      "status": "verified",
+      "plan": "items/N174/plan.md",
+      "planAcceptance": "items/N174/plan.check.md",
+      "assignment": ".agnostic-loop/backlog-dispatch/N166/runtime/N174/assignment.json",
+      "automaticDispatch": "unchanged-disabled-expired",
+      "verification": "items/N174/verification.md",
+      "independentAcceptance": "items/N174/verification.check.md",
       "repositoryDelivery": "Exact main publication requires live loop:delivery; runtime receipt outside tracked source"
     }
   ],

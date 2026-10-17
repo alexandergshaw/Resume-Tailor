@@ -32,5 +32,9 @@ describe("N170 actual save account fence and reopen",()=>{
 });
 
 describe("N173 rendered failure forwarding",()=>{
- it("passes the actionable save reason to the conversation and retains the proposal",async()=>{fetch.mockResolvedValueOnce(good());await render();await act(async()=>chatProps.onSend("platform roles"));fetch.mockResolvedValueOnce({ok:false,status:400,json:async()=>({code:"SEARCH_NAME_REQUIRED",error:"PRIVATE_RESPONSE_CANARY"})});await act(async()=>reviewProps.onAccept());expect(chatProps.error).toContain("Ask the setup chat to name your search");expect(chatProps.error).not.toContain("PRIVATE_RESPONSE_CANARY");expect(reviewProps.draft.name).toBe("Platform");expect(reviewProps.disabled).toBe(false);});
+ it("passes the actionable save reason to the conversation and retains the proposal",async()=>{fetch.mockResolvedValueOnce(good());await render();await act(async()=>chatProps.onSend("platform roles"));fetch.mockResolvedValueOnce({ok:false,status:400,json:async()=>({code:"SEARCH_NAME_REQUIRED",error:"PRIVATE_RESPONSE_CANARY"})});await act(async()=>reviewProps.onAccept());expect(chatProps.error).toContain("Search name field in Your proposal");expect(chatProps.error).not.toContain("PRIVATE_RESPONSE_CANARY");expect(reviewProps.draft.name).toBe("Platform");expect(reviewProps.disabled).toBe(false);});
+});
+
+describe("N174 actual review name wiring",()=>{
+ it("passes the editable name setter through the real Panel and preserves it in the next turn",async()=>{fetch.mockResolvedValueOnce(good({name:null,jobKeywords:["Backend","Remote"]}));await render();await act(async()=>chatProps.onSend("jobs"));expect(reviewProps.draft.name).toBe("Backend · Remote");expect(typeof reviewProps.setName).toBe("function");act(()=>reviewProps.setName("My edited name"));act(()=>reviewProps.setEmailOnNewJobs(true));fetch.mockResolvedValueOnce(good({name:"Model replacement"}));await act(async()=>chatProps.onSend("change frequency"));expect(JSON.parse(fetch.mock.calls[1][1].body).currentConfig.name).toBe("My edited name");expect(reviewProps.draft.name).toBe("My edited name");});
 });

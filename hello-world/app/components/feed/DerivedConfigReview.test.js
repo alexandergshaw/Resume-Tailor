@@ -358,3 +358,13 @@ describe("document choice presentation preserves actual modes",()=>{
   await click(options.find(x=>x.getAttribute("data-value")==="resume_only"));await click(acceptButton());await settle();expect(applyBodies).toHaveLength(1);expect(applyBodies[0].tailoringDocumentMode).toBe("resume_only");
  });
 });
+
+describe("N174 visible search name",()=>{
+ it("shows an accessible required name near the top and saves a multiword Unicode edit",async()=>{
+  await toReview({jobKeywords:["Backend","Remote"]});const name=inputByLabel(/^Search name/);expect(name).toBeTruthy();expect(name.value).toBe("Backend · Remote");expect(name.required).toBe(true);expect(name.maxLength).toBe(200);expect(name.getAttribute("aria-describedby")).toBeTruthy();expect(document.getElementById(name.getAttribute("aria-describedby")).textContent).toContain("Use this name to identify your saved search");
+  await typeInto(name,"My 東京 roles ");expect(name.value).toBe("My 東京 roles ");await click(emailSwitch());expect(name.value).toBe("My 東京 roles ");await click(acceptButton());expect(applyBodies[0].name).toBe("My 東京 roles ");
+ });
+ it("keeps a cleared name editable with an inline hint and disabled Save until corrected",async()=>{
+  await toReview();const name=inputByLabel(/^Search name/);await typeInto(name,"");expect(name.value).toBe("");expect(name.getAttribute("aria-invalid")).toBe("true");expect(document.getElementById(name.getAttribute("aria-describedby")).textContent).toContain("Enter a search name before saving");expect(acceptButton().disabled).toBe(true);await click(acceptButton());expect(applyBodies).toHaveLength(0);await typeInto(name,"Fixed name");expect(acceptButton().disabled).toBe(false);await click(acceptButton());expect(applyBodies[0].name).toBe("Fixed name");
+ });
+});

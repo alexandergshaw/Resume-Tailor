@@ -1,6 +1,7 @@
 "use client";
 
 import { useId } from "react";
+import TextField from "@mui/material/TextField";
 import Chip from "@mui/material/Chip";
 import FormControl from "@mui/material/FormControl";
 import InputLabel from "@mui/material/InputLabel";
@@ -48,6 +49,7 @@ function companyOptionsToNames(values) {
 
 export default function DerivedConfigReview({
   draft,
+  setName,
   setJobKeywords,
   setMaxYearsExp,
   setSelectedCategories,
@@ -74,6 +76,7 @@ export default function DerivedConfigReview({
         {saved ? "Saved. Further changes create a new search copy." : "Proposed: review before saving a new search. Automatic tailoring remains off."}
       </Typography>
       <fieldset disabled={disabled} style={{border:0,padding:0,margin:0,minWidth:0}}>
+      <TextField fullWidth required label="Search name" value={draft.name || ""} onChange={e=>setName?.(e.target.value)} disabled={disabled} error={!draft.name?.trim()} helperText={!draft.name?.trim()?"Enter a search name before saving.":"Use this name to identify your saved search. You can edit it."} slotProps={{htmlInput:{maxLength:200}}} sx={{mb:3,minWidth:0}}/>
       <Typography variant="subtitle2" sx={{mb:2,fontWeight:700}}>Job preferences</Typography>
       <Box sx={{display:"grid",gap:2.5,minWidth:0,"& > *":{minWidth:0,maxWidth:"100%"},"& .MuiFormControl-root":{width:"100%",minWidth:"0 !important"},"& .MuiInputLabel-outlined":{position:"static",transform:"none",maxWidth:"100%",whiteSpace:"normal",mb:.75,fontSize:".78rem"},"& .MuiOutlinedInput-notchedOutline legend":{maxWidth:"0.01px"},"& .MuiInputBase-root":{mt:"0 !important"}}}>
       <JobFilterControls
@@ -124,7 +127,7 @@ export default function DerivedConfigReview({
       {draft.needsDocumentChoice&&<Typography role="alert">Cover-only is unavailable. Choose a supported document option before saving.</Typography>}
       </fieldset>
       <Divider sx={{ my: 3 }} />
-      <Button fullWidth variant="contained" size="large" sx={{borderRadius:2,textTransform:"none",fontWeight:650}} disabled={disabled||!!draft.needsDocumentChoice||!!saved} onClick={onAccept}>
+      <Button fullWidth variant="contained" size="large" sx={{borderRadius:2,textTransform:"none",fontWeight:650}} disabled={disabled||!draft.name?.trim()||!!draft.needsDocumentChoice||!!saved} onClick={onAccept}>
         Save new search
       </Button>
       <Typography variant="caption" color="text.secondary" sx={{display:"block",mt:1.5,textAlign:"center",lineHeight:1.7}}>You can enable automatic tailoring separately in Automation.</Typography>
