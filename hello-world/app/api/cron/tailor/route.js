@@ -214,13 +214,15 @@ async function processUser({
                 posting,
                 resumeBuffer,
                 coverLetterBuffer,
+                tailoringDocumentMode: savedSearch.tailoring_document_mode,
                 savedSearchId: savedSearch.id,
                 sourceLabel: `saved search "${savedSearch.name}"`,
               });
               if (result)
                 queued.push({
                   ...result,
-                  savedSearchId: savedSearch.id,
+                  tailoringDocumentMode: savedSearch.tailoring_document_mode,
+                savedSearchId: savedSearch.id,
                   savedSearchName: savedSearch.name,
                   emailOnNewJobs: !!savedSearch.email_on_new_jobs,
                 });
@@ -248,7 +250,7 @@ async function processUser({
         ? `New job ready to auto-apply: ${queued[0].title}`
         : `${queued.length} new jobs ready to auto-apply`;
     const bodyPart = queued
-      .map((t) => `• ${t.title}${t.company ? ` — ${t.company}` : ""}`)
+      .map((t) => `â€¢ ${t.title}${t.company ? ` â€” ${t.company}` : ""}`)
       .join("\n");
     try {
       await admin.from("notifications").insert({
@@ -443,7 +445,7 @@ async function emailOnlyNewJobs({ admin, userId, savedSearches, mailKill, pause 
   }
 
   // Only mark postings notified once we've actually delivered at least one
-  // email, so a missing API key (sends skipped) doesn't silently drop alerts —
+  // email, so a missing API key (sends skipped) doesn't silently drop alerts â€”
   // they'll be retried on the next run once email is configured.
   if (anySent) {
     await recordNotifiedExternalIds(admin, userId, matchedIds);

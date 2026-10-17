@@ -92,6 +92,8 @@ export default function FeedToolbar({
       <Box
         sx={{
           display: "inline-flex",
+          flexWrap: "wrap",
+          maxWidth: "100%",
           borderRadius: 1.5,
           border: "1px solid",
           borderColor: "divider",
@@ -134,6 +136,7 @@ export default function FeedToolbar({
         >
           Automation
         </Button>
+        <Button size="small" variant={view === "chat" ? "contained" : "text"} onClick={() => onChangeView("chat")} sx={{textTransform:"none",fontWeight:600}}>Setup chat</Button>
       </Box>
 
       <Badge

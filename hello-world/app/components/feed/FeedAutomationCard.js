@@ -84,11 +84,11 @@ export default function FeedAutomationCard({ entry, setSavedSearchAutoTailor, em
         }
       >
         <Typography sx={{ fontSize: "0.9rem", mb: 0.5 }}>
-          Checked {describeCadence(clampIntervalMinutes(entry.autoTailorMinIntervalMinutes))}.
+          Documents: {entry.tailoringDocumentMode === "resume_only" ? "Resume only" : entry.tailoringDocumentMode === "resume_cover" ? "Resume + cover letter (both required)" : "Resume + cover letter if available"}. Checked {describeCadence(clampIntervalMinutes(entry.autoTailorMinIntervalMinutes))}.
         </Typography>
         <Typography sx={{ fontSize: "0.9rem" }}>
           Up to {MAX_TAILORS_PER_USER_PER_UTC_DAY} matching postings a day will be tailored automatically and
-          unattended, while you&apos;re away. The tailored r&eacute;sum&eacute; and cover letter are generated and
+          unattended, while you&apos;re away. The selected documents are generated and
           parked in your Auto-Apply queue for you to review &mdash; nothing is ever submitted on your behalf.
         </Typography>
       </FormDialog>

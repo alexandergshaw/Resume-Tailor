@@ -1,3 +1,4 @@
+import { documentModeWriteError } from "@/lib/feed/documentSelection";
 import { createClient } from "@/lib/supabase/server";
 import {
   sanitizeSavedSearchCreate,
@@ -35,7 +36,12 @@ export async function POST(request) {
   } catch {
     return Response.json({ error: "Invalid JSON" }, { status: 400 });
   }
-  const sanitized = sanitizeSavedSearchCreate(body);
+  let sanitized;
+  try {
+    sanitized = sanitizeSavedSearchCreate(body);
+  } catch {
+    return Response.json({ error: "Choose Resume only or Resume + cover letter.", code: "DOCUMENT_MODE_INVALID" }, { status: 400 });
+  }
   if (!sanitized) {
     return Response.json({ error: "Missing or invalid 'name'." }, { status: 400 });
   }
@@ -57,7 +63,7 @@ export async function POST(request) {
     .select("*")
     .single();
   if (error) {
-    return Response.json({ error: error.message }, { status: 500 });
+    return Response.json(documentModeWriteError(error, sanitized), { status: error.code === "42703" || error.code === "PGRST204" ? 409 : 500 });
   }
   return Response.json({ search: data });
 }

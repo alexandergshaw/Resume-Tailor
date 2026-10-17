@@ -89,7 +89,7 @@ describe("tailorAndQueueOne", () => {
       status: "tracking",
     });
 
-    // The metadata UPDATE runs FIRST and names no status at all — the queue
+    // The metadata UPDATE runs FIRST and names no status at all â€” the queue
     // placement is a separate statement (below), guarded by the writer's
     // allow-list, so a race with a status change elsewhere can never see a
     // half-applied metadata write silently reinterpreted as a status claim.
@@ -104,7 +104,7 @@ describe("tailorAndQueueOne", () => {
     expect(metadataArgs.auto_saved_at).toBeTruthy();
 
     // The SECOND update is the queue placement itself, issued by
-    // writeApplicationStatus's guarded UPDATE (C1) — it is unmocked here, so
+    // writeApplicationStatus's guarded UPDATE (C1) â€” it is unmocked here, so
     // this is the real allow-list running against `makeSupabase`.
     const statusArgs = admin.calls.applications.update[1][0];
     expect(statusArgs).toEqual({ status: "auto_queued" });
@@ -240,7 +240,7 @@ describe("tailorAndQueueOne", () => {
       it("sends only the URL, not the truncated snippet, when raw_data.description is missing", async () => {
         postingToJob.mockReturnValue({
           ...JOB,
-          description: "A 400-character snippet…",
+          description: "A 400-character snippetâ€¦",
           url: "https://example.com/job/1",
         });
         const admin = makeSupabase({
@@ -333,4 +333,23 @@ describe("markFeedSaved", () => {
     await markFeedSaved(admin, "user-1", null);
     expect(admin.from).not.toHaveBeenCalled();
   });
+});
+
+// N170 baseline: a persisted output choice must change actual generation.
+describe("N170 selected output kinds", () => {
+  it("resume-only never generates or persists a cover even when a source cover exists", async () => {
+    const admin = makeSupabase({ positions: { data: { id: "pos-1" } }, applications: { data: null, error: null }, feed_user_state: { data: null, error: null } });
+    await tailorAndQueueOne({ admin, userId: "user-1", posting: { id: "feed-1" }, resumeBuffer: Buffer.from("resume"), coverLetterBuffer: Buffer.from("cover"), tailoringDocumentMode: "resume_only" });
+    expect(tailorResumeHeadless).toHaveBeenCalledTimes(1);
+    expect(tailorCoverLetterHeadless).not.toHaveBeenCalled();
+    expect(saveGeneratedCoverLetter).not.toHaveBeenCalled();
+    expect(admin.calls.applications.update[0][0].cover_letter_id).toBeNull();
+  });
+});
+
+
+describe("N170 required source modes",()=>{
+ it("refuses explicit both without cover before position/model work",async()=>{const admin=makeSupabase({});await expect(tailorAndQueueOne({admin,userId:"u",posting:{},resumeBuffer:Buffer.from("resume"),tailoringDocumentMode:"resume_cover"})).rejects.toThrow(/cover-letter template/);expect(tailorResumeHeadless).not.toHaveBeenCalled();expect(tailorCoverLetterHeadless).not.toHaveBeenCalled();expect(admin.calls.positions).toBeUndefined();});
+ it("refuses unknown mode before any model",async()=>{await expect(tailorAndQueueOne({admin:makeSupabase({}),userId:"u",posting:{},resumeBuffer:Buffer.from("resume"),tailoringDocumentMode:"cover_only"})).rejects.toThrow(/Choose/);expect(tailorResumeHeadless).not.toHaveBeenCalled();});
+ it("explicit both cannot queue after cover failure",async()=>{tailorCoverLetterHeadless.mockRejectedValue(new Error("private provider error"));const admin=makeSupabase({positions:{data:{id:"p"}},applications:{data:null,error:null},feed_user_state:{data:null,error:null}});await expect(tailorAndQueueOne({admin,userId:"u",posting:{id:"feed"},resumeBuffer:Buffer.from("resume"),coverLetterBuffer:Buffer.from("cover"),tailoringDocumentMode:"resume_cover"})).rejects.toThrow(/not queued/);expect(upsertApplication).not.toHaveBeenCalled();});
 });

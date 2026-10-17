@@ -180,3 +180,15 @@ describe("FeedToolbar - behaviour", () => {
     expect(hasAutofill()).toBe(true);
   });
 });
+
+// N170 baseline: actual rendered peer control, not a source-string assertion.
+describe("Auto Applying setup chat", () => {
+  it("opens the Setup chat peer view from Auto Applying", () => {
+    const onChangeView = vi.fn();
+    render(baseProps({ onChangeView }));
+    const setup = controls().find(el => /^setup chat$/i.test(accessibleName(el)));
+    expect(setup, "A peer Setup chat control must be reachable").toBeTruthy();
+    act(() => setup.click());
+    expect(onChangeView).toHaveBeenCalledWith("chat");
+  });
+});

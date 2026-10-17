@@ -21,6 +21,7 @@
 // a single generation per user-triggered turn.
 import { createClient } from "@/lib/supabase/server";
 import { createRateLimiter, identify, rateLimitHeaders } from "@/lib/rateLimit/index";
+import { normalizeConversationRequest, summarizeConversationConfig } from "@/lib/feedConfig/conversation";
 import { deriveFeedConfig } from "@/lib/feedConfig/deriveFeedConfig";
 
 export const runtime = "nodejs";
@@ -44,14 +45,32 @@ export async function POST(request) {
     );
   }
 
-  let body;
+  let input;
   try {
-    body = await request.json();
+    // Stream to a hard byte cap before JSON parsing or any model work.
+    const reader = request.body?.getReader();
+    if (!reader) return Response.json({ error: "Invalid conversation request." }, { status: 400 });
+    const decoder = new TextDecoder();
+    let bytes = 0, text = "";
+    try {
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        bytes += value.byteLength;
+        if (bytes > 32768) {
+          await reader.cancel();
+          return Response.json({ error: "Conversation request is too large." }, { status: 413 });
+        }
+        text += decoder.decode(value, { stream: true });
+      }
+      text += decoder.decode();
+    } finally { reader.releaseLock(); }
+    input = normalizeConversationRequest(JSON.parse(text));
   } catch {
-    return Response.json({ error: "Invalid JSON" }, { status: 400 });
+    return Response.json({ error: "Invalid conversation request. Use at most 2000 characters and a bounded user/assistant history." }, { status: 400 });
   }
-
-  const message = typeof body?.message === "string" ? body.message : "";
-  const config = await deriveFeedConfig(message, { engine: body?.engine, env: process.env });
-  return Response.json({ config });
+  let mode = "fallback";
+  const config = await deriveFeedConfig(input.message, { history: input.history, currentConfig: input.currentConfig, env: process.env, onMode: value => { mode = value; } });
+  const warnings = config.needsDocumentChoice ? ["Cover-only is unavailable. Choose Resume only or Resume + cover letter before saving."] : [];
+  return Response.json({ config, assistantMessage: summarizeConversationConfig(config), mode, warnings });
 }

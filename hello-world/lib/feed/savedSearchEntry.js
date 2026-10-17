@@ -1,3 +1,4 @@
+import { normalizeDocumentMode } from "@/lib/feed/documentSelection";
 // N60 second chunk, Step D -- rowToSavedSearchEntry, extracted out of
 // app/page.js so the chat-derived review surface can map an apply-route
 // response into the exact same UI entry shape page.js's own saved-search
@@ -21,6 +22,7 @@
 export function rowToSavedSearchEntry(row) {
   return {
     id: row.id,
+    tailoringDocumentMode: normalizeDocumentMode(row.tailoring_document_mode),
     name: row.name || "",
     jobKeywords: Array.isArray(row.job_keywords) ? row.job_keywords : [],
     maxYearsExp: row.max_years_exp || "any",

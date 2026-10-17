@@ -1,5 +1,6 @@
 "use client";
 
+import { useId } from "react";
 import Box from "@mui/material/Box";
 import Typography from "@mui/material/Typography";
 import FormControl from "@mui/material/FormControl";
@@ -23,14 +24,20 @@ import { describeCadence, clampIntervalMinutes } from "@/lib/feed/cronSchedule";
 const CADENCE_OPTIONS_MINUTES = [15, 30, 60, 180, 360, 1440];
 
 export default function CadenceControl({ value, onChange }) {
-  const delivered = describeCadence(clampIntervalMinutes(value));
-  const selectValue = CADENCE_OPTIONS_MINUTES.includes(value) ? value : "";
+  const labelId = useId();
+  const supplied = (typeof value === "number" || (typeof value === "string" && value.trim() !== "")) && Number.isFinite(Number(value));
+  const normalized = supplied ? Number(value) : null;
+  const effective = clampIntervalMinutes(normalized);
+  const delivered = describeCadence(effective);
+  const selectValue = normalized === null ? "" : effective;
+  const options = CADENCE_OPTIONS_MINUTES.includes(effective) ? CADENCE_OPTIONS_MINUTES : [...CADENCE_OPTIONS_MINUTES, effective].sort((a, b) => a - b);
 
   return (
     <Box sx={{ mt: 1 }}>
       <FormControl size="small" sx={{ minWidth: 220 }}>
-        <InputLabel>How often to check</InputLabel>
+        <InputLabel id={labelId}>How often to check</InputLabel>
         <Select
+          labelId={labelId}
           label="How often to check"
           value={selectValue}
           displayEmpty
@@ -39,7 +46,7 @@ export default function CadenceControl({ value, onChange }) {
           <MenuItem value="">
             <em>Not set ({describeCadence(clampIntervalMinutes(null))})</em>
           </MenuItem>
-          {CADENCE_OPTIONS_MINUTES.map((minutes) => (
+          {options.map((minutes) => (
             <MenuItem key={minutes} value={minutes}>
               {describeCadence(clampIntervalMinutes(minutes))}
             </MenuItem>

@@ -1,3 +1,4 @@
+import { documentModeWriteError } from "@/lib/feed/documentSelection";
 import { createClient } from "@/lib/supabase/server";
 import { sanitizeSavedSearchPatch } from "@/lib/savedSearch/savedSearchFields";
 
@@ -16,7 +17,12 @@ export async function PUT(request, { params }) {
   } catch {
     return Response.json({ error: "Invalid JSON" }, { status: 400 });
   }
-  const updates = sanitizeSavedSearchPatch(body);
+  let updates;
+  try {
+    updates = sanitizeSavedSearchPatch(body);
+  } catch {
+    return Response.json({ error: "Choose Resume only or Resume + cover letter.", code: "DOCUMENT_MODE_INVALID" }, { status: 400 });
+  }
   if (Object.keys(updates).length === 0) {
     return Response.json({ error: "No valid fields to update." }, { status: 400 });
   }
@@ -29,7 +35,7 @@ export async function PUT(request, { params }) {
     .select("*")
     .single();
   if (error) {
-    return Response.json({ error: error.message }, { status: 500 });
+    return Response.json(documentModeWriteError(error, updates), { status: error.code === "42703" || error.code === "PGRST204" ? 409 : 500 });
   }
   return Response.json({ search: data });
 }

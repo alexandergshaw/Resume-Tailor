@@ -5,7 +5,7 @@
 // and every field is CORRECTABLE IN PLACE so that editing it changes what gets
 // stored (AC2-C1, AC2-C2, AC2-C4c review half; brief items 1 and 3).
 //
-// This mounts the REAL FeedAutomationPanel -- the Automation view's single mount
+// This mounts the REAL FeedConfigPanel -- the Automation view's single mount
 // point -- and drives the chat turn through the rendered controls (the deriver
 // route is stubbed via fetch). End-to-end reachability from the toolbar is
 // pinned by FeedConfigChat.wiring.test.js; this file pins what the review DOES
@@ -24,7 +24,7 @@ import { createElement, act } from "react";
 import { createRoot } from "react-dom/client";
 import { ThemeProvider } from "@mui/material/styles";
 import theme from "../../theme/index.js";
-import FeedAutomationPanel from "./FeedAutomationPanel.js";
+import FeedConfigPanel from "./FeedConfigPanel.js";
 // The real cadence contract -- the source of the expected copy, so no cadence
 // figure is ever typed as a literal (the twice-caught hardcode trap, item 3).
 import { describeCadence, clampIntervalMinutes } from "../../../lib/feed/cronSchedule.js";
@@ -86,7 +86,7 @@ async function mountPanel() {
       createElement(
         ThemeProvider,
         { theme },
-        createElement(FeedAutomationPanel, {
+        createElement(FeedConfigPanel, {
           currentUser: { id: "u1" },
           savedSearches: [],
           setSavedSearches: vi.fn(),
@@ -145,12 +145,12 @@ function chatInput() {
   const fields = Array.from(document.querySelectorAll('textarea, input[type="text"], input:not([type])'));
   return fields.find((f) =>
     /describe|jobs you want|what.*looking|tell us/i.test(
-      `${f.getAttribute("placeholder") || ""} ${f.getAttribute("aria-label") || ""}`,
+      `${f.getAttribute("placeholder") || ""} ${f.getAttribute("aria-label") || ""} ${Array.from(f.labels || []).map(label => label.textContent).join(" ")}`,
     ),
   );
 }
 const sendButton = () => named(/preview|generate|read|describe|configure|send|propose/i);
-const acceptButton = () => named(/create automation|save automation|add search|start automat|create search|save search|accept/i);
+const acceptButton = () => named(/create automation|save automation|add search|start automat|create search|save (?:new )?search|accept/i);
 
 // The MUI TextField label whose text matches `re`, resolved to its input.
 function inputByLabel(re) {
@@ -347,4 +347,9 @@ describe("the review reuses the shared controls rather than forking them", () =>
     const src = readIf("./DerivedConfigReview.js");
     expect(src).toMatch(/CadenceControl/);
   });
+});
+
+
+describe("measured document choice responsive constraint",()=>{
+ it("keeps every document option and saves the actual selected mode",async()=>{await toReview();const select=container.querySelector('select[aria-label="Documents to tailor"]');expect(select).toBeTruthy();expect([...select.options].map(o=>o.value)).toEqual(["","resume_only","resume_cover"]);expect(select.style.width).toBe("100%");expect(select.style.maxWidth).toBe("100%");expect(Number.parseFloat(select.style.minWidth)).toBe(0);expect(select.style.boxSizing).toBe("border-box");await act(async()=>{select.value="resume_only";select.dispatchEvent(new Event("change",{bubbles:true}));});await click(acceptButton());await settle();expect(applyBodies).toHaveLength(1);expect(applyBodies[0].tailoringDocumentMode).toBe("resume_only");});
 });

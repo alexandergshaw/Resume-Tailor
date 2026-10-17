@@ -51,6 +51,9 @@ export default function DerivedConfigReview({
   setAutoTailorMinIntervalMinutes,
   setEmailOnNewJobs,
   onAccept,
+  setTailoringDocumentMode,
+  disabled = false,
+  saved = null,
   GREENHOUSE_COMPANIES,
   COMPANY_CATEGORIES,
 }) {
@@ -60,8 +63,9 @@ export default function DerivedConfigReview({
         {draft.name || "New automation"}
       </Typography>
       <Typography sx={{ color: "text.secondary", fontSize: "0.78rem", mb: 1 }}>
-        Here&apos;s what was understood. Correct anything below, then create the automation.
+        {saved ? "Saved. Further changes create a new search copy." : "Proposed: review before saving a new search. Automatic tailoring remains off."}
       </Typography>
+      <fieldset disabled={disabled} style={{border:0,padding:0,margin:0,minWidth:0}}>
       <JobFilterControls
         jobKeywords={draft.jobKeywords}
         setJobKeywords={setJobKeywords}
@@ -90,9 +94,19 @@ export default function DerivedConfigReview({
         label={<Box sx={{ fontSize: "0.78rem" }}>Email me new jobs</Box>}
         sx={{ m: 0, mt: 1 }}
       />
+      <Box component="label" sx={{display:"block",mt:1,minWidth:0,maxWidth:"100%"}}>Documents to tailor
+        <select style={{width:"100%",maxWidth:"100%",minWidth:0,boxSizing:"border-box"}} aria-label="Documents to tailor" value={draft.tailoringDocumentMode || ""} onChange={e=>setTailoringDocumentMode?.(e.target.value || null)}>
+          <option value="">Resume + cover letter if available (legacy)</option>
+          <option value="resume_only">Resume only</option>
+          <option value="resume_cover">Resume + cover letter (both required)</option>
+        </select>
+      </Box>
+      <Typography variant="caption">Checks use the existing schedule, minimum 15 minutes, default 60. Email alerts use the service&apos;s email schedule. Explicit document selection requires server schema setup.</Typography>
+      {draft.needsDocumentChoice&&<Typography role="alert">Cover-only is unavailable. Choose a supported document option before saving.</Typography>}
+      </fieldset>
       <Divider sx={{ my: 1 }} />
-      <Button variant="contained" size="small" onClick={onAccept}>
-        Create automation
+      <Button variant="contained" size="small" disabled={disabled||!!draft.needsDocumentChoice||!!saved} onClick={onAccept}>
+        Save new search
       </Button>
     </Box>
   );

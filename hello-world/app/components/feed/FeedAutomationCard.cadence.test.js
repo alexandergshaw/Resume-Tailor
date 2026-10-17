@@ -160,3 +160,10 @@ describe("AC2-C4c: the enable confirm states the delivered cadence, derived from
     expect(text).not.toMatch(/\b5\s*minutes?\b/i);
   });
 });
+
+
+describe("N170 final enable confirmation document choices",()=>{
+ for(const [mode,label] of [["resume_only","Resume only"],["resume_cover","Resume + cover letter (both required)"],[null,"Resume + cover letter if available"]]){
+  it(`truthfully confirms ${mode||"legacy"} without promising unselected documents`,async()=>{await mountCard(entryOf({tailoringDocumentMode:mode}));await click(autoTailorSwitch());const text=topDialogText();expect(text).toContain(label);expect(text).toContain("The selected documents are generated");expect(text).not.toContain("The tailored résumé and cover letter are generated");expect(text).toContain(String(MAX_TAILORS_PER_USER_PER_UTC_DAY));expect(text).toMatch(/nothing is ever submitted/i);});
+ }
+});

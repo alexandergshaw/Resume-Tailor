@@ -1,0 +1,14 @@
+import {describe,it,expect} from "vitest";
+import {normalizeDocumentMode,documentModeFields,documentModeWriteError} from "./documentSelection";
+import {sanitizeSavedSearchCreate,sanitizeSavedSearchPatch,sanitizeChatDerivedSavedSearch} from "@/lib/savedSearch/savedSearchFields";
+import {mergeConversationConfig} from "@/lib/feedConfig/conversation";
+import {rowToSavedSearchEntry} from "@/lib/feed/savedSearchEntry";
+describe("N170 persisted document selection",()=>{
+ it("omits the column for all legacy writer payloads",()=>{for(const write of [sanitizeSavedSearchCreate,sanitizeSavedSearchPatch,sanitizeChatDerivedSavedSearch])expect(write({name:"Example"})).not.toHaveProperty("tailoring_document_mode");});
+ it("preserves explicit selection through writers and reload mapper",()=>{for(const mode of ["resume_only","resume_cover"]){for(const write of [sanitizeSavedSearchCreate,sanitizeSavedSearchPatch,sanitizeChatDerivedSavedSearch])expect(write({name:"Example",tailoringDocumentMode:mode})).toHaveProperty("tailoring_document_mode",mode);expect(rowToSavedSearchEntry({id:"s",tailoring_document_mode:mode}).tailoringDocumentMode).toBe(mode);}});
+ it("refuses unknown or conflicting-priority hostile selection instead of mapping it to legacy",()=>{for(const mode of ["cover_only","all",{},false,""])expect(()=>normalizeDocumentMode(mode)).toThrow();expect(()=>documentModeFields({tailoringDocumentMode:"cover_only",tailoring_document_mode:"resume_only"})).toThrow();});
+ it("normalized new and reopened legacy drafts omit the column on create/chat save",()=>{for(const current of [{},rowToSavedSearchEntry({id:"old",name:"Old search"})]){const draft=mergeConversationConfig(current,{name:"Example"});expect(draft.tailoringDocumentMode).toBeNull();expect(sanitizeChatDerivedSavedSearch(draft)).not.toHaveProperty("tailoring_document_mode");expect(sanitizeSavedSearchCreate(draft)).not.toHaveProperty("tailoring_document_mode");}});
+ it("only an intentional PATCH null clears a stored selection",()=>{expect(sanitizeSavedSearchPatch({tailoringDocumentMode:null})).toEqual({tailoring_document_mode:null});expect(sanitizeSavedSearchPatch({name:"Changed"})).not.toHaveProperty("tailoring_document_mode");});
+ it("keeps chat unable to enable automatic work",()=>{expect(sanitizeChatDerivedSavedSearch({name:"Example",tailoringDocumentMode:"resume_only",auto_tailor_enabled:true,autoTailorEnabled:true})).not.toHaveProperty("auto_tailor_enabled");});
+ it("describes missing-schema refusal without reflecting database text",()=>{expect(documentModeWriteError({code:"PGRST204",message:"PRIVATE_BODY"},{tailoring_document_mode:"resume_only"})).toMatchObject({code:"DOCUMENT_MODE_SCHEMA_REQUIRED"});expect(JSON.stringify(documentModeWriteError({code:"42703",message:"PRIVATE_BODY"},{}))).not.toContain("PRIVATE_BODY");});
+});

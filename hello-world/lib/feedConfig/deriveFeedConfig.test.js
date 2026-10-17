@@ -42,7 +42,7 @@ function stubModel(reply) {
   return generateContent;
 }
 
-// The keys the deriver's contract declares (plan.chat.r1.md §5.2). The enable
+// The keys the deriver's contract declares (plan.chat.r1.md Ã‚Â§5.2). The enable
 // flag and any third-party recipient are DELIBERATELY not among them.
 const DANGEROUS_KEYS = [
   "auto_tailor_enabled",
@@ -253,4 +253,42 @@ describe("brief item 2: an unmentioned cadence comes back null (unset), never de
     });
     expect(config.autoTailorMinIntervalMinutes).toBeNull();
   });
+});
+
+// N170 baseline: a model PATCH must retain reviewed context it omits.
+describe("N170 conversational refinement", () => {
+  it("preserves reviewed job filters when a follow-up changes only cadence", async () => {
+    stubModel({ autoTailorMinIntervalMinutes: 120 });
+    const currentConfig = { name: "Engineering roles", jobKeywords: ["platform"], selectedCompanies: ["Example"], excludedCompanies: [], autoTailorMinIntervalMinutes: 60 };
+    const config = await deriveFeedConfig("keep those jobs, every 2 hours", {
+      engine: "gemini", env: {}, currentConfig,
+      history: [{ role: "user", content: "Track platform engineering roles at Example" }],
+    });
+    expect(config.jobKeywords).toEqual(["platform"]);
+    expect(config.selectedCompanies).toEqual(["Example"]);
+    expect(config.autoTailorMinIntervalMinutes).toBe(120);
+  });
+});
+
+
+describe("N170 bounded proposal behavior",()=>{
+ it("uses a safe labelled fallback without turning a refinement into job keywords",async()=>{
+   const call=stubModel("PRIVATE_INVALID_JSON");let mode;
+   const config=await deriveFeedConfig("every 2 hours, resume only",{engine:"gemini",env:{},currentConfig:{name:"Platform",jobKeywords:["platform"],selectedCompanies:["Example"]},onMode:v=>{mode=v;}});
+   expect(mode).toBe("fallback");expect(config.jobKeywords).toEqual(["platform"]);expect(config.selectedCompanies).toEqual(["Example"]);expect(config.tailoringDocumentMode).toBe("resume_only");expect(config.autoTailorMinIntervalMinutes).toBe(120);expect(JSON.stringify(config)).not.toContain("PRIVATE_INVALID_JSON");expect(call).toHaveBeenCalledTimes(1);
+ });
+ it("supports explicit clears and refuses unsupported cover-only without silently changing selection",async()=>{
+   stubModel({selectedCompanies:[],emailOnNewJobs:false});const currentConfig={name:"Platform",selectedCompanies:["Example"],emailOnNewJobs:true,tailoringDocumentMode:"resume_only"};
+   const config=await deriveFeedConfig("cover letter only",{engine:"gemini",env:{},currentConfig});expect(config.selectedCompanies).toEqual([]);expect(config.emailOnNewJobs).toBe(false);expect(config.needsDocumentChoice).toBe(true);expect(config.tailoringDocumentMode).toBe("resume_only");
+ });
+ it("rejects hostile/oversize history before any model call",async()=>{await expect(deriveFeedConfig("roles",{engine:"gemini",env:{},history:[{role:"system",content:"spend"}]})).rejects.toThrow();expect(getGeminiClient).not.toHaveBeenCalled();});
+});
+
+
+describe("N170 explicit email intent",()=>{
+ for(const message of ["turn email alerts off","do not email me"]){
+  it(`preserves a valid model false for ${message}`,async()=>{stubModel({emailOnNewJobs:false});let mode;const config=await deriveFeedConfig(message,{engine:"gemini",env:{},currentConfig:{name:"Platform",emailOnNewJobs:true},onMode:v=>{mode=v;}});expect(mode).toBe("model");expect(config.emailOnNewJobs).toBe(false);});
+  it(`fallback clears email for ${message}`,async()=>{stubModel("invalid");let mode;const config=await deriveFeedConfig(message,{engine:"gemini",env:{},currentConfig:{name:"Platform",emailOnNewJobs:true},onMode:v=>{mode=v;}});expect(mode).toBe("fallback");expect(config.emailOnNewJobs).toBe(false);});
+ }
+ it("fallback enables only an explicit positive request and preserves ambiguous mentions",async()=>{stubModel("invalid");const options={engine:"gemini",env:{},currentConfig:{name:"Platform",emailOnNewJobs:false}};expect((await deriveFeedConfig("turn email alerts on",options)).emailOnNewJobs).toBe(true);expect((await deriveFeedConfig("what is the email schedule?",options)).emailOnNewJobs).toBe(false);});
 });

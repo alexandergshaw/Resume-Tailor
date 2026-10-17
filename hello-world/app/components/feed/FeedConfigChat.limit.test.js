@@ -6,7 +6,7 @@
 // messages, try again shortly" state -- never a silent no-op or a spinner that
 // spins forever. A dead input teaches the user the product is broken.
 //
-// Driven the real way: mount FeedAutomationPanel, type, send, and let the
+// Driven the real way: mount FeedConfigPanel, type, send, and let the
 // stubbed /api/feed-config/chat answer 429. We assert (a) a visible limit
 // message, (b) NO derived-config review is shown (the turn did not silently
 // "succeed"), and (c) the send control is usable again (not stuck disabled /
@@ -19,7 +19,7 @@ import { createElement, act } from "react";
 import { createRoot } from "react-dom/client";
 import { ThemeProvider } from "@mui/material/styles";
 import theme from "../../theme/index.js";
-import FeedAutomationPanel from "./FeedAutomationPanel.js";
+import FeedConfigPanel from "./FeedConfigPanel.js";
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -76,7 +76,7 @@ async function mountPanel() {
       createElement(
         ThemeProvider,
         { theme },
-        createElement(FeedAutomationPanel, {
+        createElement(FeedConfigPanel, {
           currentUser: { id: "u1" },
           savedSearches: [],
           setSavedSearches: vi.fn(),
@@ -117,7 +117,7 @@ function chatInput() {
   const fields = Array.from(document.querySelectorAll('textarea, input[type="text"], input:not([type])'));
   return fields.find((f) =>
     /describe|jobs you want|what.*looking|tell us/i.test(
-      `${f.getAttribute("placeholder") || ""} ${f.getAttribute("aria-label") || ""}`,
+      `${f.getAttribute("placeholder") || ""} ${f.getAttribute("aria-label") || ""} ${Array.from(f.labels || []).map(label => label.textContent).join(" ")}`,
     ),
   );
 }
@@ -166,6 +166,7 @@ describe("AC2-S6 UI half: hitting the chat limit shows a visible message, not a 
     // The turn did NOT silently succeed: no derived config shown.
     expect(container.textContent, "no review is produced by a rejected turn").not.toContain(CONFIG.name);
     // The send control is still usable (not stuck disabled / perpetual spinner).
+    await typeInto(chatInput(), "retry backend jobs"); // cleared composer is usable again
     const send = sendButton();
     expect(send, "the send control still exists after the limit").toBeTruthy();
     expect(send.disabled, "the send control is not left permanently disabled").toBe(false);

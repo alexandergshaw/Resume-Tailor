@@ -606,7 +606,7 @@
   verify_proof: null
   blocked_by: []
 
-# OWNER (2)
+# OWNER (3)
 - id: "N29"
   state: "actionable"
   title: "**The prep pack can only be kicked off automatically; a tracking row needs a manual \"prepare me for this interview\" control.** Owner request 2026-09-15, hit AGAIN by the owner 2026-09-20 (\"i can view prep packs on the tracking rows now, but where can i generate them?\"). **DESIGN ROUND IN PROGRESS** Ã¢â‚¬â€ AC r1 (16 criteria) and design-structure r1 are written. **(0) A COPY DEFECT IS SHIPPING TODAY, independent of the feature**: `app/components/tracking/PrepPackPanel.js:57` reads *\"No prep pack yet. Generate one from this applicationÃ¢â‚¬â„¢s tracking row when youÃ¢â‚¬â„¢re ready.\"* Ã¢â‚¬â€ a promise NOTHING implements. The app sends the candidate looking for a control that does not exist; that is how the owner found this. Either the control ships or that string changes. **(1) Generation fires only as a side effect today**: `app/page.js:2300`/`:2560` (class B1, after `upsertApplication`) and `:1655` (class B3, after `writeApplicationStatus`). Two further sites are INERT for want of an `applicationId` Ã¢â‚¬â€ that is **N13**, out of this chunkÃ¢â‚¬â„¢s scope, but it is why \"I tailored this and still have no pack\" is possible. **(2) OWNER DECISION 2026-09-20: a manual generation gets its OWN trigger class, via a NEW migration.** Two gates must change together, and the second was previously undocumented: the DB CHECK at `20260914000000_interview_prep.sql:406-407` (`trigger_class is null or trigger_class in ('B1','B3')`) needs a new migration Ã¢â‚¬â€ **never an edit in place**, per N30Ã¢â‚¬â„¢s recorded hazard Ã¢â‚¬â€ AND `route.js:148-150`Ã¢â‚¬â„¢s `triggerClassOf`, which is `value === \"B3\" ? \"B3\" : \"B1\"` and so silently collapses ANY other value to `B1`. Widening the CHECK alone would mislabel every manual event as automatic. The structure seat recommends `\"B2\"` (unused, fits the gap); the owner approved the APPROACH, not that specific letter. **(3) THE ATTEMPT-BURN TRAP, measured**: `claim_prep_pack_slot` increments the lifetime attempts counter (capped at 6) **before** GATE 10 checks there is any postable content, so a click on an application with no job description spends one of six lifetime attempts for nothing. The client already holds `positions.description`, so this is avoidable Ã¢â‚¬â€ and it is the reason the controlÃ¢â‚¬â„¢s enabled predicate must be derived from the routeÃ¢â‚¬â„¢s real refusal gates rather than guessed. **(4) A PREREQUISITE DEFECT FOUND BY THE DESIGN ROUND, verified**: `attemptsExhausted` is passed to the panel at `AppViewDialog.js:280` and **silently dropped** Ã¢â‚¬â€ it appears in `PrepPackPanel.js` ONLY inside a comment at `:9` describing the prop shape, never in the destructuring or any code (canary: `onSaveNames` Ã¢â€ â€™ 4 real hits, so the search discriminates). So the panel cannot currently tell that attempts are spent, and a naive control would offer a retry that cannot work. This must be wired as part of N29. **(5) The seam**: `startInterviewPrepResearch` is syntactically callable from a component but its contract is void-return/swallow-everything, which is wrong for a button whose whole point is feedback Ã¢â‚¬â€ so the design adds a hook posting to the SAME `POST /api/interview-prep` with the same body, awaited and response-reading. **Not a second generation path**, and the existing triggerÃ¢â‚¬â„¢s signature and five call sites stay untouched. **OUT OF SCOPE**: N13, N38, N39, and any change to what the prompt sends (N8/N34)"
@@ -1936,6 +1936,18 @@
   owed_by: "Visual-source and answer-pipeline reuse survey -> independently checked diagram/implicit-prompt interpretation criteria and design -> implement -> non-explicit-question diagram cases, ambiguity/failure controls and answer-context propagation verification -> verified push to main."
   evidence: ["Owner request verbatim on 2026-10-16: visual detection of question needs to include answers to diagrams and such that aren't explicitly listed as questions.", "Related N166 introduces optional camera question input; this separate feature requires interpretation and answers beyond OCR-only text extraction."]
   blocked_reason: null
+  instrument: null
+  owns: null
+  verify: null
+  verify_proof: null
+  blocked_by: []
+
+- id: "D4"
+  state: "owner"
+  title: "N170 release prerequisite: authorize applying the reviewed nullable tailoring_document_mode schema query to this app's Supabase database so explicit Resume only / Resume + cover letter choices can be saved."
+  owed_by: null
+  evidence: []
+  blocked_reason: "The concrete query is hello-world/supabase/queries/auto-applying-chat-document-mode.sql, outside automatic deployment migrations. It has not been executed. Repository delivery authorization excludes deployment/database administration. The owner must authorize target schema/constraint inspection and this SQL application; then verify explicit mode create/reload and legacy NULL compatibility on the authorized target. Default/legacy chat saves omit the new column and remain compatible. This is the active operational prerequisite for N170, not a request for new provider spend."
   instrument: null
   owns: null
   verify: null

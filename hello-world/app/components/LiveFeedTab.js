@@ -24,6 +24,7 @@ import FeedPostingCard from "./feed/FeedPostingCard";
 import FeedToolbar from "./feed/FeedToolbar";
 import FeedFilterSummary from "./feed/FeedFilterSummary";
 import FeedRefinePanel from "./feed/FeedRefinePanel";
+import FeedConfigPanel from "./feed/FeedConfigPanel";
 import FeedAutomationPanel from "./feed/FeedAutomationPanel";
 import { buildBookmarklet, profileHasValues } from "@/lib/autofill/buildBookmarklet";
 import { openPostingBeside } from "@/lib/window/openPostingBeside";
@@ -145,7 +146,7 @@ export default function LiveFeedTab({
         const data = await res.json();
         if (!cancelled) setQueueCount(Array.isArray(data.items) ? data.items.length : 0);
       } catch {
-        // ignore — badge simply stays at its last known value
+        // ignore â€” badge simply stays at its last known value
       }
     })();
     return () => {
@@ -168,7 +169,7 @@ export default function LiveFeedTab({
         const data = await res.json();
         if (!cancelled) setAutofillProfile(data.profile && typeof data.profile === "object" ? data.profile : {});
       } catch {
-        // ignore — Auto Fill will prompt the user to fill their profile
+        // ignore â€” Auto Fill will prompt the user to fill their profile
       }
     })();
     return () => {
@@ -301,7 +302,7 @@ export default function LiveFeedTab({
     [currentUser, postState, loadPage],
   );
 
-  // Tailor a résumé + cover letter for a single posting using the same flow as
+  // Tailor a rÃ©sumÃ© + cover letter for a single posting using the same flow as
   // the Posting URL / Job Description tabs. Progress is reflected in the shared
   // StatusBar via the parent's onTailor handler.
   const handleTailorPosting = useCallback(
@@ -348,7 +349,7 @@ export default function LiveFeedTab({
       }
       setSnackbar(
         copied
-          ? "Posting opened. Autofill bookmarklet copied — run it on the posting page (or use your saved Auto Fill bookmark)."
+          ? "Posting opened. Autofill bookmarklet copied â€” run it on the posting page (or use your saved Auto Fill bookmark)."
           : "Posting opened. Use your saved Auto Fill bookmark on the posting page.",
       );
     },
@@ -719,7 +720,10 @@ export default function LiveFeedTab({
         </Collapse>
       )}
 
-      {view === "automation" ? (
+      <Box hidden={view !== "chat"}>
+        <FeedConfigPanel key={currentUser?.id || "signed-out"} currentUser={currentUser} savedSearches={savedSearches} setSavedSearches={setSavedSearches} onOpenAutomation={() => setView("automation")} GREENHOUSE_COMPANIES={GREENHOUSE_COMPANIES} COMPANY_CATEGORIES={COMPANY_CATEGORIES}/>
+      </Box>
+      {view === "chat" ? null : view === "automation" ? (
         <FeedAutomationPanel
           currentUser={currentUser}
           savedSearches={savedSearches}
@@ -745,7 +749,7 @@ export default function LiveFeedTab({
 
       {isStale && (
         <Alert severity="warning" sx={{ mb: 1 }}>
-          Feed data may be stale — last successful ingest was {lastUpdatedLabel}.
+          Feed data may be stale â€” last successful ingest was {lastUpdatedLabel}.
           {currentUser ? " Try refreshing." : ""}
         </Alert>
       )}
@@ -815,7 +819,7 @@ export default function LiveFeedTab({
                 // control a phone user hits repeatedly to walk the feed.
                 sx={TOUCH_TARGET_SX}
               >
-                {loadingMore ? "Loading…" : "Load more"}
+                {loadingMore ? "Loadingâ€¦" : "Load more"}
               </Button>
             </Box>
           )}

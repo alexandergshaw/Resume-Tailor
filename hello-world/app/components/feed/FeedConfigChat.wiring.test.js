@@ -17,8 +17,8 @@
 // criterion.
 //
 // WHAT IS RED AT HEAD, AND WHY. At HEAD the Automation view (view === "automation",
-// LiveFeedTab.js:722) renders FeedAutomationPanel, which mounts ONLY the per-search
-// FeedAutomationCard list + the run log (FeedAutomationPanel.js, read in full).
+// LiveFeedTab.js:722) renders FeedConfigPanel, which mounts ONLY the per-search
+// FeedAutomationCard list + the run log (FeedConfigPanel.js, read in full).
 // There is NO chat input and NO derived-config review anywhere. Every case below
 // fails at HEAD because the control it drives does not exist -- the harness
 // positive control names that failure as the Step D red. Each case also states,
@@ -215,8 +215,8 @@ function accessibleName(el) {
 const buttons = () => Array.from(document.querySelectorAll("button"));
 const named = (re) => buttons().find((b) => re.test(accessibleName(b)));
 
-async function openAutomation() {
-  const btn = named(/^automation$/i);
+async function openSetupChat() {
+  const btn = named(/^setup chat$/i);
   if (btn) await click(btn);
   return btn;
 }
@@ -226,7 +226,7 @@ async function openAutomation() {
 function chatInput() {
   const fields = Array.from(document.querySelectorAll('textarea, input[type="text"], input:not([type])'));
   return fields.find((f) => /describe|jobs you want|what.*looking|tell us/i.test(
-    `${f.getAttribute("placeholder") || ""} ${f.getAttribute("aria-label") || ""}`,
+    `${f.getAttribute("placeholder") || ""} ${f.getAttribute("aria-label") || ""} ${Array.from(f.labels || []).map(label => label.textContent).join(" ")}`,
   ));
 }
 // The chat send control -- turns the message into a proposed config for review.
@@ -235,7 +235,7 @@ function sendButton() {
 }
 // The review's accept control -- the ONLY thing that stores the configuration.
 function acceptButton() {
-  return named(/create automation|save automation|add search|start automat|create search|save search|accept/i);
+  return named(/create automation|save automation|add search|start automat|create search|save (?:new )?search|accept/i);
 }
 // Any control in the surface that would enable unattended auto-tailoring. There
 // must be NONE in the chat/review surface (brief item 4).
@@ -283,8 +283,8 @@ describe("FeedConfigChat harness", () => {
   it("mounts LiveFeedTab, reaches Automation, and finds a chat box that produces a review", async () => {
     await mount();
     expect(container.querySelector("section"), "the tab mounts").toBeTruthy();
-    const btn = await openAutomation();
-    expect(btn, "a third 'Automation' view button in the toolbar").toBeTruthy();
+    const btn = await openSetupChat();
+    expect(btn, "a fourth 'Setup chat' view button in the toolbar").toBeTruthy();
     await settle();
     expect(chatInput(), "a chat message box inside the Automation view").toBeTruthy();
     await runOneTurn();
@@ -300,7 +300,7 @@ describe("FeedConfigChat harness", () => {
 describe("the derived config is reviewed before it is stored (AC2-C1), and stored only on accept (item 2)", () => {
   it("a chat turn renders the config for review and issues NO apply write", async () => {
     await mount();
-    await openAutomation();
+    await openSetupChat();
     await settle();
     await runOneTurn();
 
@@ -320,7 +320,7 @@ describe("the derived config is reviewed before it is stored (AC2-C1), and store
     // Paired with the case above: "exactly one" is also satisfied by ZERO, so
     // the case above proves zero-before-accept and this proves one-on-accept.
     await mount();
-    await openAutomation();
+    await openSetupChat();
     await settle();
     await runOneTurn();
     const accept = acceptButton();
@@ -336,7 +336,7 @@ describe("the derived config is reviewed before it is stored (AC2-C1), and store
     // nothing -- a natural-language setup that silently commits on a stray
     // navigation is the exact silent-misread failure this chunk exists to stop.
     await mount();
-    await openAutomation();
+    await openSetupChat();
     await settle();
     await runOneTurn();
     expect(container.textContent).toContain(CONFIG_A.name); // reached the review
@@ -352,7 +352,7 @@ describe("the derived config is reviewed before it is stored (AC2-C1), and store
     // surface renders a fixed template, not what THIS turn produced.
     chatResponses = [{ status: 200, config: CONFIG_A }, { status: 200, config: CONFIG_B }];
     await mount();
-    await openAutomation();
+    await openSetupChat();
     await settle();
     await runOneTurn("senior backend in boston");
     expect(container.textContent).toContain(CONFIG_A.name);
@@ -368,7 +368,7 @@ describe("the derived config is reviewed before it is stored (AC2-C1), and store
 describe("the chat/review surface cannot enable unattended spending (AC2-C3, item 4)", () => {
   it("the review has NO auto-tailor enable control", async () => {
     await mount();
-    await openAutomation();
+    await openSetupChat();
     await settle();
     await runOneTurn();
     // The review is the chat surface; enabling stays behind FeedAutomationCard's
@@ -381,7 +381,7 @@ describe("the chat/review surface cannot enable unattended spending (AC2-C3, ite
 
   it("the apply write never carries an enable flag, even after accept", async () => {
     await mount();
-    await openAutomation();
+    await openSetupChat();
     await settle();
     await runOneTurn();
     await click(acceptButton());
@@ -406,7 +406,7 @@ describe("class guard: every prop each new panel declares is threaded at its cal
     const p = fileURLToPath(new URL(rel, import.meta.url));
     return existsSync(p) ? readFileSync(p, "utf8") : null;
   };
-  const panelSrc = readIf("./FeedAutomationPanel.js");
+  const panelSrc = readIf("./FeedConfigPanel.js");
   const tabSrc = readIf("../LiveFeedTab.js");
   const chatSrc = readIf("./FeedConfigChat.js");
   const reviewSrc = readIf("./DerivedConfigReview.js");
@@ -441,38 +441,38 @@ describe("class guard: every prop each new panel declares is threaded at its cal
     expect(reviewSrc, "app/components/feed/DerivedConfigReview.js must exist").not.toBeNull();
   });
 
-  it("every prop FeedConfigChat declares is passed at its FeedAutomationPanel call site", () => {
+  it("every prop FeedConfigChat declares is passed at its FeedConfigPanel call site", () => {
     const declared = propNamesOf(chatSrc, "FeedConfigChat");
     expect(declared.length, "FeedConfigChat declares props").toBeGreaterThan(0);
     const site = callSiteOf(panelSrc, "FeedConfigChat");
-    expect(site, "a <FeedConfigChat .../> call site in FeedAutomationPanel").not.toBeNull();
+    expect(site, "a <FeedConfigChat .../> call site in FeedConfigPanel").not.toBeNull();
     for (const name of declared) {
       expect(passedAtSite(site, name), `${name} declared by FeedConfigChat but not passed at its call site`).toBe(true);
     }
   });
 
-  it("every prop DerivedConfigReview declares is passed at its FeedAutomationPanel call site", () => {
+  it("every prop DerivedConfigReview declares is passed at its FeedConfigPanel call site", () => {
     const declared = propNamesOf(reviewSrc, "DerivedConfigReview");
     expect(declared.length, "DerivedConfigReview declares props").toBeGreaterThan(0);
     const site = callSiteOf(panelSrc, "DerivedConfigReview");
-    expect(site, "a <DerivedConfigReview .../> call site in FeedAutomationPanel").not.toBeNull();
+    expect(site, "a <DerivedConfigReview .../> call site in FeedConfigPanel").not.toBeNull();
     for (const name of declared) {
       expect(passedAtSite(site, name), `${name} declared by DerivedConfigReview but not passed at its call site`).toBe(true);
     }
   });
 
-  it("LiveFeedTab threads the config-chat plumbing (setSavedSearches + the filter catalogs) into FeedAutomationPanel", () => {
-    // The reachability chain page.js -> LiveFeedTab -> FeedAutomationPanel ->
+  it("LiveFeedTab threads the config-chat plumbing (setSavedSearches + the filter catalogs) into FeedConfigPanel", () => {
+    // The reachability chain page.js -> LiveFeedTab -> FeedConfigPanel ->
     // chat/review. The review needs setSavedSearches (to show the new search)
     // and the two filter catalogs (JobFilterControls reuse, AC2-C2). Pin that
     // LiveFeedTab forwards each of the panel's OWN declared props.
-    const panelProps = propNamesOf(panelSrc, "FeedAutomationPanel");
-    const site = callSiteOf(tabSrc, "FeedAutomationPanel");
-    expect(site, "a <FeedAutomationPanel .../> call site in LiveFeedTab").not.toBeNull();
+    const panelProps = propNamesOf(panelSrc, "FeedConfigPanel");
+    const site = callSiteOf(tabSrc, "FeedConfigPanel");
+    expect(site, "a <FeedConfigPanel .../> call site in LiveFeedTab").not.toBeNull();
     for (const name of panelProps) {
       expect(
         passedAtSite(site, name),
-        `${name} declared by FeedAutomationPanel but not forwarded by LiveFeedTab`,
+        `${name} declared by FeedConfigPanel but not forwarded by LiveFeedTab`,
       ).toBe(true);
     }
   });

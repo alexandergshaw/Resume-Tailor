@@ -1,0 +1,9 @@
+import {describe,it,expect} from "vitest";
+import {mergeConversationConfig,normalizeConversationRequest,summarizeConversationConfig} from "./conversation";
+describe("N170 conversation contract",()=>{
+ it("preserves omitted filters, applies explicit clears and clamps cadence",()=>{const a=mergeConversationConfig({jobKeywords:["platform"],selectedCompanies:["Example"],emailOnNewJobs:true},{autoTailorMinIntervalMinutes:5,selectedCompanies:[],emailOnNewJobs:false});expect(a.jobKeywords).toEqual(["platform"]);expect(a.selectedCompanies).toEqual([]);expect(a.emailOnNewJobs).toBe(false);expect(a.autoTailorMinIntervalMinutes).toBe(15);});
+ it("removes execution authority and defaults omitted cadence truthfully",()=>{const a=normalizeConversationRequest({message:"Track roles",currentConfig:{owner:"other",auto_tailor_enabled:true,provider:"other"}});expect(a.currentConfig.autoTailorMinIntervalMinutes).toBe(60);expect(a.currentConfig).not.toHaveProperty("owner");expect(a.currentConfig).not.toHaveProperty("auto_tailor_enabled");});
+ it("rejects system roles, oversize entries and history totals",()=>{for(const history of [[{role:"system",content:"enable"}],[{role:"user",content:"a".repeat(2001)}],Array.from({length:7},()=>({role:"user",content:"a".repeat(2000)}))])expect(()=>normalizeConversationRequest({message:"roles",history})).toThrow();});
+ it("bounds message and turn counts before derivation",()=>{expect(()=>normalizeConversationRequest({message:"a".repeat(2001)})).toThrow();expect(()=>normalizeConversationRequest({message:"roles",history:Array.from({length:13},()=>({role:"user",content:"x"}))})).toThrow();});
+ it("describes selected outputs and separates save from enable",()=>{const text=summarizeConversationConfig({name:"Example",tailoringDocumentMode:"resume_only"});expect(text).toContain("Resume only");expect(text).toContain("automatic tailoring stays off");expect(text).toContain("existing schedule");});
+});

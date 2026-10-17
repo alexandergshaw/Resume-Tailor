@@ -1,3 +1,4 @@
+import { normalizeDocumentMode } from "@/lib/feed/documentSelection";
 import { tailorResumeHeadless, tailorCoverLetterHeadless } from "@/lib/llm/tailorForUserHeadless";
 import { upsertApplication } from "@/lib/supabase/upsertApplication";
 import { writeApplicationStatus } from "@/lib/supabase/applicationStatusWriter";
@@ -20,7 +21,7 @@ export function jobToPositionRow(job) {
   return {
     external_id: String(job.id),
     // Prefer the feed row's own source (carried through by postingToJob). Older
-    // callers — the single-posting API route among them — still hand over jobs
+    // callers â€” the single-posting API route among them â€” still hand over jobs
     // built without a source, so the id-prefix inference stays as a fallback;
     // changing its behaviour would silently reclassify their existing rows.
     source: job.source || (String(job.id).startsWith("gh-") ? "greenhouse" : "jsearch"),
@@ -42,8 +43,8 @@ export function jobToPositionRow(job) {
 // (which swallows errors), this surfaces the underlying error so the caller
 // can report it.
 //
-// This is the highest-volume writer in the repo — the cron path runs it for
-// every saved-search match, for every user — so it goes through the same merge
+// This is the highest-volume writer in the repo â€” the cron path runs it for
+// every saved-search match, for every user â€” so it goes through the same merge
 // (lib/supabase/writePosition.js) as the browser's route rather than
 // overwriting the whole row. It used to `.upsert(row, { onConflict:
 // "external_id" })`, which PostgREST renders as `ON CONFLICT DO UPDATE SET
@@ -75,7 +76,7 @@ export async function loadStorageBuffer(admin, path) {
   }
 }
 
-// External ids already in the user's pipeline (any status) — so we never queue
+// External ids already in the user's pipeline (any status) â€” so we never queue
 // or tailor the same posting twice.
 export async function loadAlreadyTrackedExternalIds(admin, userId, externalIds, statuses = null) {
   const ids = [...new Set((externalIds || []).filter(Boolean))];
@@ -128,9 +129,13 @@ export async function tailorAndQueueOne({
   posting,
   resumeBuffer,
   coverLetterBuffer = null,
+  tailoringDocumentMode = null,
   savedSearchId = null,
   sourceLabel = "the Live Feed",
 }) {
+  const mode = normalizeDocumentMode(tailoringDocumentMode);
+  if (!resumeBuffer) throw new Error("Upload a source resume before tailoring.");
+  if (mode === "resume_cover" && !coverLetterBuffer) throw new Error("Upload a cover-letter template for Resume + cover letter before tailoring.");
   const job = postingToJob(posting);
   if (!job.id) {
     throw new Error("Posting is missing a stable id (source_posting_id / raw_data.id).");
@@ -164,18 +169,18 @@ export async function tailorAndQueueOne({
 
   // Cover letter (best-effort; only when the user has a template uploaded).
   let coverLetterId = null;
-  if (coverLetterBuffer) {
+  if (coverLetterBuffer && mode !== "resume_only") {
     try {
       // jobPosting and jobPostingUrl are NOT additive (see
       // lib/feed/postingDescription.js's tailorPostingFields doc comment):
       // for Gemini the URL wins and discards any text sent alongside it; for
-      // the embedded engine the text wins. Sending both — as this call used
-      // to — throws away the full raw_data.description this pipeline
+      // the embedded engine the text wins. Sending both â€” as this call used
+      // to â€” throws away the full raw_data.description this pipeline
       // already selected (upsertPositionOrThrow/jobToPositionRow above) and
       // has Gemini re-fetch the URL instead, same defect commit aa98b17
       // fixed on the Live Feed's own Tailor button. `full` reflects whether
       // job.description really is the whole posting (raw_data.description)
-      // or just postingToJob's description_snippet fallback — only the
+      // or just postingToJob's description_snippet fallback â€” only the
       // former should ever outrank the URL.
       const { jobPosting: coverJobPosting, jobPostingUrl: coverJobPostingUrl } = tailorPostingFields({
         text: job.description || job.title || "",
@@ -185,7 +190,7 @@ export async function tailorAndQueueOne({
       const coverDraft = await tailorCoverLetterHeadless({
         coverLetterBuffer,
         resumeBuffer,
-        // Ground the letter in the résumé just tailored above for this
+        // Ground the letter in the rÃ©sumÃ© just tailored above for this
         // posting, not a re-extraction of the original upload.
         tailoredResume: { result: resumeDraft.result, resultLines: resumeDraft.resultLines },
         jobPosting: coverJobPosting,
@@ -204,7 +209,9 @@ export async function tailorAndQueueOne({
           additionalContext: `Auto-queued from ${sourceLabel}.`,
         });
       }
+      if (mode === "resume_cover" && !coverLetterId) throw new Error("Required cover letter was not generated; the resume may have been saved, but this job was not queued.");
     } catch (err) {
+      if (mode === "resume_cover") throw new Error("Required cover letter failed; the resume may have been saved, but this job was not queued.");
       console.error(`[tailorAndQueue] cover letter failed for user=${userId} job=${job.id}:`, err?.message || err);
     }
   }
@@ -221,8 +228,8 @@ export async function tailorAndQueueOne({
 
   // Split in two, IN THIS ORDER. The metadata names no status at all, so it
   // can never race the guard below; the queue placement is a status claim
-  // (pre-apply → "auto_queued") and goes through the same fail-closed
-  // allow-list every other status write in this repo goes through — a row
+  // (pre-apply â†’ "auto_queued") and goes through the same fail-closed
+  // allow-list every other status write in this repo goes through â€” a row
   // already applied-or-later (the user tailored, then applied, then this
   // cron run landed) must not be silently dragged back into the queue.
   // See test/repro/appliedStatusDataLoss.test.js REPRO D2/D5's rocket/queue

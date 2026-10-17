@@ -25,6 +25,7 @@
 // and snake case (AC2-C3 part (i)). Only the explicit `FeedAutomationCard`
 // control (via sanitizeSavedSearchPatch) can ever flip that field.
 
+import { documentModeFields } from "@/lib/feed/documentSelection";
 import { clampIntervalMinutes } from "@/lib/feed/cronSchedule";
 
 const DEFAULT_DAILY_CAP = 10;
@@ -74,6 +75,7 @@ export function sanitizeSavedSearchCreate(body) {
   if (!name) return null;
   return {
     name,
+    ...documentModeFields(body),
     job_keywords: sanitizeStringArray(body.jobKeywords ?? body.job_keywords, { maxItems: 25, maxLen: 100 }),
     max_years_exp:
       typeof body.maxYearsExp === "string"
@@ -100,7 +102,7 @@ export function sanitizeSavedSearchCreate(body) {
  */
 export function sanitizeSavedSearchPatch(body) {
   if (!body || typeof body !== "object") return {};
-  const out = {};
+  const out = { ...documentModeFields(body, { allowExplicitClear: true }) };
   if (typeof body.name === "string") out.name = body.name.trim().slice(0, 200);
   if ("jobKeywords" in body || "job_keywords" in body) {
     out.job_keywords = sanitizeStringArray(body.jobKeywords ?? body.job_keywords, { maxItems: 25, maxLen: 100 });
@@ -158,6 +160,7 @@ export function sanitizeChatDerivedSavedSearch(body) {
   if (!name) return null;
   return {
     name,
+    ...documentModeFields(body),
     job_keywords: sanitizeStringArray(body.jobKeywords ?? body.job_keywords, { maxItems: 25, maxLen: 100 }),
     max_years_exp:
       typeof body.maxYearsExp === "string"

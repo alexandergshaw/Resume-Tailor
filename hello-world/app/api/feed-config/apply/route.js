@@ -1,3 +1,4 @@
+import { documentModeWriteError } from "@/lib/feed/documentSelection";
 // N60 second chunk, Step B -- the chat write path's apply route (AC2-C3,
 // AC2-C5). Writes an ordinary saved_searches row through the shared
 // savedSearch module's chat-only sanitizer, never the two permissive
@@ -37,7 +38,13 @@ export async function POST(request) {
     return Response.json({ error: "Invalid JSON" }, { status: 400 });
   }
 
-  const sanitized = sanitizeChatDerivedSavedSearch(body);
+  if (body?.needsDocumentChoice === true) return Response.json({ error: "Choose a supported document option before saving.", code: "DOCUMENT_MODE_INVALID" }, { status: 400 });
+  let sanitized;
+  try {
+    sanitized = sanitizeChatDerivedSavedSearch(body);
+  } catch {
+    return Response.json({ error: "Choose Resume only or Resume + cover letter.", code: "DOCUMENT_MODE_INVALID" }, { status: 400 });
+  }
   if (!sanitized) {
     return Response.json({ error: "Missing or invalid 'name'." }, { status: 400 });
   }
@@ -59,7 +66,7 @@ export async function POST(request) {
     .select("*")
     .single();
   if (error) {
-    return Response.json({ error: error.message }, { status: 500 });
+    return Response.json(documentModeWriteError(error, sanitized), { status: error.code === "42703" || error.code === "PGRST204" ? 409 : 500 });
   }
   return Response.json({ search: data });
 }
