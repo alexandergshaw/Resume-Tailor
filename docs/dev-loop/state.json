@@ -1,6 +1,6 @@
 {
   "format": "manual-host-record-v1",
-  "revision": 45,
+  "revision": 46,
   "items": [
     {
       "id": "port",
@@ -369,32 +369,34 @@
       "planAcceptance": "items/N166/camera-plan.check.md",
       "assignment": ".agnostic-loop/backlog-N166-camera/camera-implementation-assignment.json",
       "automaticDispatch": "unchanged-disabled-expired",
-      "liveVerification": "Pending deployed candidate, real camera permission/capture/review/Add, cleanup/coexistence observations; local real OCR is separate evidence",
-      "repositoryDelivery": "all local source gates passed; independent source report acceptance and publication/live checks pending",
+      "liveVerification": "items/N166/live-controls.md; partial controls only; actual camera approval/capture/Add/lifecycle/coexistence pending",
+      "repositoryDelivery": "source deployed b0221a4; full hardware criteria remain pending; live records require fresh publication guard",
       "implementationAcceptance": "items/N166/camera-implementation.delta.check.md",
       "sourceFreeze": ".agnostic-loop/backlog-N166-camera/camera-freeze-r2-final.json",
       "measuredEvidence": ".agnostic-loop/backlog-N166-camera/N166",
       "waveVerification": "items/N175/wave-gates.md",
       "sourceDeliveryReport": "items/N175/source-delivery.md",
-      "currentSourceFreeze": ".agnostic-loop/backlog-N166-camera/gates/source-config-r3-before.json"
+      "currentSourceFreeze": ".agnostic-loop/backlog-N166-camera/gates/source-config-r3-before.json",
+      "independentLiveControlsAcceptance": "items/N166/live-controls.check.md"
     },
     {
       "id": "N175",
       "objective": "Allow auto-tailoring independent of email configuration",
       "owner": "user",
-      "status": "verifying",
+      "status": "verified",
       "plan": "items/N175/plan.md",
       "planAcceptance": "items/N175/plan.check.md",
       "assignment": ".agnostic-loop/backlog-N166-camera/email-implementation-assignment.json",
       "automaticDispatch": "unchanged-disabled-expired",
-      "liveVerification": "pending deployed candidate confirmation/cancel flow; no enabling unattended work",
-      "repositoryDelivery": "all local source gates passed; independent source report acceptance and publication/live checks pending",
+      "liveVerification": "items/N175/live-verification.md",
+      "repositoryDelivery": "source deployed b0221a4; live records pending scoped normal commit/push and newly captured clean-main/live-remote guard",
       "implementationAcceptance": "items/N175/implementation.check.md",
       "verification": "items/N175/verification.md",
       "independentAcceptance": "items/N175/verification.check.md",
       "waveVerification": "items/N175/wave-gates.md",
       "sourceDeliveryReport": "items/N175/source-delivery.md",
-      "currentSourceFreeze": ".agnostic-loop/backlog-N166-camera/gates/source-config-r3-before.json"
+      "currentSourceFreeze": ".agnostic-loop/backlog-N166-camera/gates/source-config-r3-before.json",
+      "independentLiveAcceptance": "items/N175/live-verification.delta.check.md"
     }
   ],
   "limitations": [
