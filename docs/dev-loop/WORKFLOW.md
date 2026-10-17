@@ -78,6 +78,16 @@ A disposition cannot waive a mandatory safety rule or executable gate.
 
 ## Verify the actual candidate
 
+Always include actual live-app verification under the owner's
+[live verification policy](../../AGENTS.md#owner-verification-policy--always-verify-in-the-live-app).
+Plan the live flow at intake. Exercise the affected behavior in the live app,
+bind evidence to the deployed candidate, and independently check the recorded
+steps/results and limits. Documentation/engine-only work still gets a live smoke
+check, separately from its own validation. A missing deployment, session or
+authority leaves this obligation pending and blocks full completion; source may
+be pushed with that limitation explicit. Local fixtures and Git delivery checks
+are separate evidence. Existing completion commands do not enforce this host gate.
+
 An independent verifier reads the actual diff and surrounding code, maps every
 criterion to examined object, instrument, expected and observed result, and labels
 it pass/fail/unproven. Run mandatory engine/manual-port checks and all relevant

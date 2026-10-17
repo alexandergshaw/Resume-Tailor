@@ -1,5 +1,15 @@
 # Resume-Tailor loop adaptation
 
+Standing live-app instrument: use authorized browser control at
+`https://resume-tailor-tan-psi.vercel.app/` for every delivery, following the
+[owner live verification policy](../../AGENTS.md#owner-verification-policy--always-verify-in-the-live-app).
+Record candidate/deployment identity, time, user-flow steps, expected/observed
+results and sanitized evidence; independently review it. Include relevant error,
+recovery and persistence paths. Documentation/engine-only work requires a live
+smoke check as separate regression evidence. Missing deployment/access/authority
+is pending verification, never a pass. This host requirement is not implemented
+by the engine's current completion guard or the Git-only delivery command.
+
 The product application is in `hello-world/`. The authoritative product backlog is
 `docs/backlog.yml`; `docs/BACKLOG.md` is generated. Existing `.claude/` workflows
 and historical `docs/loop/` evidence are preserved. The new engine lives outside

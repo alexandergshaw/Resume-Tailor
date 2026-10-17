@@ -21,6 +21,36 @@ response; keep runtime receipts outside tracked source to avoid receipt commits.
 
 These instructions govern development work in this repository. Follow explicit user instructions and host security rules first. This file defines a workflow; it does not install tools, create a scheduler, authorize spending, or provide process isolation.
 
+## Owner verification policy — always verify in the live app
+
+The owner's standing instruction (2026-10-17) is to incorporate verification in
+the actual live application into every development-loop delivery. Plan this at
+intake and retain it as a completion obligation. The live application is
+`https://resume-tailor-tan-psi.vercel.app/`. Exercise the affected user flow there,
+including relevant failure/recovery behavior and save/reopen persistence when
+changed. For documentation or engine-only changes, perform a live-app smoke check
+and explicitly state that it does not verify the documentation or engine itself.
+
+Record the URL, observation time, deployed revision identity (or unknown), steps,
+expected and observed results, and sanitized evidence references. Establish that
+the deployed application contains the relevant candidate changes before claiming
+the changed behavior is verified. Local rendering, synthetic fixtures, unit tests,
+build success, remote Git equality and deployment status alone cannot substitute
+for exercising the live app. Independently check the evidence and its limits.
+
+If the candidate is not deployed, authentication/access is unavailable, or a
+required live action lacks authority, keep live verification pending, name the
+exact blocker and next measurement, and do not claim full completion. A verified
+source chunk may still be pushed to main, with repository delivery and live-app
+verification reported separately. This instruction does not authorize deployment
+commands, new login, spending, destructive actions or external messages. Use
+authorized sessions and bounded disposable data; reconcile test data afterward.
+
+This is a mandatory host workflow obligation. The current engine completion and
+`loop:delivery` commands do not mechanically enforce live-app verification; their
+success must not be reported as satisfying it. Historical local-only verification
+remains historical and must not be relabeled as live evidence.
+
 ## Operating contract
 
 - Carry an authorized change through verified local delivery. Do not stop at a plan, worker launch, or worker report.

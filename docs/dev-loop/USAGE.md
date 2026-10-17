@@ -2,6 +2,15 @@
 
 ## Required repository delivery
 
+Every delivery also requires the owner's
+[live-app verification workflow](../../AGENTS.md#owner-verification-policy--always-verify-in-the-live-app).
+At intake, specify the live flow and required session/data. After the relevant
+candidate is available in the live app, exercise it and record URL, time, deployed
+revision, expected/observed results and sanitized evidence for independent review.
+If blocked, record the exact blocker and next measurement, push verified source
+when possible, and report live verification pending. The commands below establish
+repository publication only; they do not enforce or replace this live check.
+
 The owner requires every authorized change to be committed and pushed to
 `origin/main`. After verification and independent acceptance, stage only scoped
 source and records, commit on `main`, push normally, and verify the live remote:
