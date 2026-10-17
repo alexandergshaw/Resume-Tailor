@@ -1,6 +1,6 @@
 {
   "format": "manual-host-record-v1",
-  "revision": 24,
+  "revision": 28,
   "items": [
     {
       "id": "port",
@@ -279,6 +279,35 @@
         "D4"
       ],
       "runtimeEvidenceAccepted": ".agnostic-loop/backlog-dispatch/N166/runtime/chat-verification/live-mode-results.check.md"
+    },
+    {
+      "id": "N171",
+      "objective": "Visually overhaul Setup chat inside Auto Applying",
+      "owner": "user",
+      "status": "verified",
+      "plan": "items/N171/plan.md",
+      "planAcceptance": "items/N171/plan.check.md",
+      "scope": "Presentation-only exact three UI components and enumerated tests, existing save/provider/security contracts preserved",
+      "assignment": ".agnostic-loop/backlog-dispatch/N166/runtime/N171/assignment.json",
+      "automaticDispatch": "unchanged-disabled-expired",
+      "verification": "items/N171/verification.md",
+      "independentAcceptance": "items/N171/verification.check.md",
+      "repositoryDelivery": "Exact main publication requires live loop:delivery; runtime receipt outside tracked source"
+    },
+    {
+      "id": "N172",
+      "objective": "Diagnose Global Payments resume formatting and layout using the supplied DOCX and activity log",
+      "owner": "user",
+      "status": "diagnosed-repair-pending",
+      "runtimeEvidence": ".agnostic-loop/backlog-dispatch/N166/runtime/N172",
+      "scope": "Confirmed structural formatting defects and synthetic exporter reproduction; no repaired DOCX or production exporter fix",
+      "diagnostic": "items/N172/diagnostic.md",
+      "independentAcceptance": "items/N172/diagnostic.check.md",
+      "residuals": [
+        "Exact source formatting template/generation branch remains unidentified.",
+        "Bundled Word renderer unavailable: soffice.exe missing. Actual rendered-page verification is required before repaired DOCX delivery.",
+        "Proposed safe export guard is unimplemented and does not repair the supplied artifact."
+      ]
     }
   ],
   "limitations": [

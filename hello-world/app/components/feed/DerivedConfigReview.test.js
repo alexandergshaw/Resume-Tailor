@@ -350,6 +350,11 @@ describe("the review reuses the shared controls rather than forking them", () =>
 });
 
 
-describe("measured document choice responsive constraint",()=>{
- it("keeps every document option and saves the actual selected mode",async()=>{await toReview();const select=container.querySelector('select[aria-label="Documents to tailor"]');expect(select).toBeTruthy();expect([...select.options].map(o=>o.value)).toEqual(["","resume_only","resume_cover"]);expect(select.style.width).toBe("100%");expect(select.style.maxWidth).toBe("100%");expect(Number.parseFloat(select.style.minWidth)).toBe(0);expect(select.style.boxSizing).toBe("border-box");await act(async()=>{select.value="resume_only";select.dispatchEvent(new Event("change",{bubbles:true}));});await click(acceptButton());await settle();expect(applyBodies).toHaveLength(1);expect(applyBodies[0].tailoringDocumentMode).toBe("resume_only");});
+describe("document choice presentation preserves actual modes",()=>{
+ it("keeps every document option and saves the actual selected mode",async()=>{
+  await toReview();const select=[...container.querySelectorAll('[role="combobox"]')].find(x=>(x.getAttribute("aria-labelledby")||"").split(" ").some(id=>document.getElementById(id)?.textContent==="Documents to tailor"));expect(select).toBeTruthy();
+  await act(async()=>select.dispatchEvent(new MouseEvent("mousedown",{bubbles:true,button:0})));
+  const options=[...document.querySelectorAll('[role="option"]')];expect(options.map(o=>o.getAttribute("data-value"))).toEqual(["","resume_only","resume_cover"]);
+  await click(options.find(x=>x.getAttribute("data-value")==="resume_only"));await click(acceptButton());await settle();expect(applyBodies).toHaveLength(1);expect(applyBodies[0].tailoringDocumentMode).toBe("resume_only");
+ });
 });

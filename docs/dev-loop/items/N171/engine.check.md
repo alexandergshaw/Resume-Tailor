@@ -1,0 +1,19 @@
+# N171 engine narrow-reuse independent check
+
+ACCEPTED reuse of the unchanged engine source/configuration closure only; real-backlog input refresh remains PENDING.
+
+Independently hashed all76 entries in runtime/chat-verification/main-engine-narrow-reuse.json against current actual repository bytes:76 matches, zero drift. This includes the engine/CLI/gate/backlog helper inputs, not the application candidate or all external inputs. Prior actual runtime/reentry-verification/continuation-engine-wrapper.log reports154 passed/2 skipped,20 files, with independent continuation-evidence.check.md accepting the registered wrapper execution/retained launch evidence. Existing Windows skips remain skips; no new engine execution occurred in this review.
+
+N170 candidate-verification.md and independent candidate-verification.check.md bind that closure to narrow reuse plus an affected real-backlog-case refresh. The old callback-main-engine-backlog receipt has numeric exit0 and raw stdout ONE passed/14 filtered skips,1.97s; however its external backlog hash was24B7B5398F37396E41068BFBB8942AD61090D1171490545BA43786A6BB532FF2 for160 rows. Current actual docs/backlog.yml SHA256 C9828F8D0E87E23163790F1B929005E75E56D2D42BEB2CF2622C26CDECD2257E differs. Therefore that older selected case does not establish current real-backlog input freshness.
+
+Receiver: root will freshly run the exact repository.test.ts case `reads the real backlog without mutating it and does not revive shipped rows` after the active full-suite operation closes, preserving default timers and before/after current backlog identity. Its actual selected assertion/exit status must be checked before claiming this engine closure complete. Do not count14 filtered skips as new passes or describe the refreshed single case as a full engine rerun. Prior159-row tool-only output was not located as durable raw evidence and is not silently substituted.
+
+No tests/gates/Git/source edits by checker. Read-only76-file hashing was authorized and no large application evidence index was traversed. This report does not renew automatic dispatch authority or establish provider/process-isolation behavior.
+
+## Fresh receiver measurement acceptance
+
+ACCEPTED fresh selected real-backlog-case result: engine-backlog-refresh.log SHA256 CB74C9C6C6F7B5FD0F3EF421CA23D128BE40ED3364E0916574BBDE8B1CEA37AB records ONE passed/14 filtered skips, one file,2.12s. engine-backlog-refresh.receipt.json records numeric exitCode0 at2026-10-17T14:41:43.4040972Z and current backlog identity C9828F8D0E87E23163790F1B929005E75E56D2D42BEB2CF2622C26CDECD2257E, equal to checker's prior current hash. This satisfies the named pending external-input measurement receiver at its selected-case boundary. The76-source narrow reuse plus this fresh case are accepted;154pass/2existing Windows skips remain historical full-engine evidence, not newly rerun results.
+
+Also independently checked bounded-full-test.log SHA256 AD6C0531C05D9A53E6E9FF823C2630A06E041F8E3BA35783DEA5AFDE57E92FF7: actual final summary1317 passed files/1 skipped,20579 passed tests/9 skipped,559.91s. Matching bounded-full-test.receipt.json records numeric exitCode0 and process-local VITEST_MAX_WORKERS=4. Its admission retains registered command, sourceFreezeHash AB41E3A37F5CE3A0B9106E3EEF3454A8A0B03101DD82D637BD68DAF6502A76DE and this checker's accepted resource-policy identity. Owner bounded-full-release.json records remainingOwned0, resourcesReleasedtrue and numericExit0. These are actual retained root measurement/ownership records; checker did not independently execute or observe the process tree. Initial failed full suite and33-case standalone diagnostic remain distinct historical results, with timeout cause unknown.
+
+No tests/gates/source edits by checker. Lint/build/backlog current operation remains outside this completed measurement acceptance until its own actual results are available.
