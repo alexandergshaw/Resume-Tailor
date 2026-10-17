@@ -84,6 +84,7 @@ export function usePracticeCaptureSession({
   onUtterance = NOOP,
 }) {
   const [error, setError] = useState("");
+  const [cameraSessionEpoch, setCameraSessionEpoch] = useState(0);
   const [warning, setWarning] = useState("");
   const [finals, setFinals] = useState([]); // { id, speaker: "you", text, at }
   const [interim, setInterim] = useState("");
@@ -127,6 +128,7 @@ export function usePracticeCaptureSession({
   }, [running, startedAt]);
 
   const stop = useCallback(async () => {
+    setCameraSessionEpoch((epoch) => epoch + 1);
     // Invalidate any question request in flight — its response belongs to a
     // session that is being torn down — and stop the card from sitting on a
     // spinner for a request that will never get to write its result.
@@ -160,6 +162,7 @@ export function usePracticeCaptureSession({
   }, []);
 
   const start = useCallback(async () => {
+    setCameraSessionEpoch((epoch) => epoch + 1);
     // AC-Q7.9: mint THIS press's session identity before anything else —
     // including invalidateInFlight() and the old session's own teardown
     // below — so it is already the CURRENT id for the rest of this
@@ -345,7 +348,7 @@ export function usePracticeCaptureSession({
   const elapsed = startedAt ? now - startedAt : 0;
 
   return {
-    error,
+    cameraSessionEpoch, error,
     warning,
     setWarning,
     finals,

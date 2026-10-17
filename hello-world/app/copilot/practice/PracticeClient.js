@@ -452,7 +452,7 @@ export default function PracticeClient({
     warning,
     setWarning,
     finals,
-    activeSessionId,
+    activeSessionId, cameraSessionEpoch,
     interim,
     startedAt,
     // ARCH-stats-in-strip r3 §2.7: the same 1s wall clock live mode's
@@ -569,6 +569,7 @@ export default function PracticeClient({
   // change no longer clears the answer on screen (AC-A11), so this now
   // holds by CONSTRUCTION (captured at the moment each critique's
   // answerMetrics are set) rather than by destruction.
+  const cameraContextKey = useMemo(() => ({ cameraSessionEpoch, postingId: posting?.id, interviewType, engine, profile }), [cameraSessionEpoch, posting?.id, interviewType, engine, profile]);
   const judgedInterviewTypeLabel = interviewTypeLabel(judgedInterviewType);
 
   // Mobile shell (defects 1/2): below `md` the primary "Start answering" /
@@ -806,7 +807,7 @@ export default function PracticeClient({
                   secondary effect. */}
               <Box sx={{ mt: 2 }}>
                 <ManualQuestion
-                  onSubmit={onManualQuestion}
+                  onSubmit={onManualQuestion} cameraEnabled cameraContextKey={cameraContextKey}
                   label="Type your own question"
                   buttonLabel="Use question"
                   confirmLabel="Set as your practice question and added to detected questions"

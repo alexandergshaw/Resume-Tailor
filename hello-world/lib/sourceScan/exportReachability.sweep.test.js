@@ -321,15 +321,15 @@ describe("every export of a shipping module is asked for, or is on a ledger with
     // check the new export is a helper being pinned, not a feature that was
     // built and never connected, then update the number.
     //
-    // Pinned at 451. Every movement (299 -> 451) is stated by name in
+    // Pinned at 450. Every movement (299 -> 450) is stated by name in
     // exportReachability.ledger.md, section 4; append the new delta there.
-    expect(TEST_REFERENCED.length).toBe(451);
+    expect(TEST_REFERENCED.length).toBe(450);
     // A classifier that swept everything into this bucket would make the
     // orphan ledger vacuous, so pin the split rather than only the total.
     expect(UNUSED_IN_SHIPPING_MODULES.length).toBe(TEST_REFERENCED.length + ORPHANS.length);
-    // Pinned at 516 = 451 + 65. Every movement (356 -> 516), with which half
+    // Pinned at 515 = 450 + 65. Every movement (356 -> 515), with which half
     // moved, is stated in exportReachability.ledger.md, section 5.
-    expect(UNUSED_IN_SHIPPING_MODULES.length).toBe(516);
+    expect(UNUSED_IN_SHIPPING_MODULES.length).toBe(515);
   });
 
   it("still reports the two symbol-level cases this sweep was built for", () => {

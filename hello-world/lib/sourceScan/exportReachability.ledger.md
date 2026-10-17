@@ -26,12 +26,12 @@ Current pinned values, as of the last entry in each section:
 | `ALLOWED_UNREACHABLE_MODULES.length`        | 14     |
 | `UNWIRED_MODULES` (exact list of 5 files)   | 5      |
 | `ORPHAN_EXPORTS.length`                     | 65     |
-| `TEST_REFERENCED.length` (rule TR-1)        | 451    |
-| `UNUSED_IN_SHIPPING_MODULES.length`         | 516    |
+| `TEST_REFERENCED.length` (rule TR-1)        | 450    |
+| `UNUSED_IN_SHIPPING_MODULES.length`         | 515    |
 
 The identity that ties the last three together, and that the test asserts
 directly, is `UNUSED_IN_SHIPPING_MODULES = TEST_REFERENCED + ORPHANS`
-(451 + 65 = 516).
+(450 + 65 = 515).
 
 ---
 
@@ -350,7 +350,7 @@ exports and codingSolution.js#embeddedCodingFallback stay test-imported and in T
 
 ---
 
-## 4. TEST_REFERENCED, rule TR-1 (pinned at 451)
+## 4. TEST_REFERENCED, rule TR-1 (pinned at 450)
 
 Exports unused by shipping code that at least one `.test.js` imports BY NAME.
 A raise is a review event: check the new export is a helper being pinned, not
@@ -364,7 +364,7 @@ Full movement history (append-only, newest at the bottom): see
 
 ---
 
-## 5. UNUSED_IN_SHIPPING_MODULES total (pinned at 516)
+## 5. UNUSED_IN_SHIPPING_MODULES total (pinned at 515)
 
 The sum of the two halves above (`TEST_REFERENCED + ORPHANS`); the test also
 asserts that identity directly, so the split is pinned and not only the total.

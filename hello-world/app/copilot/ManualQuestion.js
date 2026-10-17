@@ -1,6 +1,7 @@
 "use client";
 
 import { useId, useRef, useState } from "react";
+import CameraQuestionSource from "./CameraQuestionSource";
 import Box from "@mui/material/Box";
 import TextField from "@mui/material/TextField";
 import Button from "@mui/material/Button";
@@ -25,7 +26,7 @@ export default function ManualQuestion({
   helperText,
   confirmLabel = DEFAULT_CONFIRM_LABEL,
   buttonLabel = "Add",
-  disabled,
+  disabled, cameraEnabled = false, cameraContextKey,
 }) {
   const inputId = useId();
   const helperTextId = useId();
@@ -60,7 +61,7 @@ export default function ManualQuestion({
   }
 
   return (
-    <Box component="form" onSubmit={handleSubmit}>
+    <><Box component="form" onSubmit={handleSubmit}>
       {/*
         The helper text used to be MUI's own `helperText` prop, which renders
         INSIDE the TextField's FormControl — making that flex item taller
@@ -122,6 +123,6 @@ export default function ManualQuestion({
       <Box component="span" role="status" aria-live="polite" sx={visuallyHidden}>
         {announcement}
       </Box>
-    </Box>
+    </Box>{cameraEnabled && <CameraQuestionSource onSubmit={onSubmit} contextKey={cameraContextKey} disabled={disabled} buttonLabel={buttonLabel} confirmLabel={confirmLabel} />}</>
   );
 }

@@ -21,7 +21,7 @@ table in the main ledger.
 
 ---
 
-## 4. TEST_REFERENCED, rule TR-1: movement notes (pinned at 451)
+## 4. TEST_REFERENCED, rule TR-1: movement notes (pinned at 450)
 
 ```text
 299 -> 300, and NOT because the tree grew. This number was pinned at
@@ -738,11 +738,15 @@ codingSolution.js#embeddedCodingFallback. Wave D exports nothing new from any sh
 (CodeSolution.js, answerStatus.js and the rest only changed what they render or accept), so
 nothing entered either half.
 ORPHAN_EXPORTS unmoved at 65; ALLOWED_UNREACHABLE_MODULES / UNWIRED_MODULES 14 / 5.
+N166 camera source: 451 -> 450 (+0, -1), OUT lib/scrape/screenshotOcr.js#ocrImage,
+which now has a real shipping importer in app/api/copilot/camera-question/route.js.
+MAX_CAMERA_WIDTH and MAX_CAMERA_HEIGHT are private implementation constants in cameraQuestion.js,
+not public exports; no new orphan allowance or test-only entry is introduced.
 ```
 
 ---
 
-## 5. UNUSED_IN_SHIPPING_MODULES total: movement notes (pinned at 516)
+## 5. UNUSED_IN_SHIPPING_MODULES total: movement notes (pinned at 515)
 
 ```text
 356 -> 354: exactly the two orphan symbols that were deleted
@@ -989,4 +993,8 @@ set-for-set). The total moving by exactly the TR-1 half's net -1 with the orphan
 says a widened export surface got its promised consumer (the live control the Wave A store was built
 ahead of), not that anything was deleted or lost. No module left or entered the unreachable set
 (section 2), so no export moved in or out of neither-half. TEST_REFERENCED 451 + ORPHANS 65.
+N166 camera source: 516 -> 515 (TEST_REFERENCED's +0 -1, the named ocrImage
+shipping transition in section 4). ORPHAN_EXPORTS remains 65 in main ledger section 3;
+the two camera dimension constants are private, not orphan exemptions. Classifier and
+unreachable-module allowances are unchanged. TEST_REFERENCED 450 + ORPHANS 65 = 515.
 ```

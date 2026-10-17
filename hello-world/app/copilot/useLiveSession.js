@@ -127,6 +127,7 @@ export function useLiveSession({
   // the session (useApplicationProjectPool's noteRowOneStatus).
   onRowOneStatus,
 }) {
+  const [cameraSessionEpoch, setCameraSessionEpoch] = useState(0);
   const [warning, setWarning] = useState("");
   const [error, setError] = useState("");
   const [finals, setFinals] = useState([]); // { id, speaker, text, at, speakerTag }
@@ -254,6 +255,7 @@ export function useLiveSession({
   }, [live, startedAt, liveSince]);
 
   const stop = useCallback(async () => {
+    setCameraSessionEpoch((epoch) => epoch + 1);
     if (sessionRef.current) {
       await sessionRef.current.stop();
       sessionRef.current = null;
@@ -403,6 +405,7 @@ export function useLiveSession({
   // see that hook's own doc — and is already in scope from the call above.
 
   const start = useCallback(async () => {
+    setCameraSessionEpoch((epoch) => epoch + 1);
     // AC-Q6.1/Q6.6: a fresh log the instant Start is pressed, before any
     // other per-session reset below — so even a session that fails inside
     // the try block still has a session.start entry to explain what it was.
@@ -759,7 +762,7 @@ export function useLiveSession({
   // independent clock in CopilotClient.js instead would risk the two
   // drifting out of sync with each other for no reason.
   return {
-    warning,
+    cameraSessionEpoch, warning,
     setWarning,
     error,
     finals,

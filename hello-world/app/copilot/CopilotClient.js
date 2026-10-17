@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Alert from "@mui/material/Alert";
 import Box from "@mui/material/Box";
 import Typography from "@mui/material/Typography";
@@ -310,7 +310,7 @@ export default function CopilotClient() {
     start,
     onDraft,
     redraftCurrentAnswer,
-    addManualQuestion,
+    addManualQuestion, cameraSessionEpoch,
     clearAll,
     copyTranscript,
     // AC-M1.5.6/5.8/5.9: the in-person speaker-identity surface — see the
@@ -426,6 +426,7 @@ export default function CopilotClient() {
   // verbatim and, by the bailout SpeakerBar's own comment explains, say
   // nothing. Wrapped around `start` here, the only caller of it in this file.
   const [sessionNonce, setSessionNonce] = useState(0);
+  const cameraContextKey = useMemo(() => ({ cameraSessionEpoch, postingId: posting?.id, interviewType, engine, profile }), [cameraSessionEpoch, posting?.id, interviewType, engine, profile]);
   const onStartSession = useCallback(() => {
     setSessionNonce((n) => n + 1);
     start();
@@ -824,7 +825,7 @@ export default function CopilotClient() {
                 into that same budget for nothing. */}
             <Box sx={{ mb: 2 }}>
               <ManualQuestion
-                onSubmit={addManualQuestion}
+                onSubmit={addManualQuestion} cameraEnabled cameraContextKey={cameraContextKey}
                 label="Type a question the interviewer asked"
                 buttonLabel="Add"
                 confirmLabel="Added to detected questions"

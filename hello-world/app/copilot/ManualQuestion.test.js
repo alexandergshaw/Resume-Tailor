@@ -292,6 +292,18 @@ describe("ManualQuestion", () => {
     expect(Number(input().getAttribute("maxlength"))).toBe(MAX_MANUAL_QUESTION_CHARS);
   });
 
+  it("opts camera in separately and preserves the typed draft when its context changes", async () => {
+    await render(baseProps());
+    expect(container.textContent).not.toContain("Start camera for question");
+    const props=baseProps({cameraEnabled:true,cameraContextKey:{}});
+    await render(props);await type(input(),"Keep this typed draft");
+    expect(container.querySelectorAll("form")).toHaveLength(1);
+    await render({...props,cameraContextKey:{}});
+    expect(input().value).toBe("Keep this typed draft");
+    expect(container.textContent).toContain("Start camera for question");
+    expect(container.querySelector("form form")).toBeNull();
+  });
+
   it("disables the whole control when told to", async () => {
     await render(baseProps({ disabled: true }));
     await type(input(), "Tell me about yourself.");
