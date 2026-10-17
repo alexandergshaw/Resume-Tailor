@@ -1,6 +1,6 @@
 {
   "format": "manual-host-record-v1",
-  "revision": 20,
+  "revision": 21,
   "items": [
     {
       "id": "port",
@@ -230,6 +230,24 @@
       "verificationLimits": [
         "Offline mocked provider/storage boundaries and synthetic DOCX paragraph verification; no live provider replay or rendered Word-layout claim."
       ]
+    },
+    {
+      "id": "N170",
+      "objective": "Provide conversational job-search configuration inside Auto Applying",
+      "owner": "user",
+      "status": "source-delivered-awaiting-owner",
+      "report": "items/N170/verification.md",
+      "acceptance": "items/N170/verification.check.md",
+      "candidateVerification": "items/N170/candidate-verification.md",
+      "candidateAcceptance": "items/N170/candidate-verification.check.md",
+      "delivery": "items/N170/delivery.md",
+      "publicationObservedCommit": "acb6d3560c624a3f86517574f1bac567016c5e31",
+      "publicationObservedAt": "2026-10-17T00:55:34.442Z",
+      "operationalPrerequisite": "D4: owner-authorized target schema inspection, reviewed document-mode SQL and post-schema integration verification",
+      "verificationLimits": [
+        "Offline provider/database/browser boundaries; production document-selection setup and live integration are unproven."
+      ],
+      "automaticDispatch": "unchanged-disabled-expired"
     }
   ],
   "limitations": [

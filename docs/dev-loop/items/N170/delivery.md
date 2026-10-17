@@ -1,0 +1,9 @@
+# N170 source delivery audit
+
+The 37-file Setup chat change was independently verified, committed on main and pushed normally to origin/main as `acb6d3560c624a3f86517574f1bac567016c5e31`. `npm.cmd run loop:delivery` returned ok at 2026-10-17T00:55:34.442Z, proving clean main and exact live remote equality at that observation. Ignored source-delivery.json transcribes the actual tool output (chunk 7cee20); it is not an independently generated attestation.
+
+The accepted finalizer report and check are preserved byte-for-byte in verification.md and verification.check.md. The independent candidate verifier report/check are preserved in candidate-verification.md and candidate-verification.check.md. Their publication prerequisites are satisfied by the subsequent observed push and live guard above. Fresh tests passed 20,575 with nine skips; lint, build, backlog (160 items, zero violations), and the one affected engine backlog case passed. Engine reuse, historical failures, process-identity reconciliation, browser boundaries and live-integration limits are explicit in the accepted reports.
+
+Source is delivered; explicit resume-only/resume-plus-cover selection remains operationally pending under active owner item D4. The reviewed SQL query has not been executed or deployed. D4 requires owner authority, target schema inspection and post-schema create/reload/legacy-compatibility verification. Chat/legacy omitted-mode saves retain existing-schema compatibility; missing explicit-mode schema safely refuses with draft retained. Do not mark the entire capability operational or D4 shipped based on source publication.
+
+No automatic-dispatch grant was renewed; it remains disabled after its original deadline. Other interview backlog items remain queued. This host record is not an engine acceptance receipt. Subsequent documentation publication requires its own clean-main/live-remote delivery guard.
