@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process';
-import { mkdtemp, readFile, writeFile, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, writeFile, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -98,14 +98,23 @@ describe('manual host delivery assertion', () => {
   it('public executable fails closed and leaves state bytes unchanged', async () => {
     const directory = await mkdtemp(path.join(os.tmpdir(), 'manual-handoff-cli-')); temporary.push(directory);
     const filename = path.join(directory, 'state.json'); const state = fixture();
+    const candidate = path.join(directory, 'candidate'); await mkdir(candidate);
+    await writeFile(path.join(candidate, 'source-canary.txt'), 'manual-handoff real candidate canary\n');
+    state.policy.workspace = candidate;
     await writeFile(filename, JSON.stringify(state)); const before = await readFile(filename);
     const run = (...args: string[]) => spawnSync(process.execPath, ['--experimental-strip-types', '--experimental-default-type=module', '--experimental-loader', './tools/resolve-ts-hook.ts', './tools/agnostic-loop/manual-handoff.ts', ...args], { cwd: process.cwd(), encoding: 'utf8', timeout: 10000 });
+    const diagnostic = (result: ReturnType<typeof run>) => JSON.stringify({ status: result.status, signal: result.signal, error: result.error ? { name: result.error.name, message: result.error.message } : null, stderr: result.stderr });
+    const missingLiveReason = 'Live verification pending: current independently accepted live-app report required';
     const pending = run(directory, 'feature');
-    expect(pending.status, pending.stderr).toBe(2); expect(JSON.parse(pending.stdout).complete).toBe(false);
+    expect(pending.status, diagnostic(pending)).toBe(2);
+    expect(JSON.parse(pending.stdout)).toMatchObject({ complete: false, items: [{ liveVerification: { pending: true, reason: missingLiveReason } }] });
     expect(await readFile(filename)).toEqual(before);
-    expect(run(directory, 'missing').status).toBe(1);
+    const missing = run(directory, 'missing'); expect(missing.status, diagnostic(missing)).toBe(1);
     state.items.feature.status = 'shipped'; await writeFile(filename, JSON.stringify(state));
-    expect(run(directory, 'feature').status).toBe(2);
-    await writeFile(filename, '{}'); expect(run(directory, 'feature').status).toBe(1);
+    const shippedBefore = await readFile(filename), shipped = run(directory, 'feature');
+    expect(shipped.status, diagnostic(shipped)).toBe(2);
+    expect(JSON.parse(shipped.stdout)).toMatchObject({ complete: false, items: [{ liveVerification: { pending: true, reason: missingLiveReason } }] });
+    expect(await readFile(filename)).toEqual(shippedBefore);
+    await writeFile(filename, '{}'); const malformed = run(directory, 'feature'); expect(malformed.status, diagnostic(malformed)).toBe(1);
   }, 30000);
 });
