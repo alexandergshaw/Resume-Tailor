@@ -1,6 +1,6 @@
 {
   "format": "manual-host-record-v1",
-  "revision": 22,
+  "revision": 23,
   "items": [
     {
       "id": "port",
@@ -235,7 +235,7 @@
       "id": "N170",
       "objective": "Provide conversational job-search configuration inside Auto Applying",
       "owner": "user",
-      "status": "source-delivered-awaiting-database-access",
+      "status": "source-delivered-schema-applied-awaiting-runtime-verification",
       "report": "items/N170/verification.md",
       "acceptance": "items/N170/verification.check.md",
       "candidateVerification": "items/N170/candidate-verification.md",
@@ -243,7 +243,7 @@
       "delivery": "items/N170/delivery.md",
       "publicationObservedCommit": "acb6d3560c624a3f86517574f1bac567016c5e31",
       "publicationObservedAt": "2026-10-17T00:55:34.442Z",
-      "operationalPrerequisite": "D4: database change authorized; connect/identify target Supabase project, inspect schema, apply reviewed SQL and verify create/reload/legacy behavior",
+      "operationalPrerequisite": "D4: sign in to the deployed app for safe saved-search create/reload checks; SQL authorization and database schema setup are complete",
       "verificationLimits": [
         "Offline provider/database/browser boundaries; production document-selection setup and live integration are unproven."
       ],
@@ -253,6 +253,24 @@
         "query": "hello-world/supabase/queries/auto-applying-chat-document-mode.sql",
         "sha256": "22785fa4f731ecf22c0b1c5871d8711b9a621a771133fa0fd8b0c00c45004fad",
         "scope": "Target schema inspection, this reviewed additive SQL, post-schema verification; no provider/automatic-dispatch renewal"
+      },
+      "schemaVerification": "items/N170/schema-verification.md",
+      "schemaApplied": {
+        "projectId": "cglqscthbalfaefiigso",
+        "migrationVersion": "20261017010414",
+        "migrationName": "n170_auto_applying_chat_document_mode",
+        "querySha256": "22785fa4f731ecf22c0b1c5871d8711b9a621a771133fa0fd8b0c00c45004fad",
+        "verified": [
+          "nullable text/no default",
+          "validated supported-modes CHECK",
+          "RLS/policies unchanged",
+          "four classified constraint failures with no persisted rows",
+          "authenticated-role zero-row column access"
+        ],
+        "unproven": [
+          "Signed-in application save/reload",
+          "Live account-isolation behavior"
+        ]
       }
     }
   ],
