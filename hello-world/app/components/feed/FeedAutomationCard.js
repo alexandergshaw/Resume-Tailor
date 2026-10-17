@@ -14,8 +14,8 @@ import { describeCadence, clampIntervalMinutes } from "@/lib/feed/cronSchedule";
 // view and out of the Filters sheet (AC-F2/F3): the email-alerts toggle
 // (formerly FeedEmailAlerts.js -- see FeedEmailAlerts.wiring.test.js, which
 // now reads this file for the same three properties) plus the auto-tailor
-// enable toggle, its cost confirmation (AC-R3), and the AC-E5 unavailable
-// state. AC-E5 is CONSUMED here, never re-derived: `emailConfigured` and
+// enable toggle, its cost confirmation (AC-R3), and email-only unavailable
+// state. Server availability is consumed, never re-derived: `emailConfigured` and
 // `emailReason` come from the server by way of FeedAutomationPanel's
 // /api/alerts/status read.
 export default function FeedAutomationCard({ entry, setSavedSearchAutoTailor, emailConfigured, emailReason }) {
@@ -50,6 +50,7 @@ export default function FeedAutomationCard({ entry, setSavedSearchAutoTailor, em
         control={
           <Switch
             size="small"
+            disabled={unavailable && !entry.emailOnNewJobs}
             checked={!!entry.emailOnNewJobs}
             onChange={(e) => setSavedSearchAutoTailor(entry.id, { emailOnNewJobs: e.target.checked })}
           />
@@ -62,15 +63,14 @@ export default function FeedAutomationCard({ entry, setSavedSearchAutoTailor, em
       )}
       <FormControlLabel
         control={
-          <Switch size="small" disabled={unavailable} checked={!!entry.autoTailorEnabled} onChange={onToggleAuto} />
+          <Switch size="small" checked={!!entry.autoTailorEnabled} onChange={onToggleAuto} />
         }
         label={<Box sx={{ fontSize: "0.78rem" }}>Auto-tailor new matches</Box>}
         sx={{ m: 0 }}
       />
       {unavailable && (
         <Typography sx={{ color: "text.secondary", fontSize: "0.72rem" }}>
-          Email alerts are unavailable ({emailReason || "email is not set up"}). Auto-tailoring can&apos;t be turned
-          on until email is configured.
+          Email alerts are unavailable ({emailReason || "email is not set up"}). Auto-tailoring is still available.
         </Typography>
       )}
       <FormDialog

@@ -18,11 +18,8 @@ export default function FeedAutomationPanel({
   savedSearches,
   setSavedSearchAutoTailor,
 }) {
-  // Starts NOT configured, and an unreadable status stays not configured. Only a
-  // successful read saying so can enable the switch. The optimistic opposite is
-  // a fail-open: the whole point of AC-E5 is to refuse an "on" switch that
-  // cannot work, and a status endpoint that errors is precisely the case where
-  // we do not know that it can.
+  // Email activation waits for confirmed server availability; opting out stays
+  // possible. This status never gates auto-tailoring or its confirmation.
   const [status, setStatus] = useState({
     emailConfigured: false,
     reason: "Checking your email configuration...",

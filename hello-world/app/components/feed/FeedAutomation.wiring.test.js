@@ -3,8 +3,7 @@
 // N60 S8 (THE DANGEROUS STEP) -- the acceptance tests that must land RED as the
 // hand-off for making unattended auto-tailoring reachable by a real user.
 // AC-R2 (the control works when rendered and clicked), AC-R3 (enabling states
-// its cost behind a confirm), AC-E5's UI half (an unconfigured sender makes the
-// control unavailable, never a silent no-op), and a companyResearchAccept-style
+// its cost behind a confirm), N175 email-only availability, and a companyResearchAccept-style
 // CLASS guard so a new automation prop cannot be left unbound.
 //
 // -------------------------------------------------------------------------
@@ -94,12 +93,11 @@ function serverSearch(overrides = {}) {
   };
 }
 
-let emailConfigured; // toggled per test for AC-E5
+let emailConfigured; // email availability is independent of auto-tailoring
 let statusReason;
-// How /api/alerts/status behaves: "ok" answers, the rest are the three ways a
-// real read fails. Each must leave the control unavailable -- not knowing
-// whether the feature can work is not permission to switch it on.
-let statusMode; // "ok" | "reject" | "http-error" | "not-json"
+// Pending and failed mail status block email activation only.
+let statusMode; // "ok" | "pending" | "reject" | "http-error" | "not-json"
+let resolvePendingStatus;
 
 const json = (body) => Promise.resolve({ ok: true, json: async () => body });
 
@@ -107,10 +105,8 @@ function installFetch() {
   global.fetch = vi.fn((url, init = {}) => {
     const u = String(url);
     if (u.startsWith("/api/alerts/status")) {
-      // The status endpoint can fail, not only answer. A verifier found the
-      // panel treated a failed read as "configured" and left the switch
-      // enabled, and the reason it survived the suite was that this helper
-      // always resolved successfully.
+      // A delayed or failed status blocks only email activation.
+      if (statusMode === "pending") return new Promise((resolve) => { resolvePendingStatus = resolve; });
       if (statusMode === "reject") return Promise.reject(new Error("network down"));
       if (statusMode === "http-error") {
         return Promise.resolve({ ok: false, status: 500, json: async () => ({}) });
@@ -224,6 +220,7 @@ beforeEach(() => {
   emailConfigured = true;
   statusReason = null;
   statusMode = "ok";
+  resolvePendingStatus = undefined;
   setAutoTailorSpy = vi.fn();
   window.localStorage.clear();
   installFetch();
@@ -372,83 +369,120 @@ describe("AC-R3: enabling unattended work states its cost and requires confirmat
 });
 
 // ---------------------------------------------------------------------------
-// AC-E5 (UI half) -- an unconfigured sender makes the control unavailable and
-// impossible to switch on. The server reports it (/api/alerts/status); the
-// browser cannot see an env var, so it must consume that report.
+// N175: email readiness controls only email activation. Real rendered controls,
+// positive configured controls and exact patches catch both over- and under-gating.
 // ---------------------------------------------------------------------------
-describe("AC-E5: the enable control is unavailable when the server reports email unconfigured", () => {
-  it("cannot be switched on when emailConfigured is false", async () => {
-    // NON-VACUITY: "cannot be switched on" is meaningless if the control is
-    // never found. This asserts the control IS present but disabled, that
-    // clicking it opens no confirm and writes nothing, and that the
-    // server-supplied reason is surfaced. Paired with the CONTROL case below,
-    // where the same control IS switchable.
-    emailConfigured = false;
-    statusReason = "EMAIL_FROM is not configured";
-    await mount();
-    await openAutomation();
-    await settle();
-    const sw = autoTailorSwitch();
-    expect(sw, "the control still renders (unavailable), it is not simply absent").toBeTruthy();
-    expect(sw.disabled, "the enable control is disabled while email is unconfigured").toBe(true);
-    await click(sw);
-    await settle();
-    expect(topDialog(), "no confirmation may open for a disabled control").toBeNull();
-    expect(
-      setAutoTailorSpy.mock.calls.filter(([, p]) => p && p.autoTailorEnabled === true),
-      "no enabling write is possible while unavailable",
-    ).toHaveLength(0);
-    const panelText = container.textContent || "";
-    expect(panelText, "the server-supplied reason is shown, not guessed").toMatch(
-      /email|unavailable|not (?:set up|configured)|can'?t send/i,
-    );
-  });
+function emailSwitch() {
+  const label = Array.from(document.querySelectorAll("label")).find(
+    (l) => /email me new jobs/i.test(l.textContent || ""),
+  );
+  return label ? label.querySelector('input[type="checkbox"]') : null;
+}
 
-  // A verifier found the panel started from `emailConfigured: true` and
-  // swallowed every fetch failure, so any error from the status endpoint left
-  // the switch enabled -- a fail-open on the one gate whose job is to refuse an
-  // "on" switch that cannot work. The three cases below are the three ways that
-  // read really fails; each must leave the control unavailable. They are
-  // separate from the server-said-false case above, which was already covered:
-  // the gap was never "false", it was "we could not find out".
-  for (const mode of ["reject", "http-error", "not-json"]) {
-    it(`treats a status read that fails (${mode}) as NOT configured`, async () => {
-      // NON-VACUITY: asserts the control is present-but-disabled, not absent,
-      // and that no enabling write is reachable. The "ok" control below proves
-      // the same harness can produce a switchable control, so this cannot pass
-      // against a build whose switch is always disabled.
+async function openAutoConfirmation() {
+  const sw = autoTailorSwitch();
+  expect(sw, "auto control exists").toBeTruthy();
+  expect(sw.disabled, "mail status never disables auto-tailoring").toBe(false);
+  await click(sw);
+  await settle();
+  expect(topDialog(), "explicit confirmation remains reachable").toBeTruthy();
+  expect(setAutoTailorSpy, "opening confirmation is not activation").not.toHaveBeenCalled();
+}
+
+describe("N175: independent auto-tailoring and email availability", () => {
+  for (const mode of ["ok", "pending", "reject", "http-error", "not-json"]) {
+    it(`unavailable email (${mode}) blocks email activation but auto still confirms without enabling email`, async () => {
       statusMode = mode;
-      emailConfigured = true; // the server WOULD say yes -- we just cannot hear it
+      emailConfigured = false;
+      statusReason = "EMAIL_FROM is not configured";
       await mount();
       await openAutomation();
       await settle();
-      const sw = autoTailorSwitch();
-      expect(sw, "the control still renders, it is not simply absent").toBeTruthy();
-      expect(sw.disabled, "an unreadable status must not leave the switch enabled").toBe(true);
-      await click(sw);
-      await settle();
-      expect(topDialog(), "no confirmation may open for a disabled control").toBeNull();
-      expect(
-        setAutoTailorSpy.mock.calls.filter(([, p]) => p && p.autoTailorEnabled === true),
-        "no enabling write is possible when the configuration is unknown",
-      ).toHaveLength(0);
+      const mail = emailSwitch();
+      expect(mail, "email control exists").toBeTruthy();
+      expect(mail.checked).toBe(false);
+      expect(mail.disabled, "unknown/unavailable email cannot be opted in").toBe(true);
+      await click(mail);
+      expect(setAutoTailorSpy).not.toHaveBeenCalled();
+      expect(container.textContent).toMatch(/Auto-tailoring is still available/);
+      if (mode === "ok") expect(container.textContent).toContain(statusReason);
+      await openAutoConfirmation();
+      const confirm = Array.from(topDialog().querySelectorAll("button")).find(
+        (b) => /turn on auto-tailoring/i.test(accessibleName(b)),
+      );
+      expect(confirm).toBeTruthy();
+      await click(confirm);
+      expect(setAutoTailorSpy.mock.calls).toEqual([["srv-1", { autoTailorEnabled: true }]]);
     });
   }
 
-  it("CONTROL: the same control CAN be switched on when emailConfigured is true", async () => {
-    // Without this the case above passes against a build whose control is
-    // ALWAYS disabled -- which would silently make the whole feature
-    // unreachable while looking safe.
+  it("canceling the auto confirmation with unavailable email writes nothing", async () => {
+    emailConfigured = false;
+    await mount();
+    await openAutomation();
+    await settle();
+    await openAutoConfirmation();
+    await act(async () => {
+      topDialog().dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", code: "Escape", bubbles: true }));
+    });
+    await settle();
+    expect(topDialog(), "Escape dismisses the confirmation").toBeNull();
+    expect(setAutoTailorSpy).not.toHaveBeenCalled();
+  });
+
+  for (const mode of ["ok", "pending", "reject", "http-error", "not-json"]) {
+    it(`already-on email and auto can independently be turned off with unavailable email (${mode})`, async () => {
+      emailConfigured = false;
+      statusMode = mode;
+      await mount({ savedSearches: [serverSearch({ emailOnNewJobs: true, autoTailorEnabled: true })] });
+      await openAutomation();
+      await settle();
+      const mail = emailSwitch();
+      const auto = autoTailorSwitch();
+      expect(mail, "on email control exists").toBeTruthy();
+      expect(auto, "on auto control exists").toBeTruthy();
+      expect(mail.checked).toBe(true);
+      expect(auto.checked).toBe(true);
+      expect(mail.disabled, "email opt-out remains reachable").toBe(false);
+      expect(auto.disabled).toBe(false);
+      await click(mail);
+      await click(auto);
+      expect(topDialog()).toBeNull();
+      expect(setAutoTailorSpy.mock.calls).toEqual([
+        ["srv-1", { emailOnNewJobs: false }],
+        ["srv-1", { autoTailorEnabled: false }],
+      ]);
+    });
+  }
+
+  it("configured email can be enabled without enabling auto-tailoring", async () => {
     emailConfigured = true;
     await mount();
     await openAutomation();
     await settle();
-    const sw = autoTailorSwitch();
-    expect(sw, "the control renders").toBeTruthy();
-    expect(sw.disabled, "not disabled when email is configured").toBe(false);
-    await click(sw);
+    const mail = emailSwitch();
+    expect(mail).toBeTruthy();
+    expect(mail.disabled).toBe(false);
+    await click(mail);
+    expect(topDialog()).toBeNull();
+    expect(setAutoTailorSpy.mock.calls).toEqual([["srv-1", { emailOnNewJobs: true }]]);
+  });
+
+  it("a pending email status recovers to configured without changing either preference", async () => {
+    statusMode = "pending";
+    await mount();
+    await openAutomation();
     await settle();
-    expect(topDialog(), "clicking opens the confirmation, so it is switchable").toBeTruthy();
+    expect(emailSwitch()?.disabled).toBe(true);
+    expect(autoTailorSwitch()?.disabled).toBe(false);
+    expect(resolvePendingStatus, "the real panel made a pending status request").toBeTypeOf("function");
+    await act(async () => {
+      resolvePendingStatus({ ok: true, json: async () => ({ emailConfigured: true, reason: null }) });
+    });
+    await settle();
+    expect(emailSwitch()?.disabled).toBe(false);
+    expect(autoTailorSwitch()?.disabled).toBe(false);
+    expect(setAutoTailorSpy).not.toHaveBeenCalled();
   });
 });
 
