@@ -1,6 +1,6 @@
 {
   "format": "manual-host-record-v1",
-  "revision": 23,
+  "revision": 24,
   "items": [
     {
       "id": "port",
@@ -235,7 +235,7 @@
       "id": "N170",
       "objective": "Provide conversational job-search configuration inside Auto Applying",
       "owner": "user",
-      "status": "source-delivered-schema-applied-awaiting-runtime-verification",
+      "status": "source-and-runtime-verified",
       "report": "items/N170/verification.md",
       "acceptance": "items/N170/verification.check.md",
       "candidateVerification": "items/N170/candidate-verification.md",
@@ -243,9 +243,10 @@
       "delivery": "items/N170/delivery.md",
       "publicationObservedCommit": "acb6d3560c624a3f86517574f1bac567016c5e31",
       "publicationObservedAt": "2026-10-17T00:55:34.442Z",
-      "operationalPrerequisite": "D4: sign in to the deployed app for safe saved-search create/reload checks; SQL authorization and database schema setup are complete",
+      "operationalPrerequisite": null,
       "verificationLimits": [
-        "Offline provider/database/browser boundaries; production document-selection setup and live integration are unproven."
+        "Live signed-in saved-search save/reload verified for legacy, resume_only and resume_cover; screenshot and database readback bind the results.",
+        "Database authenticated-role/claim RLS measured owner visibility3 versus other identity0; no second real browser account/JWT session, cross-account DML or paid model/generation/cron/email delivery measurement."
       ],
       "automaticDispatch": "unchanged-disabled-expired",
       "schemaAuthorization": {
@@ -265,13 +266,19 @@
           "validated supported-modes CHECK",
           "RLS/policies unchanged",
           "four classified constraint failures with no persisted rows",
-          "authenticated-role zero-row column access"
+          "authenticated-role zero-row column access",
+          "Signed-in legacy/resume-only/resume-plus-cover create, reload and reopen",
+          "Read-only authenticated-role RLS owner3/other0; guarded verification fixtures cleaned up and exact IDs/name read back zero"
         ],
         "unproven": [
-          "Signed-in application save/reload",
-          "Live account-isolation behavior"
+          "Second real browser account/JWT session and cross-account DML"
         ]
-      }
+      },
+      "runtimeVerification": "items/N170/runtime-verification.md",
+      "closedOwnerObligations": [
+        "D4"
+      ],
+      "runtimeEvidenceAccepted": ".agnostic-loop/backlog-dispatch/N166/runtime/chat-verification/live-mode-results.check.md"
     }
   ],
   "limitations": [
