@@ -19,3 +19,28 @@ it("confirmed edited smooth uses the same marker-bearing durable writer",async()
 
 it("real ZIP splice preserves the closed base reference across another fact version",async()=>{const marked=await rewriteOriginalMarker(await file.arrayBuffer(),BASE);const candidate=await applyCoverDocxEdits(btoa(String.fromCharCode(...marked)),["ORIGINAL PLACEHOLDER"],[{lineIndex:0,before:"ORIGINAL PLACEHOLDER",after:"SPLICED CURRENT FACT"}]);expect(candidate.applied,candidate.reason).toBe(true);const zip=await JSZip.loadAsync(candidate.docxB64,{base64:true});expect(await zip.file("customXml/resume-tailor-original.xml").async("string")).toContain(BASE);expect(await zip.file("word/document.xml").async("string")).toContain("SPLICED CURRENT FACT");});
 it("unknown owner and storage lookup failures cannot turn a marked row into native",async()=>{const path="owner/generated/fact.docx";objects.set(path,new Blob([await rewriteOriginalMarker(await file.arrayBuffer(),BASE)]));rows.set(DERIVED,{id:DERIVED,docx_path:path});client.auth.getUser=async()=>{throw Error("auth offline");};expect((await resolveOriginalSource(client,{kind:"cover",versionId:DERIVED})).code).toBe("ownership-unavailable");expect((await commitFactMove(args({coverTemplateVersionId:DERIVED}))).ok).toBe(false);expect(fetch).not.toHaveBeenCalled();});
+
+it("confirmed recovered smooth reconciles functional client state with actual persisted document",async()=>{
+  const entry={coverTemplateVersionId:BASE,coverLetterResultLines:["BEFORE"],coverLetterDocxB64:"",coverLetterDocxPath:"owner/generated/STALE.docx",edited:{cover:true},unrelated:"keep"};
+  let map={job:entry,other:{sentinel:"untouched"}},accepted={},reload=0;
+  const after={lines:["SMOOTHED CURRENT FACT"],records:[],edits:[]};
+  const result=await commitSmoothedFact({jobId:"job",entry,after,resolveCoverEngineBytes:async()=>"",supabase:client,currentUserId:"owner",acceptedFactsByJob:{facts:[]},setTailoringMap:update=>{map=update(map);},setAcceptedFactsByJob:update=>{accepted=update(accepted);},setPreviewReloadKey:update=>{reload=update(reload);}});
+  expect(result.ok,result.reason).toBe(true);const storedPath=rows.get(DERIVED).docx_path;
+  const saved=await objects.get(storedPath).arrayBuffer();const zip=await JSZip.loadAsync(saved);expect(await zip.file("word/document.xml").async("string")).toContain("SMOOTHED CURRENT FACT");
+  expect(map.job.coverLetterDocxPath).toBe(storedPath);expect(Uint8Array.from(atob(map.job.coverLetterDocxB64),c=>c.charCodeAt(0))).toEqual(new Uint8Array(saved));expect(map.job.unrelated).toBe("keep");expect(map.other).toEqual({sentinel:"untouched"});expect(reload).toBe(1);expect(accepted.job.revision).toBe(2);
+});
+it("native best-effort upload failure stays successful with usable session bytes and null path",async()=>{
+  failUpload=true;const result=await commitFactMove({...args({coverLetterResultLines:["ORIGINAL PLACEHOLDER"]}),lines:["ORIGINAL PLACEHOLDER"],moved:{lines:["NATIVE CURRENT FACT"],records:[],edits:[{lineIndex:0,before:"ORIGINAL PLACEHOLDER",after:"NATIVE CURRENT FACT"}]},hasCoverBytes:true,coverAlreadyEdited:false,resolvedCoverDocxB64:btoa(String.fromCharCode(...new Uint8Array(await file.arrayBuffer())))});
+  expect(result.ok,result.reason).toBe(true);expect(result.coverDocxPath).toBeNull();expect(rows.get(DERIVED).docx_path).toBeNull();const zip=await JSZip.loadAsync(result.coverDocxB64,{base64:true});expect(await zip.file("word/document.xml").async("string")).toContain("NATIVE CURRENT FACT");
+});
+it.each(["", "SESSION FALLBACK"])("native no-candidate smooth respects actual commit fallback %j and clears stale path",async(entryBytes)=>{
+  const entry={coverLetterResultLines:["BEFORE"],coverLetterDocxB64:entryBytes,coverLetterDocxPath:"stale.docx",edited:{cover:true}};let map={job:entry};
+  const result=await commitSmoothedFact({jobId:"job",entry,after:{lines:["CURRENT"],records:[],edits:[]},resolveCoverEngineBytes:async()=>"",supabase:client,currentUserId:"owner",acceptedFactsByJob:{facts:[]},setTailoringMap:update=>{map=update(map);},setAcceptedFactsByJob:()=>{},setPreviewReloadKey:()=>{}});
+  expect(result.ok).toBe(true);expect(map.job.coverLetterDocxB64).toBe(entryBytes);expect(map.job.coverLetterDocxPath).toBeNull();
+});
+it("strict recovered upload and accepted-facts refusal leave client state unchanged",async()=>{
+  const entry={coverTemplateVersionId:BASE,coverLetterResultLines:["BEFORE"],coverLetterDocxPath:"old.docx",edited:{cover:true}};let map={job:entry};const setters={setTailoringMap:update=>{map=update(map);},setAcceptedFactsByJob:vi.fn(),setPreviewReloadKey:vi.fn()};
+  const invoke=()=>commitSmoothedFact({jobId:"job",entry,after:{lines:["CURRENT"],records:[],edits:[]},resolveCoverEngineBytes:async()=>"",supabase:client,currentUserId:"owner",acceptedFactsByJob:{facts:[]},...setters});
+  failUpload=true;expect((await invoke()).ok).toBe(false);expect(fetch).not.toHaveBeenCalled();expect(map.job).toBe(entry);
+  failUpload=false;fetch.mockResolvedValue({ok:false,json:async()=>({error:"revision conflict"})});expect((await invoke()).ok).toBe(false);expect(map.job).toBe(entry);expect(setters.setPreviewReloadKey).not.toHaveBeenCalled();
+});

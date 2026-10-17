@@ -1,0 +1,21 @@
+# N92 baseline test artifact — independent final R2 delta check
+
+Checker `/root/wave_report_checker`, independent of author `/root/backlog_intake`. Reviewed current exact three copied test files and R1 findingsD5444F84CB946CD61E28285BEDA1236ABE31554DEEEFE6703D84E3151D5787B0 against accepted plan/test design and actual producer/download contracts. No tests, source edits, main import, Git mutation or external actions. Only this ignored delta check written; model/usage unavailable.
+
+Verdict: **ACCEPTED for independent baseline measurement**, no remaining findings. This ends the grouped two-round baseline-artifact review. No production fix is authorized by this check and no RED/pass is presumed. Current implementation scope/grant remains unchanged.
+
+Exact accepted copied identities:
+
+- lib/acceptedFacts/commitFactMove.originalTemplate.test.js: BB415B9CC4C94E0B7205FC1676EF932278A4CF494D0D8E0B53F027E971821CF9
+- lib/acceptedFacts/moveOptimism.test.js: 952509E9E091A778DAFDE03C81E0D577B6237A0AF5CD62BD445886C5971B7EAE
+- app/hooks/moveInsertedFact.rc.test.js: 127323F58F3F4B250D8FC65C3EA393CAA52E48512070693B406A41395B31DB7D
+
+`NATIVE-FALLBACK-ORACLE` is resolved. The real native no-candidate Smooth test now covers both genuinely empty and nonempty session-fallback entry bytes, expects the actual returned producer values, and separately requires stale path clearing. The pure explicit-empty commit sentinel still challenges stale current/preMove state without inventing a real producer result. Native best-effort splice upload refusal remains a successful session-bytes/null-path control. No writer change or universal durability demand is introduced.
+
+`DOCX-SEMANTIC-ORACLE` is resolved. Download and preview Blobs are parsed with the real namespace-aware XML parser into exact paragraph arrays; assertions require full expected ordered text, original font and exact original marker namespace/name/kind/version. Move independently calculates expected moved paragraph/offset and checks current plus PUT fact records and located span/occurrence/provenance. Smooth independently requires exact approved paragraph/record text and offset; Undo restores exact pre-Smooth lines/records, with individual actual saved Blob assertions. Decoded adopted client bytes are compared exactly with the uploaded object at PUT path for Move/Apply/Undo, rather than truthy byte presence. Exactness now prevents missing-sentinel -1 comparisons and arbitrary metadata matches.
+
+Real DOM control-to-download-factory-to-anchor-href-linked Blob chain is retained; only browser-save and transport/model-response boundaries are substituted. Parsed saved/preview results occur before final stale-path assertions, allowing an honest baseline outcome in which actual rebuilt content is already correct but pointers diverge. Edited/path-only recovery remains faithful to real resolveCoverEngineBytes behavior; no production mock forces unavailable bytes. Current fixtures preserve explicit confirmation, no-write proposal/Discard and separate successful Apply/Undo version observations.
+
+All2232 original source hashes remain unchanged; exact copy comparison identifies only the three allowed copied tests changed. Existing source contract evidence and prior main gates remain intact. Original R1 files are retained by root under ignored evidence; no failed history is rewritten. Existing old pure success-path expectations remain baseline historical assertions and must be updated consistently with the accepted output contract when producing a repaired green candidate. Their expected future disagreement is not grounds to weaken the new oracles.
+
+This is static artifact acceptance, not proof that the harness executes. Independent baseline execution must distinguish genuine pointer/state/parsed-Blob failures from import, transport, proposal-guard, XML/Blob interop or timeout setup issues; retain raw failures before fixes. Full failure/network/Undo and broader compatibility matrix coverage remains a future completion receiver as previously stated, not passed here. Any unresolved substantive implementation fork follows its own accepted two-round activity; no repeat artifact revision is authorized by this clean check. Fixed deadline and resource serialization remain binding; no spend, deployment, new login or source publication follows.

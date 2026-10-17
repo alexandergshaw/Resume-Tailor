@@ -28,6 +28,12 @@
 import { describe, it, expect, vi, beforeAll, beforeEach, afterEach } from "vitest";
 import { createElement, useState, act } from "react";
 import { createRoot } from "react-dom/client";
+import JSZip from "jszip";
+import { createDocumentDownloaders } from "@/lib/document/docx";
+import { saveGeneratedTemplate } from "@/lib/document/generatedTemplateStore";
+import { buildPreviewBlob } from "@/lib/document/previewBlob";
+const transport = vi.hoisted(() => ({ client: null }));
+vi.mock("@/lib/supabase/client", async (importOriginal) => { const actual = await importOriginal(); return { ...actual, createClient: () => transport.client || actual.createClient() }; });
 
 import { useCompanyResearch } from "./useCompanyResearch.js";
 import { useDocumentPreview } from "./useDocumentPreview.js";
@@ -74,6 +80,7 @@ let putBodies = [];
 let probe = null;
 let container = null;
 let root = null;
+let docxFixture = null;
 
 function json(body) {
   return new Response(JSON.stringify(body), { status: 200, headers: { "Content-Type": "application/json" } });
@@ -96,7 +103,7 @@ function entryWithEngineLetter(overrides = {}) {
 function Probe({ initialMap }) {
   const [tailoringMap, setTailoringMap] = useState(initialMap);
   const [previewReloadKey, setPreviewReloadKey] = useState(0);
-  const research = useCompanyResearch({ tailoringMap, setTailoringMap, setPreviewReloadKey });
+  const research = useCompanyResearch({ tailoringMap, setTailoringMap, setPreviewReloadKey, supabase: docxFixture?.client, currentUser: docxFixture ? { id: "owner" } : null, coverLetterFile: docxFixture?.file });
   const preview = useDocumentPreview({
     tailoringMap,
     setTailoringMap,
@@ -106,7 +113,7 @@ function Probe({ initialMap }) {
     additionalContext: "",
     aggressiveness: 50,
     contextFiles: [],
-    downloadDocxFiles: {},
+    downloadDocxFiles: docxFixture ? createDocumentDownloaders({ resumeFile: null, coverLetterFile: docxFixture.file, tailoringMap, applicationData: {} }).downloadDocxFiles : {},
     startBackgroundResearch: research.startBackgroundResearch,
     setPreviewReloadKey,
     onDocumentEdited: () => {},
@@ -119,7 +126,7 @@ function Probe({ initialMap }) {
     tailoringMap,
     research,
     chat: { askAiAbout: () => {} },
-    tailorEngine: "embedded",
+    tailorEngine: docxFixture ? "gemini" : "embedded",
     previewReloadKey,
     scrapePreviewPosting: null,
     currentUser: null,
@@ -129,6 +136,7 @@ function Probe({ initialMap }) {
 }
 
 beforeEach(() => {
+  docxFixture = null; transport.client = null;
   store = { facts: [], removed: [], revision: null };
   putBodies = [];
   probe = null;
@@ -157,7 +165,7 @@ afterEach(async () => {
   if (container) container.remove();
   root = null;
   container = null;
-  delete globalThis.fetch;
+  delete globalThis.fetch; docxFixture = null; transport.client = null; vi.restoreAllMocks(); vi.unstubAllGlobals();
 });
 
 async function flush(times = 6) {
@@ -398,4 +406,106 @@ describe("Control A records the move as a fact-position decision (AC-X1)", () =>
     expect(serialized).not.toContain(FACT.url);
     expect(serialized).not.toContain(FACT.title);
   });
+});
+
+// N92-DOCX last hop: real controls -> real preview download handler -> real
+// downloader/resolver -> actual object-URL Blob linked to a save-anchor click.
+// Supabase/HTTP and browser save are the only mocked boundaries here.
+const DOCX_BASE = "11111111-1111-4111-8111-111111111111";
+const DOCX_BODY = `I led the platform team. ${FACT.text} We shipped quickly.`;
+const DOCX_LINES = ["Dear Hiring Manager,", DOCX_BODY, "I would relocate for the right team.", "Sincerely,", "Jordan Rivera"];
+const DOCX_SMOOTHED = { status: "ok", before: "Leading the platform team,", fact: "we saw Acme just open a Dublin telemetry lab,", after: "which let us ship quickly." };
+async function makeOriginalFixture() {
+  const objects=new Map(),rows=new Map([[DOCX_BASE,{id:DOCX_BASE}]]),uploads=[];
+  const zip=new JSZip();zip.file("[Content_Types].xml",'<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"/>');
+  zip.file("word/document.xml",'<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body>'+DOCX_LINES.map(line=>'<w:p><w:r><w:rPr><w:rFonts w:ascii="OriginalSpecificFont"/></w:rPr><w:t>'+line+'</w:t></w:r></w:p>').join("")+'<w:sectPr/></w:body></w:document>');
+  const file=new File([await zip.generateAsync({type:"uint8array"})],"original.docx");
+  const client={auth:{getUser:async()=>({data:{user:{id:"owner"}}})},from:()=>{const filters={};const q={select:()=>q,eq:(key,value)=>{filters[key]=value;return q;},maybeSingle:async()=>({data:filters.user_id==="owner"?rows.get(filters.id)||null:null})};return q;},storage:{from:()=>({upload:async(path,bytes,options)=>{if(!options.upsert&&objects.has(path))return {error:{message:"exists"}};objects.set(path,new Blob([bytes]));uploads.push(path);return {};},download:async(path)=>({data:objects.get(path)||null,error:objects.has(path)?null:{statusCode:404,message:"not found"}})})}};
+  await saveGeneratedTemplate(client,{kind:"cover",versionId:DOCX_BASE,userId:"owner",file});
+  const saved=new Map(),downloads=[],revoked=[];
+  const BrowserURL = URL;
+  vi.stubGlobal("URL", class extends BrowserURL { static createObjectURL(blob) { const url=`blob:n92-${saved.size}`; saved.set(url,blob); return url; } static revokeObjectURL(url) { revoked.push(url); } });
+  vi.spyOn(HTMLAnchorElement.prototype,"click").mockImplementation(function(){if(this.download)downloads.push({name:this.download,url:this.href,blob:saved.get(this.href)});});
+  const previousFetch=globalThis.fetch;
+  let smoothCalls=0;
+  globalThis.fetch=vi.fn(async(url,init={})=>{
+    if(String(url).includes("/api/cover-fact-smooth")){smoothCalls+=1;return json({smoothed:DOCX_SMOOTHED});}
+    if(String(url).includes("/api/default-template"))return new Response(null,{status:404});
+    return previousFetch(url,init);
+  });
+  docxFixture={client,file,objects,uploads,downloads,revoked,smoothCalls:()=>smoothCalls};transport.client=client;
+  return docxFixture;
+}
+function recoveredEntry(){return entryWithEngineLetter({coverTemplateVersionId:DOCX_BASE,coverLetterResultLines:[...DOCX_LINES],coverLetterDocxB64:"",coverLetterDocxPath:"owner/generated/STALE-UNAVAILABLE.docx",edited:{cover:true},unrelated:"keep",insertedFacts:[{...FACT,lineIndex:1,offset:DOCX_BODY.indexOf(FACT.text)}]});}
+async function observable(predicate,label){await vi.waitFor(async()=>{await act(async()=>{await new Promise(resolve=>setTimeout(resolve,10));});expect(predicate(),label).toBeTruthy();},{timeout:4000,interval:20});}
+async function domClick(label){const button=[...document.querySelectorAll("button")].find(node=>node.getAttribute("aria-label")===label||node.textContent.trim()===label);expect(button,`missing actual DOM control: ${label}`).toBeTruthy();expect(button.disabled).toBe(false);await act(async()=>button.click());}
+const WORD_NS="http://schemas.openxmlformats.org/wordprocessingml/2006/main";
+const ORIGINAL_NS="urn:resume-tailor:original:1";
+async function documentSemantics(blob){
+  const zip=await JSZip.loadAsync(await blob.arrayBuffer());
+  const xml=new DOMParser().parseFromString(await zip.file("word/document.xml").async("string"),"application/xml");
+  expect(xml.getElementsByTagName("parsererror")).toHaveLength(0);
+  const paragraphs=[...xml.getElementsByTagNameNS(WORD_NS,"p")].map(p=>[...p.getElementsByTagNameNS(WORD_NS,"t")].map(t=>t.textContent).join(""));
+  const fonts=[...xml.getElementsByTagNameNS(WORD_NS,"rFonts")].map(node=>node.getAttributeNS(WORD_NS,"ascii"));
+  const part=zip.file("customXml/resume-tailor-original.xml");
+  const reference=part?new DOMParser().parseFromString(await part.async("string"),"application/xml").documentElement:null;
+  return {paragraphs,fonts,reference};
+}
+function assertDocument(actual,expectedLines){
+  expect(actual.paragraphs).toEqual(expectedLines);
+  expect(actual.fonts).toContain("OriginalSpecificFont");
+  expect(actual.reference,"actual saved document retains original provenance").toBeTruthy();
+  expect(actual.reference.namespaceURI).toBe(ORIGINAL_NS);expect(actual.reference.localName).toBe("original");
+  expect(actual.reference.getAttribute("kind")).toBe("cover");expect(actual.reference.getAttribute("version")).toBe(DOCX_BASE);
+}
+function assertLocatedFacts(expectedRecords){
+  const current=probe.tailoringMap[JOB_ID],put=putBodies.at(-1);
+  expect(current.insertedFacts).toEqual(expectedRecords);expect(put.coverVersion.insertedFacts).toEqual(expectedRecords);
+  for(const record of expectedRecords){
+    const line=current.coverLetterResultLines[record.lineIndex];expect(line.slice(record.offset,record.offset+record.text.length)).toBe(record.text);
+    expect(line.split(record.text)).toHaveLength(2);expect(record.url).toBe(FACT.url);expect(record.title).toBe(FACT.title);
+  }
+}
+async function savedCoverXml(fixture){
+  const count=fixture.downloads.length;await domClick("Download .docx");await observable(()=>fixture.downloads.length===count+1,"real Download must click an anchor linked to the saved Blob");
+  const saved=fixture.downloads.at(-1);expect(saved.blob).toBeTruthy();expect(saved.name).toMatch(/\.docx$/);expect(fixture.revoked).toContain(saved.url);
+  return documentSemantics(saved.blob);
+}
+async function previewXml(fixture){const blob=await buildPreviewBlob(probe.tailoringMap[JOB_ID],"cover",{coverLetterFile:fixture.file});expect(blob).toBeTruthy();return documentSemantics(blob);}
+async function assertCurrentSource(fixture){
+  const current=probe.tailoringMap[JOB_ID],put=putBodies.at(-1);expect(put.coverVersion.docxPath).toBeTruthy();
+  const stored=fixture.objects.get(put.coverVersion.docxPath);expect(stored).toBeTruthy();expect(current.coverLetterDocxB64).toBeTruthy();
+  expect(Uint8Array.from(atob(current.coverLetterDocxB64),c=>c.charCodeAt(0))).toEqual(new Uint8Array(await stored.arrayBuffer()));
+  expect(current.coverLetterDocxPath,"client path must be the successfully persisted commit path").toBe(put.coverVersion.docxPath);expect(current.unrelated).toBe("keep");
+}
+
+describe("N92 DOCX control-to-saved-Blob reconciliation",()=>{
+  it("edited recovered Move compares actual saved download, preview and current persisted source",async()=>{
+    const fixture=await makeOriginalFixture();await mount({[JOB_ID]:recoveredEntry(),other:{sentinel:"untouched"}});await openCoverPreview();
+    expect(fixture.objects.has(`owner/templates/generated/cover/${DOCX_BASE}.docx`),"original writer positive control").toBe(true);expect(probe.tailoringMap[JOB_ID].coverLetterDocxB64).toBe("");
+    const puts=putBodies.length;await domClick("Move this fact one sentence later");await observable(()=>putBodies.length>puts&&!document.querySelector('[aria-busy="true"]'),"Move commit settles");
+    const movedBody=`I led the platform team. We shipped quickly. ${FACT.text}`;
+    const expectedLines=[DOCX_LINES[0],movedBody,...DOCX_LINES.slice(2)];
+    expect(coverLines()).toEqual(expectedLines);const expectedRecords=[{...recoveredEntry().insertedFacts[0],offset:movedBody.indexOf(FACT.text)}];assertLocatedFacts(expectedRecords);
+    assertDocument(await savedCoverXml(fixture),expectedLines);assertDocument(await previewXml(fixture),expectedLines);
+    expect(probe.tailoringMap.other).toEqual({sentinel:"untouched"});await assertCurrentSource(fixture);
+  },15000);
+  it("real Smooth proposal, Discard, Apply and Undo save exact approved/restored paragraphs and fact locators",async()=>{
+    const fixture=await makeOriginalFixture();await mount({[JOB_ID]:recoveredEntry()});await openCoverPreview();
+    const beforeLines=[...coverLines()],beforeRecords=structuredClone(probe.tailoringMap[JOB_ID].insertedFacts),beforeEntry=probe.tailoringMap[JOB_ID],puts=putBodies.length;
+    await domClick("Smooth the transition into this fact");await observable(()=>!!document.querySelector('[aria-label="Apply the smoothed version"]'),"guard-valid proposal becomes reviewable");
+    expect(putBodies).toHaveLength(puts);expect(probe.tailoringMap[JOB_ID]).toBe(beforeEntry);await domClick("Discard the smoothed version");expect(coverLines()).toEqual(beforeLines);expect(probe.tailoringMap[JOB_ID].insertedFacts).toEqual(beforeRecords);
+    await domClick("Smooth the transition into this fact");await observable(()=>!!document.querySelector('[aria-label="Apply the smoothed version"]'),"second proposal appears");await domClick("Apply the smoothed version");await observable(()=>putBodies.length===puts+1&&!!document.querySelector('[aria-label="Undo the smoothing"]'),"Apply is persisted before Undo appears");
+    const appliedBody="Leading the platform team, we saw Acme just open a Dublin telemetry lab, which let us ship quickly.";
+    const appliedLines=[DOCX_LINES[0],appliedBody,...DOCX_LINES.slice(2)];expect(coverLines()).toEqual(appliedLines);
+    const appliedRecords=[{...beforeRecords[0],text:DOCX_SMOOTHED.fact,offset:DOCX_SMOOTHED.before.length+1}];assertLocatedFacts(appliedRecords);
+    assertDocument(await savedCoverXml(fixture),appliedLines);assertDocument(await previewXml(fixture),appliedLines);
+    const appliedPath=putBodies.at(-1).coverVersion.docxPath,afterApply=probe.tailoringMap[JOB_ID];
+    const appliedStored=new Uint8Array(await fixture.objects.get(appliedPath).arrayBuffer());
+    expect(Uint8Array.from(atob(afterApply.coverLetterDocxB64),c=>c.charCodeAt(0))).toEqual(appliedStored);
+    await domClick("Undo the smoothing");await observable(()=>putBodies.length===puts+2&&!document.querySelector('[aria-label="Undo the smoothing"]'),"Undo finishes its real restore commit");
+    expect(coverLines()).toEqual(beforeLines);assertLocatedFacts(beforeRecords);
+    assertDocument(await savedCoverXml(fixture),beforeLines);assertDocument(await previewXml(fixture),beforeLines);
+    expect(fixture.smoothCalls()).toBe(2);expect(afterApply.coverLetterDocxPath,"Apply client pointer must equal its committed version").toBe(appliedPath);await assertCurrentSource(fixture);
+  },20000);
 });

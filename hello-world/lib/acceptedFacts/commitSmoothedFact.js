@@ -63,7 +63,10 @@ export async function commitSmoothedFact({
         ...cur,
         coverLetterResultLines: after.lines,
         coverLetterPreviewHtml: undefined,
-        coverLetterDocxB64: hasCoverBytes ? commit.coverDocxB64 : cur.coverLetterDocxB64,
+        // The writer may rebuild an edited/no-byte original. Adopt its actual
+        // successful output, including native session-only bytes or null path.
+        coverLetterDocxB64: typeof commit.coverDocxB64 === "string" ? commit.coverDocxB64 : "",
+        coverLetterDocxPath: typeof commit.coverDocxPath === "string" && commit.coverDocxPath ? commit.coverDocxPath : null,
         insertedFacts: after.records,
       },
     };

@@ -55,45 +55,21 @@ export function moveOptimisticPatch(moved) {
   };
 }
 
-// What `coverLetterDocxPath` becomes after a SUCCESSFUL commit -- the one
-// field the optimistic write's null cannot self-heal from the commit's own
-// success write (a commit that never spliced never produces a fresh path).
-// Three cases, matching what actually happened server-side:
-//   - no cover bytes at all: the move went through the lines-only, no-splice
-//     path, and the PUT itself already sent `docxPath: null` (AC-A9) -- the
-//     server's own stored path is now null, so the client mirrors that.
-//   - bytes, but the letter is already hand-edited: commitFactMove never
-//     touches the docx in this branch (the candidate's own edits are never
-//     overwritten), so nothing about the persisted path changed -- restore
-//     the PRE-MOVE path rather than the optimistic write's null, which would
-//     otherwise discard a still-valid pointer for no reason.
-//   - bytes, spliced: a fresh object was uploaded -- use the path the commit
-//     actually persisted (`commitDocxPath`), which may itself be `null` when
-//     the best-effort upload failed (uploadCoverDocx never throws) --
-//     session-only, same as every other splice-then-upload path here.
-// Not exported -- its only caller is moveSuccessPatch, below, in this same
-// file; a test drives it through that public seam instead (see
-// moveOptimism.test.js), so this stays an implementation detail rather than
-// a second module-level export with no shipping importer of its own.
-function resolveMoveDocxPath({ hasCoverBytes, coverAlreadyEdited, preMove, commitDocxPath }) {
-  if (!hasCoverBytes) return null;
-  if (coverAlreadyEdited) return preMove?.coverLetterDocxPath ?? null;
-  return commitDocxPath ?? null;
+// Successful commit outputs are authoritative. Recovered originals can now
+// produce new documents even for edited/no-byte inputs; native best-effort
+// upload may instead return usable session bytes with no durable path.
+// Explicit empty bytes/null path clear stale optimistic or pre-move sources.
+// Private helper: the only production consumer remains moveSuccessPatch.
+function resolveMoveDocxPath(commitDocxPath) {
+  return typeof commitDocxPath === "string" && commitDocxPath ? commitDocxPath : null;
 }
 
-// The full success-write patch, folding resolveMoveDocxPath's decision in --
-// kept here (not inlined at the call site) so the hook's own success branch
-// stays a single spread, under its line ceiling. `coverLetterDocxB64` keeps
-// the pre-existing HEAD rule unchanged: the fresh commit bytes when this move
-// resolved bytes at all, else whatever the caller's own current state holds
-// (`cur`, passed in as part of `commit`'s caller context -- see
-// `hasCoverBytes ? commit.coverDocxB64 : curCoverDocxB64`).
-export function moveSuccessPatch({ moved, hasCoverBytes, coverAlreadyEdited, preMove, commit, curCoverDocxB64 }) {
+export function moveSuccessPatch({ moved, commit }) {
   return {
     coverLetterResultLines: moved.lines,
     coverLetterPreviewHtml: undefined,
-    coverLetterDocxB64: hasCoverBytes ? commit.coverDocxB64 : curCoverDocxB64,
-    coverLetterDocxPath: resolveMoveDocxPath({ hasCoverBytes, coverAlreadyEdited, preMove, commitDocxPath: commit.coverDocxPath }),
+    coverLetterDocxB64: typeof commit.coverDocxB64 === "string" ? commit.coverDocxB64 : "",
+    coverLetterDocxPath: resolveMoveDocxPath(commit.coverDocxPath),
     insertedFacts: moved.records,
   };
 }

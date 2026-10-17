@@ -1,11 +1,6 @@
-// N95 -- unit coverage for moveOptimism.js's pure helpers, in particular the
-// TDD-flagged open decision this chunk resolves: whether a SUCCESSFUL bytes
-// move reconciles coverLetterDocxPath (rather than leaving it nulled by the
-// optimistic write). Resolved as: reconcile from the commit's own fresh
-// path when a splice actually ran; mirror the server's null when the move
-// never had bytes to begin with; restore the pre-move path when the docx was
-// never touched at all (an already hand-edited letter). See this module's
-// own header comment for the full reasoning.
+// N92: successful commit outputs, rather than old byte/edited flags, govern
+// client reconciliation. Native session-only output and explicit null remain
+// meaningful; recovered-original rebuilds may return fresh bytes and paths.
 
 import { describe, it, expect } from "vitest";
 import { captureCoverSnapshot, moveOptimisticPatch, moveSuccessPatch, resolveNoopMove } from "./moveOptimism.js";
@@ -109,16 +104,16 @@ describe("moveOptimisticPatch", () => {
 describe("moveSuccessPatch's coverLetterDocxPath reconciliation (the open decision)", () => {
   const preMove = { coverLetterDocxPath: "covers/pre-move.docx" };
 
-  it("no cover bytes -> null, mirroring the PUT's own docxPath:null (AC-A9)", () => {
+  it("no prior cover bytes -> adopt the fresh path returned by the successful commit", () => {
     expect(
       moveSuccessDocxPath({ hasCoverBytes: false, coverAlreadyEdited: false, preMove, commit: { coverDocxPath: "covers/fresh.docx" } }),
-    ).toBeNull();
+    ).toBe("covers/fresh.docx");
   });
 
-  it("bytes + already hand-edited -> restores the PRE-MOVE path (the docx was never touched)", () => {
+  it("already hand-edited -> adopt the successful commit null path rather than stale pre-move path", () => {
     expect(
       moveSuccessDocxPath({ hasCoverBytes: true, coverAlreadyEdited: true, preMove, commit: { coverDocxPath: null } }),
-    ).toBe("covers/pre-move.docx");
+    ).toBeNull();
   });
 
   it("bytes + spliced -> the commit's fresh path", () => {
@@ -131,5 +126,20 @@ describe("moveSuccessPatch's coverLetterDocxPath reconciliation (the open decisi
     expect(
       moveSuccessDocxPath({ hasCoverBytes: true, coverAlreadyEdited: false, preMove, commit: { coverDocxPath: null } }),
     ).toBeNull();
+  });
+});
+
+// N92-DOCX6: the successful commit output, including explicit empty/null,
+// is authoritative; stale pre-operation availability must not revive old data.
+describe("current commit output reconciliation sentinels", () => {
+  const moved = { lines: ["CURRENT BODY"], records: [{ id: "current", lineIndex: 0, offset: 0 }] };
+  it("native empty/null success clears stale bytes and path without touching unrelated fields", () => {
+    const current = { unrelated: "keep", coverLetterDocxB64: "STALE BYTES", coverLetterDocxPath: "stale/path" };
+    const patch = moveSuccessPatch({ moved, hasCoverBytes: false, coverAlreadyEdited: true, preMove: current, curCoverDocxB64: current.coverLetterDocxB64, commit: { coverDocxB64: "", coverDocxPath: null } });
+    expect({ ...current, ...patch }).toMatchObject({ unrelated: "keep", coverLetterResultLines: moved.lines, insertedFacts: moved.records, coverLetterDocxB64: "", coverLetterDocxPath: null });
+  });
+  it("recovered edited success adopts returned bytes and path despite absent old bytes", () => {
+    const patch = moveSuccessPatch({ moved, hasCoverBytes: false, coverAlreadyEdited: true, preMove: { coverLetterDocxPath: "STALE PATH" }, curCoverDocxB64: "STALE BYTES", commit: { coverDocxB64: "FRESH COMMIT BYTES", coverDocxPath: "fresh/commit.docx" } });
+    expect(patch.coverLetterDocxB64).toBe("FRESH COMMIT BYTES"); expect(patch.coverLetterDocxPath).toBe("fresh/commit.docx");
   });
 });
