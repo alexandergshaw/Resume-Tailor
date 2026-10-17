@@ -173,3 +173,15 @@ describe("AC2-C5: a nameless body is refused (400), not written", () => {
     expect(client.__inserts).toHaveLength(0);
   });
 });
+
+describe("N173 fixed save failure response contracts",()=>{
+ it.each([
+  [{jobKeywords:["x"]},400,"SEARCH_NAME_REQUIRED"],
+  [{name:"x",needsDocumentChoice:true},400,"DOCUMENT_MODE_INVALID"],
+  [{name:"x",tailoringDocumentMode:"cover_only"},400,"DOCUMENT_MODE_INVALID"],
+ ])("returns a stable validation code without inserting",async(body,status,code)=>{const client=recordingClient();createClient.mockResolvedValue(client);const res=await POST(jsonRequest(body));expect(res.status).toBe(status);expect((await res.json()).code).toBe(code);expect(client.__inserts).toHaveLength(0);});
+ it("labels authentication failure",async()=>{createClient.mockResolvedValue(recordingClient({user:null}));const res=await POST(jsonRequest({name:"x"}));expect(res.status).toBe(401);expect((await res.json()).code).toBe("AUTH_REQUIRED");});
+ it("labels the existing cap without inserting",async()=>{const client=recordingClient({existing:25});createClient.mockResolvedValue(client);const res=await POST(jsonRequest({name:"x"}));expect(res.status).toBe(409);expect((await res.json()).code).toBe("SAVED_SEARCH_LIMIT");expect(client.__inserts).toHaveLength(0);});
+ it("labels malformed JSON",async()=>{const client=recordingClient();createClient.mockResolvedValue(client);const res=await POST(new Request("http://localhost/api/feed-config/apply",{method:"POST",headers:{"Content-Type":"application/json"},body:"{"}));expect(res.status).toBe(400);expect((await res.json()).code).toBe("INVALID_JSON");expect(client.__inserts).toHaveLength(0);});
+ it("preserves the schema-specific failure code and hides database details",async()=>{const client=recordingClient();const original=client.from;client.from=(table)=>{const b=original(table);b.single=async()=>({data:null,error:{code:"42703",message:"PRIVATE_DATABASE_CANARY"}});return b;};createClient.mockResolvedValue(client);const res=await POST(jsonRequest({name:"x",tailoringDocumentMode:"resume_only"}));expect(res.status).toBe(409);const body=await res.json();expect(body.code).toBe("DOCUMENT_MODE_SCHEMA_REQUIRED");expect(JSON.stringify(body)).not.toContain("PRIVATE_DATABASE_CANARY");});
+});

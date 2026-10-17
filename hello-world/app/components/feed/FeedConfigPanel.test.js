@@ -30,3 +30,7 @@ describe("N170 actual save account fence and reopen",()=>{
   fetch.mockResolvedValueOnce(good());await render();await act(async()=>chatProps.onSend("platform roles"));fetch.mockResolvedValueOnce({ok:true,json:async()=>({search:{id:"saved-1",name:"Platform"}})});await act(async()=>{const saving=reviewProps.onAccept();reviewProps.onAccept();await saving;});expect(fetch).toHaveBeenCalledTimes(2);expect(props.setSavedSearches).toHaveBeenCalledTimes(1);
  });
 });
+
+describe("N173 rendered failure forwarding",()=>{
+ it("passes the actionable save reason to the conversation and retains the proposal",async()=>{fetch.mockResolvedValueOnce(good());await render();await act(async()=>chatProps.onSend("platform roles"));fetch.mockResolvedValueOnce({ok:false,status:400,json:async()=>({code:"SEARCH_NAME_REQUIRED",error:"PRIVATE_RESPONSE_CANARY"})});await act(async()=>reviewProps.onAccept());expect(chatProps.error).toContain("Ask the setup chat to name your search");expect(chatProps.error).not.toContain("PRIVATE_RESPONSE_CANARY");expect(reviewProps.draft.name).toBe("Platform");expect(reviewProps.disabled).toBe(false);});
+});

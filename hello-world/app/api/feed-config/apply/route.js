@@ -28,14 +28,14 @@ export async function POST(request) {
     data: { user },
   } = await supabase.auth.getUser();
   if (!user) {
-    return Response.json({ error: "Unauthorized" }, { status: 401 });
+    return Response.json({ error: "Unauthorized", code: "AUTH_REQUIRED" }, { status: 401 });
   }
 
   let body;
   try {
     body = await request.json();
   } catch {
-    return Response.json({ error: "Invalid JSON" }, { status: 400 });
+    return Response.json({ error: "Invalid JSON", code: "INVALID_JSON" }, { status: 400 });
   }
 
   if (body?.needsDocumentChoice === true) return Response.json({ error: "Choose a supported document option before saving.", code: "DOCUMENT_MODE_INVALID" }, { status: 400 });
@@ -46,7 +46,7 @@ export async function POST(request) {
     return Response.json({ error: "Choose Resume only or Resume + cover letter.", code: "DOCUMENT_MODE_INVALID" }, { status: 400 });
   }
   if (!sanitized) {
-    return Response.json({ error: "Missing or invalid 'name'." }, { status: 400 });
+    return Response.json({ error: "Missing or invalid 'name'.", code: "SEARCH_NAME_REQUIRED" }, { status: 400 });
   }
 
   const { count } = await supabase
@@ -55,7 +55,7 @@ export async function POST(request) {
     .eq("user_id", user.id);
   if (typeof count === "number" && count >= MAX_SAVED_SEARCHES_PER_ACCOUNT) {
     return Response.json(
-      { error: `You can have at most ${MAX_SAVED_SEARCHES_PER_ACCOUNT} saved searches.` },
+      { error: `You can have at most ${MAX_SAVED_SEARCHES_PER_ACCOUNT} saved searches.`, code: "SAVED_SEARCH_LIMIT" },
       { status: 409 },
     );
   }

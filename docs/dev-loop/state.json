@@ -1,6 +1,6 @@
 {
   "format": "manual-host-record-v1",
-  "revision": 28,
+  "revision": 31,
   "items": [
     {
       "id": "port",
@@ -308,6 +308,19 @@
         "Bundled Word renderer unavailable: soffice.exe missing. Actual rendered-page verification is required before repaired DOCX delivery.",
         "Proposed safe export guard is unimplemented and does not repair the supplied artifact."
       ]
+    },
+    {
+      "id": "N173",
+      "objective": "Explain Setup chat search save failures",
+      "owner": "user",
+      "status": "verified",
+      "plan": "items/N173/plan.md",
+      "planAcceptance": "items/N173/plan.check.md",
+      "assignment": ".agnostic-loop/backlog-dispatch/N166/runtime/N173/assignment.json",
+      "automaticDispatch": "unchanged-disabled-expired",
+      "verification": "items/N173/verification.md",
+      "independentAcceptance": "items/N173/verification.check.md",
+      "repositoryDelivery": "Exact main publication requires live loop:delivery; runtime receipt outside tracked source"
     }
   ],
   "limitations": [
