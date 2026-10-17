@@ -1,0 +1,11 @@
+# Reachability integration plan — independent R2 delta check
+
+Checker `/root/wave_report_checker`, independent of root author. Exact R2 plan SHA256 `F817398AEC75C36D374A8EBB8BA85857002844F896EA9F563B5052B3C5DA7C5E`; R1 check SHA256 `BDFF4ABD5D5B278968B4DB07BA41DA6FA83C0C01D6E9612019F8E9F01194673F`. No tests, source changes, state, Git mutation or external operation. Model observation/usage unavailable.
+
+Verdict: **ACCEPTED**, no remaining blocking findings. This ends the two-round plan activity cleanly. Stopping point: nothing; independently bounded implementation may consume the exact four-path R2 plan. No prior camera source-review activity is reopened.
+
+`REACHABILITY-HISTORY-LOCATION` is resolved: the mandated history file is now explicitly allowed, named ocrImage test-only-to-shipping movement goes in sections 4/5, current ledger summary arithmetic is updated, and existing references/history remain. Prior 20 source paths plus three newly admitted accounting files correctly total 23 because cameraQuestion.js was already included. No classifier, allowlist, orphan allowance, scanner canary, dimension value or runtime behavior change is authorized. Conservative fresh full-engine measurement is now explicitly required along with current app/lint/build/backlog gates.
+
+Implementation interpretation note: history.md currently contains only sections 4/5 and explicitly leaves sections 1–3 in ledger.md. R2's shorthand mentioning unchanged orphan65 section3 must preserve that actual location: record any explanatory private-dimension note under main ledger section 3, or reference its unchanged count in the section 5 movement. Do not invent/move a section 3 history in the split file. This is faithful application of the accepted history-location rule, not a requirement to broaden scope or another substantive plan revision.
+
+Failed app receipts and prior manifests remain preserved, new candidate identities must bind changed helper/accounting bytes, and execution still needs independent actual-diff review and real current gates. Reusing previous bounded runtime mutation evidence requires relevance analysis of unchanged semantics; focused scanner planted-defect controls must execute. No publication/live success, deadline renewal, provider authority or cleanup authorization follows from plan acceptance.
