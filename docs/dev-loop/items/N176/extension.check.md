@@ -1,0 +1,11 @@
+# Owner extension fidelity
+
+Independent checker /root/prep_review. Actual extension-authorization.json SHA256 A332E417B8564EFD1FDB48ECA26D08BA8D3B4AA93771C85844980C0A84AD11FD and current public engine state revision72 read. Verdict CLEAN exact transcription, not renewed provider/external-action authority.
+
+Authorization explicitly records direct owner approval extending to3:10PMCentral and absolute2026-10-23T20:10:00Z. Actual state deadline1792786200000 converts exactly2026-10-23T20:10:00.0000000Z. Last event policy.continue expectedRevision71 records priorPolicyHash7aa7e8e0cc6cbe844937fdaf17ededaaf42715a4a3ebd3af7c9794d51e3a34dd, direct approval reference, maxExtensionMs2490278 and empty gateArgumentCorrections. Prior canceled verifier evidence uses that prior hash.
+
+Independently compared every policy field against corrected/policy.json79FB9D77E31C34370A75D945DCB4475FEA940CE168C1F5FD46376FE10F2D7137: ONLY deadline changed. Six actual gate executable/argument/resource definitions, allowed actions, environment keys, exclusions, concurrency3, maxAssignments46, commandTimeout900000 and externalFiles are unchanged. Existing17 assignment records and2 evidence records remain, including engine exit0 and verification exit1. Event sequence retains assignment.cancel then assignment.reconcile before policy.continue, with actual host reconciliation stated19:30:29.9589Z. This check reads that evidence; it does not independently recreate process termination.
+
+Source R2/other closed review histories are not reset, old failed gates are not promoted current, and no exclusions or gates weakened. Required fresh-candidate gates and live/main completion obligations remain. Extension authorizes neither paid provider dispatch, new login, deployment nor unbounded execution.
+
+Separate proposed rate-limit caller-census scope is reasonable preparation only: exact hello-world/lib/rateLimit/adoption.test.js, assert new actual review route6per600000 plus auth/rate-limit ordering while preserving existing route assertions. Actual frozen author proposal still requires independent review before implementation/consumption. No fixture-readiness edit is admitted absent actual race evidence. No tests or source edits performed here.

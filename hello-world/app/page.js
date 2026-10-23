@@ -14,6 +14,7 @@ import LiveFeedTab from "./components/LiveFeedTab";
 import LibraryEditor from "./components/LibraryEditor";
 import ExperienceTab from "./components/experience/ExperienceTab";
 import CopilotClient from "./copilot/CopilotClient";
+import InterviewPreparation from "./preparation/InterviewPreparation";
 import ChatPanel from "./components/ChatPanel";
 import ChatFab from "./components/ChatFab";
 import StatusBar from "./components/StatusBar";
@@ -327,7 +328,8 @@ export default function Home() {
       savedTab === "feed" ||
       savedTab === "library" ||
       savedTab === "experience" ||
-      savedTab === "copilot"
+      savedTab === "copilot" ||
+      savedTab === "preparation"
     ) {
       setMainTab(savedTab);
     }
@@ -2635,6 +2637,7 @@ export default function Home() {
             { value: "feed", label: "Auto Applying" },
             { value: "interviewing", label: "Tracking" },
             { value: "copilot", label: "Interview Copilot" },
+            { value: "preparation", label: "Interview Preparation" },
             { value: "library", label: "Library" },
             { value: "experience", label: "Professional Experience" },
           ]}
@@ -2837,8 +2840,8 @@ export default function Home() {
             canTailor={!!resumeFile}
           />
         )}
-
         {mainTab === "copilot" && <CopilotClient />}
+        {mainTab === "preparation" && <InterviewPreparation aggressiveness={aggressiveness} tailorMode={tailorMode} onChangeStrength={() => { setContextPanelOpen(true); nav.goMainTab("applying"); }} userId={currentUser?.id || null} onOpenExisting={(applicationId, kind) => { const rowIndex = applicationData.findIndex((row) => row.id === applicationId); if (rowIndex < 0) return; nav.goMainTab("interviewing"); appDialogs.setAppDialog({ open: true, rowIndex, kind }); }} />}
         {mainTab === "library" && <LibraryEditor />}
         {mainTab === "experience" && (
           <ExperienceTab askAiAbout={chat.askAiAbout} addChatAttachments={chat.addChatAttachments} />

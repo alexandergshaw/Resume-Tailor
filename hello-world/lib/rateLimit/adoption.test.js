@@ -40,6 +40,12 @@ const APP_API = path.join(process.cwd(), "app", "api");
  * red test, which is exactly the review moment a spend ceiling deserves.
  */
 const BOUNDED = [
+  {
+    route: "app/api/interview-preparation/route.js",
+    limit: 6,
+    windowMs: 600_000,
+    why: "N176 -- one explicit stateless adversarial review of a bounded preparation bundle per request; six per ten minutes per authenticated user per instance, with a separate in-flight lease. This is not a fleet-wide spend guarantee.",
+  },
   // --- hard-authenticated: keyed on the id `auth.getUser()` resolved --------
   // app/api/copilot/answer/expand/route.js USED TO SIT HERE (40/10min). N153
   // (owner ruling, 2026-10-08) removed its cap so the copilot can prefetch every
@@ -556,8 +562,17 @@ describe("a denial is a 429 built from the limiter's own headers, never a throw"
     // `rateLimitHeaders(decision)` and `status: 429` have to appear together:
     // a 429 with no headers leaves the caller nothing to back off on, and a
     // header bag on some other status is not a denial.
-    expect(source).toMatch(/status:\s*429/);
-    expect(source).toMatch(/headers:\s*rateLimitHeaders\(/);
+    if (route === "app/api/interview-preparation/route.js") {
+      // This route's single response helper carries status and headers together.
+      // Verify the actual adapter as well as the denial call; no other route
+      // gains a shape exemption and the numeric/module-scope bounds still run.
+      expect(source).toMatch(/if \(!decision\.allowed\) return response\(429,[^\n]*rateLimitHeaders\(decision\)\)/);
+      expect(source).toMatch(/function response\(status, error, state = "error", extra = \{\}, headers = \{\}\)/);
+      expect(source).toMatch(/Response\.json\(\{ status: state, error, \.\.\.extra \}, \{ status, headers: \{ "Cache-Control": "no-store", \.\.\.headers \} \}\)/);
+    } else {
+      expect(source).toMatch(/status:\s*429/);
+      expect(source).toMatch(/headers:\s*rateLimitHeaders\(/);
+    }
     // The decision is returned, not raised. `check()` resolves a discriminated
     // result precisely so no route has to wrap it in try/catch and 500 by
     // forgetting to.
@@ -874,5 +889,28 @@ describe("N154 — the per-bullet DETAIL route is DEFERRED/unmetered (route+adop
     const entry = DEFERRED.find((e) => e.route === PROJECT_BULLET);
     expect(entry, "a DEFERRED entry for the per-bullet detail route").toBeTruthy();
     expect(entry.why).toMatch(/owner ruling/i);
+  });
+});
+
+// N176 is born authenticated, rather than joining the formerly-unauthenticated
+// GATED cohort. Its exact helper-based refusal remains an explicit obligation.
+describe("N176 preparation review is explicitly bounded and authenticated", () => {
+  const route = "app/api/interview-preparation/route.js";
+  it("is bounded at six per ten minutes and never silently deferred", () => {
+    expect(BOUNDED.find((entry) => entry.route === route)).toMatchObject({ limit: 6, windowMs: 600_000 });
+    expect(DEFERRED_ROUTES.has(route)).toBe(false);
+    expect(reachesModel(route)).toBe(true);
+  });
+  it("authenticates before limiter attribution and rejects missing identity", () => {
+    const code = codeOf(route);
+    const post = code.slice(code.indexOf("export async function POST"));
+    expect(code).toMatch(/from "@\/lib\/experience\/apiAuth"/);
+    expect(post).not.toMatch(/getSession\(/);
+    const authAt = post.search(/getAuth\(\)/);
+    const refusalAt = post.search(/if \(!userId\) return response\(401,/);
+    const boundAt = post.search(/\.check\(identify\(request, \{ userId \}\)\)/);
+    expect(authAt).toBeGreaterThan(-1);
+    expect(refusalAt).toBeGreaterThan(authAt);
+    expect(boundAt).toBeGreaterThan(refusalAt);
   });
 });

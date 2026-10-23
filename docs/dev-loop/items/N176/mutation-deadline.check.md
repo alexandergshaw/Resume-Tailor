@@ -1,0 +1,5 @@
+# Mutation deadline transcription fidelity
+
+Independent /root/prep_review. CLEAN mechanical transcription, not another substantive instrument round. Actual prior-deadline runner hashes1307B70A88BFC3CA1E21046DBB1F9FDADD30A97D7142F797524AD760285666D8; current runner FF46539232774C8934AED9E11FDA5A66A7E36A5C0F2AF202CE989AE2F19A9E0F. Exact text comparison proves replacing the single occurrence2026-10-23T19:40:07Z with2026-10-23T20:10:00Z produces current bytes with no other change. deadline-transcription.json records the same before/after/authorization.
+
+Matches independently accepted direct owner extension and actual engine continuation. Closed process-instrument R2 acceptance15F16C288BC9FB5FE5236FC73EEEC10B7EC2CD01FB166082B574FD575A9E4D9B and its process-race/reparenting limits remain; no guard, PID observation, mutation, test mask, environment, lock, budget or command altered. Exact execution approval must bind current runner/plan/final manifest. No execution, restoration or detection evidence is claimed.

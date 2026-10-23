@@ -1,0 +1,12 @@
+{
+  "id":"N176-CENSUS",
+  "objective":"Account for the new stateless preparation-review route in the mandatory rate-limit adoption instrument",
+  "baseline":"Full verification evidence a0c556d8-5419-4ebe-b461-5aadcc6704e0 failed because the model-reaching route was unaccounted for",
+  "owns":["hello-world/lib/rateLimit/adoption.test.js"],
+  "criteria":["CENSUS-1: The route is bounded at six calls per 600000ms and retains real transitive model reach, module-scope limiter, authenticated user attribution and forwarded denial status/headers; existing census assertions remain effective"],
+  "plan":"Inspect actual route and helper; add BOUNDED entry and exact wrapper/auth contract checks; independently review actual proposed bytes; run census plus existing route tests and fresh six mandatory gates on imported candidate",
+  "exclusions":["No product code changes","No launcher fixture changes without separate measured admission","No exemptions, timeouts, classification or limit weakening","No reopening closed source R2 chain"],
+  "verification":"Independent actual diff review, focused census and review route tests; fresh registered engine, verification, regression, lint, build, backlog gates; live verification remains N176 obligation",
+  "triage":{"security":"Existing real authenticated per-user bound must remain asserted","reliability":"Wrapper fidelity must preserve429 headers","ux":"No user-facing behavior changes"},
+  "deadline":"2026-10-23T20:10:00Z"
+}

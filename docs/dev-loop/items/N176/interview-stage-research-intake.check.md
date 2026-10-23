@@ -1,0 +1,15 @@
+# Independent interview-stage research intake check
+
+Checker: /root/prep_review, independent of intake author /root. Verdict: CLEAN for bounded intake/scope and observable criteria only. No implementation, architecture, provider, gate or live acceptance is established.
+
+Reviewed actual amendment SHA2563421C391292C2FD249958D9F170768DBC858D3323E941CF3E97C44B2364D701B; authoritative docs/backlog.yml02D40CD39DF13A9E2EA386614977F07A0D19AE602E7F222DB0E53E7A3664CF6F; generated docs/BACKLOG.md0CFAC9E914AD3F9A144260EC846F9CF112B5B7FABF783261681C54423FB9F5E2. These identities precede creation of this check.
+
+N176-26/27 faithfully require explicit research/citations for likely ordered interview stages and exactly five ranked distinct likely questions per proposed stage, with rationale and company/role/location/seniority context. Employer evidence, dated anecdotal reports and inference are distinguished; links/excerpts/date/retrieval time, contradictions and sparse evidence remain visible. No invented stages, attribution, probability or confirmed-question promise is authorized. An honest insufficient-evidence/no-results state is consistent with this contract; it must not fabricate a stage merely to fill five questions.
+
+N176-28/29 add useful application-scoped persistence/edit preservation, source/context staleness, transfer into existing rehearsal/review/repair, and explicit progress/unavailable/failure/cancel/retry behavior with late-response fencing. Personal answers retain exact resume/cover/strength/adversarial grounding requirements. Concrete advantage over direct chat is cited persistent stage research directly usable in tracked rehearsal, not a generic checklist. Diagnostics and actual deployed flow/save-reopen/failure/citation verification obligations are explicit.
+
+Existing positive-news research is correctly not treated as hiring-process evidence. Suitable retrieval/provider interfaces, exact paths/callers/test oracles and security/privacy/cost/citation-quality/accessibility review are discovery obligations before downstream implementation. No paid call, new provider, login/deployment, private-data disclosure, budget renewal or executable proof is invented. Existing source/cap review chains and expired-run failures/counts remain untouched; old acceptance does not cover new26–29.
+
+Backlog and generated row reflect the new requirement and intake status consistently. N176 appears once; null instrument/owns/verify/verify_proof/blocked_reason and empty blocked_by remain, with bounded workflow limitations stated. Read-only queue comparison to HEAD excluding the previously inserted N176 shows all other IDs retain exact order; N176 remains before N29 in its existing slot. No completed or deferred obligation silently removed.
+
+Findings: none blocking at intake. Stopping point: checked architecture/plan/test design and fresh authorized execution are still required; no expired-run execution or product change permitted by this review. No provider/network/gates/tests/Git mutation performed.

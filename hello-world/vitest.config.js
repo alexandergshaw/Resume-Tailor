@@ -36,6 +36,7 @@ export default defineConfig({
     exclude: /node_modules/,
   },
   test: {
+    maxWorkers: 4,
     // The default for the whole suite, and it should stay that way: almost
     // every test here exercises a pure function, and `node` is faster and
     // has no DOM globals to accidentally lean on. Many comments across this

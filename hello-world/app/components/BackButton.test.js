@@ -239,6 +239,7 @@ describe("AC-8a — the name says where back goes, and changes with the stack to
       ["feed", "Back to Auto Applying"],
       ["interviewing", "Back to Tracking"],
       ["copilot", "Back to Interview Copilot"],
+      ["preparation", "Back to Interview Preparation"],
       ["library", "Back to Library"],
       ["experience", "Back to Professional Experience"],
     ];

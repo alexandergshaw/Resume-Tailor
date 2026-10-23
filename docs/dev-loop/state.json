@@ -1,6 +1,6 @@
 {
   "format": "manual-host-record-v1",
-  "revision": 54,
+  "revision": 75,
   "items": [
     {
       "id": "port",
@@ -432,6 +432,113 @@
       "importAcceptance": ".agnostic-loop/backlog-N166-camera/N92-import.check.md",
       "mainGateReport": "items/N92/reconciliation-main-gates.md",
       "mainGateAcceptance": "items/N92/reconciliation-main-gates.check.md"
+    },
+    {
+      "owner": "user",
+      "contractAcceptance": "items/N176/contract.check.md",
+      "excludedScope": [
+        "newproviderSDK",
+        "cloudsync",
+        "schema/authchanges",
+        "automaticemail",
+        "hardwarecapture",
+        "unrelatedbacklog"
+      ],
+      "testDesign": "items/N176/test-design.md",
+      "objective": "Interview Preparation sibling workbench covering all12 supplied activities",
+      "repositoryDelivery": "Pending source commit/push/fresh remote guard; do not call fullN176 done.",
+      "automaticDispatch": "unchanged disabled; no oldgrant renewed",
+      "liveVerification": "Pending deployed candidate affected flow; authenticated browser session preserved. Canonical live remains af01d6c8596707b26309e0d3878a7db4f13fb731.",
+      "deadline": "2026-10-23T21:45:00Z",
+      "engineStore": ".agnostic-loop/interview-preparation/corrected/run",
+      "phase": "Original25 source chunk locally verified: all six gates and seven measured mutations passed; independent publication acceptance and actual live verification pending.",
+      "contract": "items/N176/contract.md",
+      "status": "verifying",
+      "id": "N176",
+      "testDesignAcceptance": "items/N176/test-design.check.md",
+      "workflow": ".agnostic-loop/interview-preparation/workflow.json",
+      "sourceReview": "items/N176/corrected-source-r2.check.md (B451DD5BADA014537A23ADB0C1F353E178AC98532F7E8DD8F987C43F74E685F6); final amended source chain closed R2 CLEAN.",
+      "implementationReport": "items/N176/corrected-implementation.json",
+      "mutationReview": "items/N176/mutation-measurement.check.md",
+      "verificationFailure": "Two-worker app gate ended without a complete result at900second command cap, failed audit e4e4d4bb-0390-4cf2-976f-f60d0577b07f. Default15worker earlierfullruns had moving5secondtimeouts. Four-worker correction remains unqualified pending a complete fresh gate run.",
+      "correctedRun": "Owner approved corrected90-minute manual run at18:10:07Z. Startup independently accepted; PATHEXT included,46 remaining assignments (14 preserved from60), original gates/actions/exclusions/resources unchanged. New store initialized, no historical gates promoted.",
+      "candidateGrounding": "Authored source independently accepted with exact paired application/manual context, real shared slider and source-linked outputs; qualified focused checks pass, mandatory full gates and actual live flow remain pending.",
+      "candidateGroundingAmendment": "items/N176/candidate-grounding-amendment.md",
+      "candidateGroundingAcceptance": "items/N176/candidate-grounding-amendment.check.md",
+      "adversarialReview": "Distinct stateless existing-provider explicit review, citation/current receipt gates, bounded attempts/history and failures independently source-checked; actual provider semantic quality/live flow not yet verified or funded.",
+      "adversarialReviewAmendment": "items/N176/adversarial-review-amendment.md",
+      "adversarialReviewAcceptance": "items/N176/adversarial-review-amendment.check.md",
+      "priorEngineStore": ".agnostic-loop/interview-preparation/run (cancelled at revision66 after explicit owner-approved replacement; no old item shipped)",
+      "startupAcceptance": "items/N176/corrected-startup.check.md",
+      "correctedDesign": "items/N176/corrected-design.md",
+      "correctedDesignAcceptance": "items/N176/corrected-design-r2.check.md",
+      "correctedTestDesign": "items/N176/corrected-test-design.md",
+      "correctedTestDesignAcceptance": "items/N176/corrected-test-design.check.md",
+      "correctedSourceR1": "items/N176/corrected-source-r1.check.md",
+      "correctedMeasurement": ".agnostic-loop/interview-preparation/corrected/r1-measurement.md",
+      "verificationHistory": [
+        "Engine187passed2skipped; app20524passed35failed9skipped. Exact evidence retained in runtime store. JSX scanner/page cap repairs checked; PATHEXT omission proven by negative/positive resolution canary. Fresh six gates required."
+      ],
+      "workerCap": {
+        "path": "hello-world/vitest.config.js",
+        "sha256": "E3E6B3677E571DC27FB6685CC997682218F306DA5A43B4C683DCC8C2D779153D",
+        "check": "items/N176/worker-cap-r2.check.md",
+        "scope": "Final R2 concurrency4 only; original assertions,5second tests and900second command cap unchanged; fresh six gates required"
+      },
+      "runContinuation": "Public policy.continue after global quiescence;3:45PM proposed cutoff based on openly communicated coordinator interpretation of direct owner response, not an explicit owner timestamp quotation. Failure/review/assignment budgets and provider limits preserved.",
+      "pendingAuthorization": null,
+      "stageResearchIntake": {
+        "status": "independently-checked-intake",
+        "proposal": "items/N176/interview-stage-research-amendment.md",
+        "proposedCriteria": [
+          "N176-26",
+          "N176-27",
+          "N176-28",
+          "N176-29"
+        ],
+        "implementation": "pending",
+        "budget": "Superseded prior expired-run intake note: owner explicitly approved continuation through2026-10-23T21:45Z; public engine policy revision159. No provider/deployment or assignment-budget expansion.",
+        "check": "items/N176/interview-stage-research-intake.check.md"
+      },
+      "resumption": {
+        "authorization": "call_a171bc3fcf0e4f2d89527d9bad2e8748:Approve through 4:45 PM",
+        "policyRevision": 159,
+        "stageResearch": "Checked intake only; implementation pending",
+        "formatting": "Separate N177 checked intake; implementation pending"
+      },
+      "stageResearchPreparation": {
+        "status": "independently-checked-hard-off-preparation-only",
+        "architecture": ".agnostic-loop/interview-preparation/corrected/N176-stage-research-design-r2.md",
+        "security": ".agnostic-loop/interview-preparation/corrected/N176-stage-research-security-contract.md",
+        "plan": ".agnostic-loop/interview-preparation/corrected/N176-stage-research-plan-tests-r2.md",
+        "capability": "No operational enablement; research requirements26–29 remain unimplemented/unverified."
+      },
+      "verificationCurrent": {
+        "report": "items/N176/corrected-verification.json",
+        "registeredGates": "all-six-passed-current-candidate",
+        "mutations": "Seven actual intended defects detected,21 green controls, restored2437file identity and observed closure; independent raw audit complete.",
+        "live": "pending-candidate-publication-and-deployment",
+        "overall": "incomplete-new-requirements-and-live-pending",
+        "reportSha256": "C9F951A74B3A1EAB42B5BF4387408DF6122A079EBB6DD6F2B0BB4E3D6A3F96C6"
+      }
+    },
+    {
+      "id": "N177",
+      "owner": "user",
+      "objective": "Resume preview/edit formatting check and reversible cleanup",
+      "status": "implementing-isolated-foundation",
+      "proposal": "items/N177/intake.md",
+      "check": "items/N177/intake.check.md",
+      "implementation": "Isolated package-validator source/tests authored; independent check and actual tests pending. No modal button/export/save implementation in main.",
+      "liveVerification": "pending",
+      "ownerDecision": "Full cleanup, including export and save fixes (Recommended)",
+      "ownerDecisionRecord": ".agnostic-loop/interview-preparation/corrected/N177-owner-ruling.json",
+      "contracts": ".agnostic-loop/interview-preparation/corrected/N177-prerequisite-contracts-r2.md",
+      "contractCheck": ".agnostic-loop/interview-preparation/corrected/N177-prerequisite-contracts-r2.check.md",
+      "plan": ".agnostic-loop/interview-preparation/corrected/N177-plan-tests.md",
+      "planCheck": ".agnostic-loop/interview-preparation/corrected/N177-plan-tests-r1.check.md",
+      "isolatedPacket": ".agnostic-loop/interview-preparation/corrected/N177-package-wave/packet.json",
+      "reviewHistory": "Original architecture two rounds ended unresolved; owner full-scope ruling faithfully checked; new prerequisite contracts R2 clean and planR1 clean. No hidden review reset."
     }
   ],
   "limitations": [

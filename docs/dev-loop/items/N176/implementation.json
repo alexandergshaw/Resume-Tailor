@@ -1,0 +1,293 @@
+{
+  "schemaVersion": 1,
+  "id": "N176-implementation-artifact",
+  "kind": "implementation-report",
+  "itemId": "N176",
+  "assignmentId": "N176-implementation-publication",
+  "authoredAt": "2026-10-23T17:27:13.9570368Z",
+  "status": "candidate-authored-independent-source-check-and-downstream-verification-pending",
+  "author": {
+    "worker": "/root/prep_contract",
+    "scope": "twelve production modules in excluded copy plus contract and author handoff reports",
+    "observedModel": "unknown",
+    "usage": "unavailable",
+    "testsExecutedByAuthor": false,
+    "providerCallsIssuedByAuthor": false,
+    "originalSourceWritesByAuthor": false
+  },
+  "independentTests": {
+    "worker": "/root/prep_tests",
+    "scope": "seven independently authored tests; original instrument-compatibility assumptions and role-priority fixture fidelity corrected separately without changing production",
+    "manifest": {
+      "path": ".agnostic-loop\\interview-preparation\\test-author-manifest-fixture-fixed.json",
+      "sha256": "2740F69C8EC5FFC1F760AA81AC109E3CFC20CDE1680D12C6A324C07BF26F91D9"
+    },
+    "files": [
+      {
+        "path": "hello-world/lib/interviewPreparation/workbench.test.js",
+        "sha256": "17715318E7B2C17DD3CB397EF8DB07B6369C7EFB864DD4F3956A7A1641781D93"
+      },
+      {
+        "path": "hello-world/lib/interviewPreparation/workspaceStore.test.js",
+        "sha256": "0ECAB099D46E452049ABA40D5495AAC76C1ADC5D52A3CDD3088F7D8612653CCF"
+      },
+      {
+        "path": "hello-world/app/preparation/InterviewPreparation.test.js",
+        "sha256": "333FEC0563650AD5677FF02A18428854C55FC5AF1FB4E686AA65C7C3C0CC3326"
+      },
+      {
+        "path": "hello-world/app/preparation/PreparationRehearsal.test.js",
+        "sha256": "902A8D9849A452C75786BE055962183D400617518C7084B36D85DDCDEBAFD33B"
+      },
+      {
+        "path": "hello-world/app/preparation/usePreparationSources.test.js",
+        "sha256": "2C440BDC6F2D3B47DB7B2FC3538732E759BB180192AE9D49CB9A937F874D2B4F"
+      },
+      {
+        "path": "hello-world/app/page.preparation.wiring.test.js",
+        "sha256": "5729A9581D1B7FB32FE1FDCD8FF6F25ECB3F7609D66C5FCF0EA90B2C9A8BC2EB"
+      },
+      {
+        "path": "hello-world/app/components/BackButton.test.js",
+        "sha256": "7F5CEF393C7E4FF2D625C47DA2AECF730504D2409022D57F66DB56DA942429F8"
+      }
+    ]
+  },
+  "acceptedInputIdentities": {
+    "N176-scope-artifact": "383d291ab94caf036b77ec05a46edae8fe6ae55140b07992b4e395195e2bb98a",
+    "N176-criteria-artifact": "383d291ab94caf036b77ec05a46edae8fe6ae55140b07992b4e395195e2bb98a",
+    "N176-design-artifact": "383d291ab94caf036b77ec05a46edae8fe6ae55140b07992b4e395195e2bb98a",
+    "N176-plan-artifact": "383d291ab94caf036b77ec05a46edae8fe6ae55140b07992b4e395195e2bb98a",
+    "N176-test-design-artifact": "6e8ed3320faacc0a861850af46bcff8c65de90f9d795e2a76c8eb26e6a099200"
+  },
+  "source": {
+    "baseCommit": "af01d6c8596707b26309e0d3878a7db4f13fb731",
+    "candidateRoot": ".agnostic-loop/interview-preparation/candidate",
+    "round": 2,
+    "manifest": {
+      "path": ".agnostic-loop\\interview-preparation\\implementation-r2-manifest.json",
+      "sha256": "79098F160D2E580804A8A3D3E20BD67F188546359DC400F34BF4ACAD0E8F3736"
+    },
+    "files": [
+      {
+        "path": "hello-world/app/page.js",
+        "sha256": "18BC45820FABA1507294039F17494AF603C43CF496F7630DE0C88BD954CC8115"
+      },
+      {
+        "path": "hello-world/app/preparation/InterviewPreparation.js",
+        "sha256": "83C580BD8DC8B77BDCDB3F36AAEF91B265BE9EBA88E8518423D2117F94593270"
+      },
+      {
+        "path": "hello-world/app/preparation/PreparationWorkspace.js",
+        "sha256": "DB9AD013DCABE4F7EAEFB60B3B2DE8CB5B777FBC149A48BC7360E7AE689BA878"
+      },
+      {
+        "path": "hello-world/app/preparation/PreparationTools.js",
+        "sha256": "B12D410A60EB60716F88B67A76668D9DDB86088094A1A804C335C15AE7F4CDCF"
+      },
+      {
+        "path": "hello-world/app/preparation/PreparationRehearsal.js",
+        "sha256": "44E4A0E5CB339286C8B7F17CCAEF57C3D1FE3A4A36B3E0B1DF193896332AC7F1"
+      },
+      {
+        "path": "hello-world/app/preparation/PreparationReference.js",
+        "sha256": "1C3506E100449C449DD50CD4F0DCEA37BDDFA3EFAD5F448DA8E5C6BB54872D0A"
+      },
+      {
+        "path": "hello-world/app/preparation/usePreparationWorkspace.js",
+        "sha256": "F28FAC98B461FE3EBC47BB210E44D80CFC1C18F2074AE642A062D9FDD0814F09"
+      },
+      {
+        "path": "hello-world/app/preparation/usePreparationSources.js",
+        "sha256": "11C22D0F77FBF8772BE854120A106E742C395DE95DAB0C211C9BADCCD60B7851"
+      },
+      {
+        "path": "hello-world/app/preparation/preparation.module.css",
+        "sha256": "E57827746365AEDCC3430E66E7F8EAE69EECB8FC4C46737B4A90A5EB9F3EA109"
+      },
+      {
+        "path": "hello-world/lib/interviewPreparation/workbench.js",
+        "sha256": "DBDB3B865D0E114851DBE0FEBC0AD9BAAE5FB2C1C94FF136A0E4A5F5CD332527"
+      },
+      {
+        "path": "hello-world/lib/interviewPreparation/workspaceStore.js",
+        "sha256": "CCC2003EB4BF5DD786A5171CE595B8C64C362F4E93B7B5AB145F2549B4FF8A61"
+      },
+      {
+        "path": "hello-world/app/components/BackButton.js",
+        "sha256": "CA3513F6DAE5B938D2C51DF718CCA54650BC787B8B8E98502822BD46D31C255E"
+      }
+    ],
+    "unchangedConditionalAccountingPaths": [
+      "hello-world/lib/sourceScan/exportReachability.ledger.md",
+      "hello-world/lib/sourceScan/exportReachability.ledger.history.md"
+    ],
+    "notes": [
+      "Twelve changed/new production files; two copied conditional ledgers remain unchanged.",
+      "Original source remains root-owned; author did not import or publish product bytes.",
+      "Root copied one unchanged scanner dependency between R1 and R2; fresh R2 candidate inventory contains 2425 files."
+    ]
+  },
+  "deliveredTools": [
+    {
+      "criterion": "N176-01",
+      "behavior": "Top-level sibling tab, restoration allowlist and Back label through existing navigation."
+    },
+    {
+      "criterion": "N176-02",
+      "behavior": "Interview brief compiles supplied logistics, format and audience; unknown and invalid date details flagged."
+    },
+    {
+      "criterion": "N176-03",
+      "behavior": "Posting themes selected by explicit requirement markers and repeated emphasis before six-theme cap; literal resume evidence ranked and gaps shown."
+    },
+    {
+      "criterion": "N176-04",
+      "behavior": "Explicit existing company research plus employer/official supplied source facts, dates, buyer/user/beneficiary/model and interpretation/unknown distinctions."
+    },
+    {
+      "criterion": "N176-05",
+      "behavior": "Supplied professional biography and audience-specific focus/questions; no profile scraping."
+    },
+    {
+      "criterion": "N176-06",
+      "behavior": "Editable candidacy/interest/role framing based on supplied background and motivations, not invented achievements."
+    },
+    {
+      "criterion": "N176-07",
+      "behavior": "Six-part real example builder, lexical theme mapping, personal ownership and result-verification gaps."
+    },
+    {
+      "criterion": "N176-08",
+      "behavior": "Common and gap-specific questions plus user-owned practical positions; unknown compensation/authorization preserved."
+    },
+    {
+      "criterion": "N176-09",
+      "behavior": "Research-linked ranked questions, editable text, Move up and Make top choice controls."
+    },
+    {
+      "criterion": "N176-10",
+      "behavior": "Seeded required-category timed mock, typed answer history and explicit local heuristic review with five manual rubric ratings."
+    },
+    {
+      "criterion": "N176-11",
+      "behavior": "Priority repairs from actual reviews, retained original/revision comparison; full history refuses revision honestly without clearing it."
+    },
+    {
+      "criterion": "N176-12",
+      "behavior": "Compact call reference, environment reminders and explicit print target; universal page count is not claimed."
+    },
+    {
+      "criterion": "N176-13",
+      "behavior": "Post-call notes produce contextual editable thank-you and next actions; copy/download only, no send."
+    },
+    {
+      "criterion": "N176-14",
+      "behavior": "Account/application browser-local versioned persistence, hydrate-before-write, read retry/conflict choice, corrupt-byte protection, quota retry, scoped reset/export."
+    },
+    {
+      "criterion": "N176-15",
+      "behavior": "Explicit suggestion acceptance, retained draft/stale diagnostics, old-scope source fences, bounded history/input size, responsive labeled controls."
+    }
+  ],
+  "reviewHistory": {
+    "r1Check": {
+      "path": ".agnostic-loop/interview-preparation/implementation-r1.check.md",
+      "sha256": "2BC9B5CCE73CCCF4C69CD28EEB9D9BC788BA8F579630B05BDEE19980C80B6F9F",
+      "verdict": "defective",
+      "classes": [
+        "NESTED-PERSISTED-SCHEMA",
+        "TRANSIENT-READ-RECOVERY",
+        "REVISION-PARENT-RETENTION",
+        "ROLE-THEME-PRIORITY"
+      ]
+    },
+    "r1SourceArchive": ".agnostic-loop/interview-preparation/source-r1",
+    "r2Corrections": {
+      "path": ".agnostic-loop/interview-preparation/implementation-r2-result.md",
+      "sha256": "C3B866BADC97B2B8B1CF1AF691064CA095B6E69434950256DC470AA288F6C62D",
+      "changedPaths": [
+        "hello-world/app/preparation/PreparationWorkspace.js",
+        "hello-world/app/preparation/PreparationRehearsal.js",
+        "hello-world/app/preparation/usePreparationWorkspace.js",
+        "hello-world/lib/interviewPreparation/workbench.js",
+        "hello-world/lib/interviewPreparation/workspaceStore.js"
+      ],
+      "summary": [
+        "Validate nested article/review/check/heuristic shapes before render.",
+        "Distinguish transient read access from corrupt bytes, retry without writes, require explicit choice when new edits compete with saved data.",
+        "At sixty attempts retain original and typed revision with actionable refusal.",
+        "Rank requirement markers and repeated emphasis before truncation; preserve literal excerpts."
+      ]
+    },
+    "r2IndependentSourceCheck": "pending at report authorship; source author cannot accept own correction"
+  },
+  "observedFocusedMeasurement": {
+    "producer": "/root/prep_verifier",
+    "claimBasis": "Read actual independent verifier measurement and terminal receipt; not executed by implementation author.",
+    "measurement": {
+      "path": ".agnostic-loop\\interview-preparation\\focused-r2-measurement.json",
+      "sha256": "6FE28479EEFF724ECCBFEB9CF6A56D051C4174DCA04F35634BD823CBD88F519F"
+    },
+    "receipt": {
+      "path": ".agnostic-loop\\interview-preparation\\focused-r2-receipt.json",
+      "sha256": "E332C03310353257D2B9C0628FA3D9088EDFBFB563A2C83CE0CBA9AC24CC379A"
+    },
+    "executable": "C:/Program Files/nodejs/node.exe",
+    "arguments": [
+      "C:\\Users\\alexa\\OneDrive\\Documents\\Projects\\Resume-Tailor\\hello-world\\node_modules\\vitest\\vitest.mjs",
+      "run",
+      "lib/interviewPreparation/workbench.test.js",
+      "lib/interviewPreparation/workspaceStore.test.js",
+      "app/preparation/InterviewPreparation.test.js",
+      "app/preparation/PreparationRehearsal.test.js",
+      "app/preparation/usePreparationSources.test.js",
+      "app/page.preparation.wiring.test.js",
+      "app/components/BackButton.test.js",
+      "--reporter=json",
+      "--outputFile=C:\\Users\\alexa\\OneDrive\\Documents\\Projects\\Resume-Tailor\\.agnostic-loop\\interview-preparation\\focused-r2-result.json"
+    ],
+    "workingDirectory": "C:\\Users\\alexa\\OneDrive\\Documents\\Projects\\Resume-Tailor\\.agnostic-loop\\interview-preparation\\candidate\\hello-world",
+    "environment": {
+      "NODE_ENV": {
+        "own": true,
+        "value": ""
+      }
+    },
+    "start": "2026-10-23T17:25:02.792Z",
+    "end": "2026-10-23T17:25:06.874Z",
+    "exitCode": 0,
+    "signal": null,
+    "total": 80,
+    "passed": 80,
+    "failed": 0,
+    "pending": 0,
+    "sourceManifest": "79098F160D2E580804A8A3D3E20BD67F188546359DC400F34BF4ACAD0E8F3736",
+    "testManifest": "2740F69C8EC5FFC1F760AA81AC109E3CFC20CDE1680D12C6A324C07BF26F91D9",
+    "candidateInventory": "E903F17123A43CB6E8EFFD85069C037110CAC7CB9D2FFF015EC5E22F6764BD8D",
+    "candidateFiles": 2425,
+    "unchanged": true,
+    "resources": "terminal closed; 17:25:20.7918926Z nine Nodes/all commandlines/zero owned; focused resource released",
+    "limits": [
+      "focused measured only; independent source R2 review separate",
+      "not mutations, mandatory trusted engine gates, live app, delivery or shipped"
+    ]
+  },
+  "pending": [
+    "Independent final implementation R2 delta judgment.",
+    "Prechecked isolated meaningful mutation controls and restored candidate evidence.",
+    "Mandatory engine, application verification/regression, lint, build and backlog gates on final candidate.",
+    "Any exact source-scanner accounting changes require measured inventory and independent acceptance; no allowance weakening.",
+    "Root-owned actual source/test import and engine artifact acceptance; this report is not host publication.",
+    "Actual canonical live deployed twelve-tool flow, error/recovery, mobile/keyboard/print and save/reopen evidence with exact disposable cleanup and independent review.",
+    "Normal scoped main commit/push and fresh npm.cmd run loop:delivery proving clean main equals live origin/main."
+  ],
+  "limits": [
+    "Deterministic lexical tools and heuristic typed-text critique are not semantic fit guarantees or spoken-delivery measurements.",
+    "Freshness fingerprint is compact version/length/FNV32, not a security digest; source/test manifests use SHA256.",
+    "Browser-local notes are neither cloud syncing nor encryption; no account data is copied automatically to guest.",
+    "Existing positive-news research is not comprehensive company due diligence or interviewer research.",
+    "No new schema, SDK, provider grant, paid development calls, login, device capture, automatic send or deployment command was introduced.",
+    "Source authorship and focused success are not full completion or shipped evidence."
+  ]
+}

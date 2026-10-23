@@ -1,0 +1,252 @@
+{
+  "schemaVersion": 1,
+  "id": "N176-corrected-implementation-artifact",
+  "kind": "implementation-report",
+  "itemId": "N176",
+  "round": 2,
+  "status": "authored-correction-pending-independent-final-delta-and-actual-verification",
+  "authoredAt": "2026-10-23T19:16:28.9832028Z",
+  "author": {
+    "worker": "/root/prep_contract",
+    "ownedRole": "main16 product paths only",
+    "observedModel": "unknown",
+    "usage": "unavailable",
+    "testsExecuted": false,
+    "providerCallsIssued": false,
+    "originalSourceWrites": false
+  },
+  "source": {
+    "manifestPath": ".agnostic-loop/interview-preparation/corrected/source-manifest-r2.json",
+    "manifestSha256": "EEE1E94EC1DE2216347BC80AE41C6F419DC7D5EA94148EDB49B805D702258A5E",
+    "candidateRoot": "C:\\Users\\alexa\\OneDrive\\Documents\\Projects\\Resume-Tailor/.agnostic-loop/interview-preparation/corrected/candidate",
+    "files": [
+      {
+        "path": "hello-world/app/page.js",
+        "sha256": "BCF2ACD8A8E04CC45BBB58AF6711491EE18700B66A2B29EAB810370CB8EAB16E"
+      },
+      {
+        "path": "hello-world/app/components/BackButton.js",
+        "sha256": "CA3513F6DAE5B938D2C51DF718CCA54650BC787B8B8E98502822BD46D31C255E"
+      },
+      {
+        "path": "hello-world/app/preparation/InterviewPreparation.js",
+        "sha256": "58B412F29287D7967396086AE119CC7044DF8EBA3D1F751DB337AEC022EBC888"
+      },
+      {
+        "path": "hello-world/app/preparation/PreparationWorkspace.js",
+        "sha256": "C590A747B5EC0C29B75703DB7F863B40388265EC92974284EB1E7EE9403F2BA2"
+      },
+      {
+        "path": "hello-world/app/preparation/PreparationTools.js",
+        "sha256": "DC2F1BC02636C4FB1F13DAB1B7400D5B8779714D03C2B9AF668A8642AB315473"
+      },
+      {
+        "path": "hello-world/app/preparation/PreparationRehearsal.js",
+        "sha256": "1158C54AA7588089E10798941AF9BFE16BC8A92FE7083359EEC47602B9DECAA9"
+      },
+      {
+        "path": "hello-world/app/preparation/PreparationReference.js",
+        "sha256": "1C3506E100449C449DD50CD4F0DCEA37BDDFA3EFAD5F448DA8E5C6BB54872D0A"
+      },
+      {
+        "path": "hello-world/app/preparation/usePreparationWorkspace.js",
+        "sha256": "B8E499A8B2F8815E04E73B5713C1A08D2385CA52C8AD1071C00C7E30C75CAD9B"
+      },
+      {
+        "path": "hello-world/app/preparation/usePreparationSources.js",
+        "sha256": "DFEF226F1B253E3098C5E4A39F9522691C7AA77EB9BDD7C4BB05246D279D9B64"
+      },
+      {
+        "path": "hello-world/app/preparation/preparation.module.css",
+        "sha256": "CE6061E2A7D297C4AB622AF913EA2DA0C63A7A441A8A336728909CD0B77B778A"
+      },
+      {
+        "path": "hello-world/lib/interviewPreparation/workbench.js",
+        "sha256": "1D4F64854BD11EF6CD7444E3BA388925E9951D7F1D1F765A85ED13C222678FB3"
+      },
+      {
+        "path": "hello-world/lib/interviewPreparation/workspaceStore.js",
+        "sha256": "A8789D9577623404CCE10FC229C4060794E2D4F8600F554D2160D0F541E56DAE"
+      },
+      {
+        "path": "hello-world/lib/interviewPreparation/candidateContext.js",
+        "sha256": "FD0470583C08C182EF68C349B0F9CB8F9CCA674F38687FCDD44FDD69A6F80BD7"
+      },
+      {
+        "path": "hello-world/lib/interviewPreparation/reviewContract.js",
+        "sha256": "5A34AEE3AC1A39F70BFE9DCEE7DA12F7025F548494FE5EFD6F3D76B9582BCF9C"
+      },
+      {
+        "path": "hello-world/app/preparation/PreparationReview.js",
+        "sha256": "A972726C53DA534618134776AF695770557E61855A27FBA4F7B2B280590B6A09"
+      },
+      {
+        "path": "hello-world/app/preparation/usePreparationReview.js",
+        "sha256": "2D67DEEB54D4533204F093E9C2005BCCBB12A11A1AC69420E7C4B9EFFB357485"
+      }
+    ],
+    "resultPath": ".agnostic-loop/interview-preparation/corrected/source-result-r2.md",
+    "resultSha256": "2CE6F43D1FCFEFBF66E722C99F2BC5CCF489E31CAC45659947AD509443604C32"
+  },
+  "backend": {
+    "author": "/root/prep_backend",
+    "role": "three source files separately authored; not claimed as main-worker authorship",
+    "resultPath": ".agnostic-loop/interview-preparation/corrected/backend-result.md",
+    "resultSha256": "214B0D78EA074BBF7A176AAE2F3298F5D100B3D94814EC80D65E68ADA92AB4EB",
+    "files": [
+      {
+        "path": "hello-world/lib/interviewPreparation/candidateContextStore.js",
+        "sha256": "C5B11681AB8AC4639F7E4356879A618767DA5BB3F0AC165A0694BAE5B004F13F"
+      },
+      {
+        "path": "hello-world/lib/interviewPreparation/reviewPrompt.js",
+        "sha256": "3B5E7B3EFAC4A31898E2DD3B6652C1A4EF0F97DC4E1664A7D2EC0B826561F0E3"
+      },
+      {
+        "path": "hello-world/app/api/interview-preparation/route.js",
+        "sha256": "EE792E80BB586949B6AE480EC774F7F843E0E9D58A8557FEE272725E95507E8B"
+      }
+    ]
+  },
+  "tests": {
+    "author": "/root/prep_tests",
+    "role": "twelve independently authored tests; no main-author test edits or execution",
+    "manifestPath": ".agnostic-loop/interview-preparation/corrected/tests-manifest-r2-final.json",
+    "manifestSha256": "DB0F74CB4CD5522AA41E6AC3D8F0DC8B3E56E6EEC60EA2FE924C0EA52C1BD06D",
+    "files": [
+      {
+        "sha256": "E46F5AB5F0A44E280A244BACF13AEB0062A5F7A0D48E7A8FFBCB3E103AD9E102",
+        "path": "hello-world/lib/interviewPreparation/workbench.test.js"
+      },
+      {
+        "sha256": "873B040BD3C9AB475888263B31583DDF3EEA12A979B075F4A189A617B4B19466",
+        "path": "hello-world/lib/interviewPreparation/workspaceStore.test.js"
+      },
+      {
+        "sha256": "57A6A9E4DC77C34257457880E53ADEABB632C09DE8A36CCAF831409D5866DEA3",
+        "path": "hello-world/app/preparation/InterviewPreparation.test.js"
+      },
+      {
+        "sha256": "902A8D9849A452C75786BE055962183D400617518C7084B36D85DDCDEBAFD33B",
+        "path": "hello-world/app/preparation/PreparationRehearsal.test.js"
+      },
+      {
+        "sha256": "D1BC10C551E3FFCC604893EEBB9FCB8E9774923B0BAC98219BFFE5795A3F0138",
+        "path": "hello-world/app/preparation/usePreparationSources.test.js"
+      },
+      {
+        "sha256": "CD6734D483C1F617199A839C947B5A5777B211CF82206EC9ACBC5D4A8DECE2AD",
+        "path": "hello-world/app/page.preparation.wiring.test.js"
+      },
+      {
+        "sha256": "7F5CEF393C7E4FF2D625C47DA2AECF730504D2409022D57F66DB56DA942429F8",
+        "path": "hello-world/app/components/BackButton.test.js"
+      },
+      {
+        "sha256": "DC7FC333DF87749D750A5664CFE2E95E590A589897F4739E6DF9645D9AD25C20",
+        "path": "hello-world/lib/interviewPreparation/candidateContext.test.js"
+      },
+      {
+        "sha256": "8B7FC267A333BF5F4359D1C0E6AAD77B0E519801E432450DDA1838558D451C86",
+        "path": "hello-world/lib/interviewPreparation/candidateContextStore.test.js"
+      },
+      {
+        "sha256": "1ECD268F215F25F549232921CEE3438AC10DEFDA8F1D36A3D3879A0243244BBE",
+        "path": "hello-world/lib/interviewPreparation/reviewContract.test.js"
+      },
+      {
+        "sha256": "37F0C35CD5399F9FBDC2C897B784DEB3C8865A5F2853C7F9E330200DFF6BE523",
+        "path": "hello-world/app/api/interview-preparation/route.test.js"
+      },
+      {
+        "sha256": "6025D637FCEAFFBCB3082B5002A23ED0A336D63C97F83E5744304847E83C2EC5",
+        "path": "hello-world/app/preparation/PreparationReview.test.js"
+      }
+    ],
+    "measurement": "Independent verifier measures actual candidate; authored tests/manifest are not pass evidence.",
+    "resultPath": ".agnostic-loop/interview-preparation/corrected/tests-final-oracle-result.md",
+    "resultSha256": "FF27C0479C69EEE5B64168186189BC2CBBF8314D2CBDB5FCEBF834ED3DCDC516"
+  },
+  "acceptedDesign": {
+    "path": ".agnostic-loop/interview-preparation/corrected-design.md",
+    "sha256": "D6C1D3E2EA0E988C9E5129504887F098769575305BA8F5413DA871EB081FCB69",
+    "check": "010398C565AA976F866B8E67545D3980597832B49E0856446369FFEB8FD7FF96"
+  },
+  "reviewHistory": {
+    "r1CheckPath": ".agnostic-loop/interview-preparation/corrected/source-r1.check.md",
+    "r1CheckHash": "9FE04EC08C3A6ED078DCE3272BDA47A349721493B13BC8283FD05116E2DC43B8",
+    "r1Verdict": "defective",
+    "bindingClasses": [
+      "SEMANTIC-REVIEW-ADMISSION-FAIL-OPEN",
+      "FINDING-ATTEMPT-PERSISTENCE-DEPTH",
+      "GROUNDED-AUTOMATED-OUTPUT-REGRESSION",
+      "INPUT-DEPENDENCY-FRESHNESS-LOSS",
+      "PER-KEYSTROKE-DRAFT-HISTORY-EDIT-LOSS",
+      "CANCELLED/FENCED-ATTEMPT-AUDIT-LOSS"
+    ],
+    "r2Status": "one bounded correction authored; final independent delta pending",
+    "oldChains": "Earlier original source four-class R1/R2 and separate integration formatting reviews remain closed; this amended-source R1/R2 chain is not reset by a new store, publication or renamed report."
+  },
+  "fidelityMap": [
+    {
+      "class": "SEMANTIC-REVIEW-ADMISSION-FAIL-OPEN",
+      "change": "Known conflicts cannot pass through advisory/empty findings; valid receipt/status/finding metadata and exact in-range locators required."
+    },
+    {
+      "class": "FINDING-ATTEMPT-PERSISTENCE-DEPTH",
+      "change": "Finite depth12 and nested semantic findings/citation/probe validation admit legitimate stored attempts while retaining bounds."
+    },
+    {
+      "class": "GROUNDED-AUTOMATED-OUTPUT-REGRESSION",
+      "change": "Distinct composed candidacy/sample/answer-specific repair; source-built reference/followup; cover motivation and confirmed supplement use; explicit missing/unconfirmed notes."
+    },
+    {
+      "class": "INPUT-DEPENDENCY-FRESHNESS-LOSS",
+      "change": "All generation inputs/sources exactSHA separate from candidate context, bound into current bundle/planning input metadata; real research revision and immediate stale gate."
+    },
+    {
+      "class": "PER-KEYSTROKE-DRAFT-HISTORY-EDIT-LOSS",
+      "change": "Coalesced editable buffer preserves committed original/history without per-keystroke bounded-history rejection."
+    },
+    {
+      "class": "CANCELLED/FENCED-ATTEMPT-AUDIT-LOSS",
+      "change": "Admitted attempt identity upserted to one final outcome across cancellation/fencing/failure; persisted captured-key audit and no duplicate historical-envelope outcome."
+    }
+  ],
+  "criteria": {
+    "scope": "Original1–15 plus grounding16–20 plus product adversarial21–25 retained.",
+    "authored": "Current source implements described mechanisms, interfaces and UI paths; code authorship is not independent criterion acceptance.",
+    "coverage": "Verifier must map every criterion to current actual source/test/live evidence; no claim all25 pass."
+  },
+  "integration": {
+    "pageSplitLines": 3014,
+    "preparationImport": "Own physical line; source graph/parser allowance unchanged.",
+    "shippingReviewStatusConsumer": "Actual usePreparationReview imports and consumes reviewStatus while preserving transport failure/cancel states.",
+    "backendAndTests": "No cross-role source/test writes."
+  },
+  "pending": [
+    "Independent final R2 actual source and authored-report judgment; defective requires terminating owner decision, not third substantive round.",
+    "Fresh actual focused measurements, meaningful isolated mutants/restoration and all mandatory engine/verification/regression/lint/build/backlog gates.",
+    "Exact final source/configuration freshness, resource closure and root original-source import/publication.",
+    "Canonical deployed candidate and actual all25 live flow including paired sources/shared slider/semantic review/revision/save-reopen/failure/mobile/cleanup with independently judged limits.",
+    "Bounded explicit semantic-live paid-call authority if needed; no such spending inferred from manual-run approval.",
+    "Normal verified main commit/push, clean checkout and fresh live-origin loop:delivery, then every-store completion guard/final report."
+  ],
+  "deadline": "2026-10-23T19:40:07Z",
+  "limits": [
+    "No test/gate/provider observations fabricated by implementation author.",
+    "Source provenance is not independent factual truth; no issues found is not guaranteed truth.",
+    "Stored review records are historical, not a forged current-session receipt.",
+    "Missing authority/deployment/capability remains pending live evidence, never fixture-passed."
+  ],
+  "sameRoundFocusedAdjustment": {
+    "historicalMeasurement": "corrected/r2-focused.json actual233 total/231passed/2failed, independently executed; not an author execution",
+    "priorFreeze": "corrected/r2-before-focused-fix",
+    "changedPath": "hello-world/lib/interviewPreparation/workbench.js",
+    "changes": [
+      "Entire original R2 workbench restored byte-for-byte; no product correction warranted by independent oracle adjudication.",
+      "Both proposed cosmetic-heading and additional-fit-body edits preserved only in runtime history r2-proposed-focused-adjustments."
+    ],
+    "judgment": "Independent diagnostic45EF1EC0326354B445E3E61BC2F079CA8AE8ABE4F81694D835F69A88166FB98A: both failed assertions overly specific. Actual233/231/2 remains historical failed measurement pending independent test-author correction and fresh rerun; final R2 judgment pending."
+  }
+}

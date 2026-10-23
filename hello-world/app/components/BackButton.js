@@ -32,6 +32,7 @@ const MAIN_TAB_LABELS = {
   feed: "Auto Applying",
   interviewing: "Tracking",
   copilot: "Interview Copilot",
+  preparation: "Interview Preparation",
   library: "Library",
   experience: "Professional Experience",
 };

@@ -606,6 +606,30 @@
   verify_proof: null
   blocked_by: []
 
+- id: "N176"
+  state: "actionable"
+  title: "OWNER REQUEST 2026-10-23: Add a top-level Interview Preparation tab, sibling of Interview Copilot, with automated tools supporting all twelve activities in the supplied reusable phone-screen preparation process: logistics, role evidence, company/interviewer context, candidacy, examples, common/practical questions, ranked questions, timed rehearsal, repair, call reference and after-call follow-up. Reuse existing research/prep tools; preserve truthful grounding, editable drafts and explicit generation. Source and required live-app verification are separate completion obligations. OWNER CLARIFICATION: All candidate-specific preparation materials, including stories and answers, must be grounded in the application-ready generated resume and cover letter for the selected application and follow the existing tailoring-strength slider. Preserve document provenance, truthful claims and user edits; document or level changes must mark affected generated material stale. OWNER ADDITION: Build independent adversarial review into the candidate-material pipeline before acceptance, with evidence-linked findings, probing follow-ups, revisions and fresh review after changes. OWNER STAGE RESEARCH ADDITION: Research and cite likely interview stages and the five most likely questions per stage, clearly distinguishing evidence from predictions."
+  owed_by: "Implement the independently checked N176 workflow; verify local tools, account/application scoped browser-local persistence, failure recovery and actual canonical live flow; normal push to main and fresh delivery guard. Include shared candidate/document context and tailoring-level behavior in the checked criteria, implementation and live verification. Verify actual draft/source/strength-bound adversarial review, blocking grounding defects, visible findings, revision history and failure/stale-review recovery; local rubric checks alone do not establish semantic adversarial review. Amend checked contracts for stage research, source provenance, five ranked questions per stage, persistence and rehearsal integration; verify uncertainty and failure recovery. See docs/dev-loop/items/N176/interview-stage-research-amendment.md (intake proposal; not accepted implementation)."
+  evidence: ["Owner attachment f5bd3af9-cd47-4987-983a-1927a9fe532a and request 2026-10-23; accepted scope/test design under docs/dev-loop/items/N176. Exact bounded workflow is .agnostic-loop/interview-preparation/workflow.json; null proof is intentional until a meaningful verification instrument is qualified.", "Owner clarification 2026-10-23: stories, answers and all user-related materials tied to generated resume/cover letter and tailoring-strength slider.", "Owner addition 2026-10-23: adversarial review built into this pipeline.", "Owner stage-research addition: research/cite likely interview stages and five likely questions per stage; docs/dev-loop/items/N176/interview-stage-research-amendment.md."]
+  blocked_reason: null
+  instrument: null
+  owns: null
+  verify: null
+  verify_proof: null
+  blocked_by: []
+
+- id: "N177"
+  state: "actionable"
+  title: "OWNER REQUEST: Add a button to the resume preview/edit modal to check for formatting deficiencies and clean them up. Show actionable findings and corrections against the current edited resume; preserve factual content, wording, tailoring strength and reversible version history."
+  owed_by: "Independently scope and implement the formatting check/cleanup using the existing document preview/edit/export pipeline. Verify findings, cleanup, error recovery, version undo, saved/reopened persistence and rendered/downloaded DOCX fidelity in the actual live app; normal verified push to main. Intake criteria: docs/dev-loop/items/N177/intake.md."
+  evidence: ["Owner request: the preview and edit modal needs a button to check resume formatting deficiencies and clean them up.", "Existing starting point: hello-world/app/components/DocumentPreviewDialog.js; supported checks and exact write set remain to be qualified."]
+  blocked_reason: null
+  instrument: null
+  owns: null
+  verify: null
+  verify_proof: null
+  blocked_by: []
+
 # OWNER (2)
 - id: "N29"
   state: "actionable"
