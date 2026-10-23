@@ -1,0 +1,291 @@
+{
+  "schemaVersion": 1,
+  "item": "N178",
+  "at": "2026-10-23T22:47:11.493Z",
+  "status": "verified source chunk; canonical live verification and full manual handoff pending",
+  "baseCommit": "a21986fd73e55ec7d3e5ff99406630434d1b6b97",
+  "requested": "Overhaul preview/edit modal UX/UI",
+  "deliveredBehavior": [
+    "Larger near-viewport document workspace with distinct title, document tabs and always-visible Preview/Edit navigation",
+    "Initially collapsed named Document tools groups tailoring/history and document layout controls, preserving mounted control state",
+    "Scrollable document canvas and revise/template outcomes with stable wrapping delivery footer",
+    "Explicit dialog title association and descriptively named multiline editor"
+  ],
+  "advantage": "Reserve substantially more initial document space while keeping primary editing navigation separate from optional generation tools; preserves in-app document actions unavailable in a standalone chat",
+  "manifest": [
+    {
+      "path": "hello-world/app/components/DocumentPreviewDialog.js",
+      "sha256": "ec4cc9c1afd6331318ed05b9a99465d39d91bef6612602f196553b2003e47951"
+    },
+    {
+      "path": "hello-world/app/components/preview/PreviewDocumentTools.js",
+      "sha256": "b6779f740f2ffd3ad3b96317c194e69445a01ed2c0fc85b063dcb133b20dae8a"
+    },
+    {
+      "path": "hello-world/app/components/preview/previewWorkspaceSx.js",
+      "sha256": "f74bd4af207f98a93f6ff551d94ef30f8112d6a43b4451567c9b2f09995869bd"
+    },
+    {
+      "path": "hello-world/app/components/DocumentPreviewDialog.workspace.test.js",
+      "sha256": "d42815a78edc57088aff313a9bfd5280f52bb50abb50250d7c08cc30361cb534"
+    }
+  ],
+  "acceptedReviews": {
+    "briefR2": {
+      "path": "docs/dev-loop/items/N178/brief-r2.check.md",
+      "sha256": "94289a2e6fe66a09b61f5f3ec59c2484bf21c00b0e2a003dab49642bd817b597"
+    },
+    "sourceR1": {
+      "path": ".agnostic-loop/preview-modal-ux/source-r1.check.md",
+      "verdict": "defective",
+      "class": "COLLAPSED-TEMPLATE-OUTCOMES",
+      "sha256": "b0368971a1d239da7654eb4d805d99bf892a98401abb7fa00e59ce1c444a989f"
+    },
+    "sourceR2": {
+      "path": ".agnostic-loop/preview-modal-ux/source-r2.check.md",
+      "verdict": "clean",
+      "sha256": "36e0c47fb0d5f3ae811b95aa19af8022ea64bd61f53ddb8684858aadca09dd33"
+    },
+    "testSource": {
+      "path": ".agnostic-loop/preview-modal-ux/tests-source-r1.check.md",
+      "sha256": "76f6ffc7bcd81ebbe35d7b1231caa81f34b12ef6147ca0e64f08cfc6ae1bfa07"
+    }
+  },
+  "tests": {
+    "baseline": "Three intended pre-change failures, no fixture/setup failure",
+    "focused": {
+      "command": "node .agnostic-loop/preview-modal-ux/run-focused.cjs candidate-r2",
+      "passed": 233,
+      "failed": 0,
+      "evidence": ".agnostic-loop/preview-modal-ux/candidate-r2.json"
+    },
+    "mutations": {
+      "evidence": ".agnostic-loop/preview-modal-ux/mutations/verification.md",
+      "detected": [
+        "M1 disclosure no-op",
+        "M2 editor remount",
+        "M3 Email Edit exposure"
+      ],
+      "restoration": "Exact R2 source/test SHA restored; clean target tests passed"
+    }
+  },
+  "gates": [
+    {
+      "name": "engine",
+      "start": "2026-10-23T22:21:31.827Z",
+      "end": "2026-10-23T22:27:42.888Z",
+      "executable": "C:\\Program Files\\nodejs\\node.exe",
+      "args": [
+        "tools/repository-gate.mjs",
+        "engine"
+      ],
+      "timeout": 900000,
+      "pid": 131700,
+      "status": 0,
+      "signal": null,
+      "closure": {
+        "at": "2026-10-23T22:27:42.1162534Z",
+        "owned": 0,
+        "rootPid": 131700,
+        "inventory": 330,
+        "observerVisible": 1,
+        "pids": []
+      },
+      "candidateBefore": "a92602c544130e88b23bffcf2243f506e63d6508c1ede0657b216359810f4be0",
+      "candidateAfter": "a92602c544130e88b23bffcf2243f506e63d6508c1ede0657b216359810f4be0",
+      "configurationHash": "db279bcb0a523693b0d1e122861496ae27e3ec4c6f41837f8b56ceb921af6262"
+    },
+    {
+      "name": "verification",
+      "start": "2026-10-23T22:27:42.888Z",
+      "end": "2026-10-23T22:36:19.523Z",
+      "executable": "C:\\Program Files\\nodejs\\node.exe",
+      "args": [
+        "tools/repository-gate.mjs",
+        "test"
+      ],
+      "timeout": 900000,
+      "pid": 132204,
+      "status": 0,
+      "signal": null,
+      "closure": {
+        "at": "2026-10-23T22:36:18.6931416Z",
+        "owned": 0,
+        "rootPid": 132204,
+        "inventory": 329,
+        "observerVisible": 1,
+        "pids": []
+      },
+      "candidateBefore": "a92602c544130e88b23bffcf2243f506e63d6508c1ede0657b216359810f4be0",
+      "candidateAfter": "a92602c544130e88b23bffcf2243f506e63d6508c1ede0657b216359810f4be0",
+      "configurationHash": "db279bcb0a523693b0d1e122861496ae27e3ec4c6f41837f8b56ceb921af6262"
+    },
+    {
+      "name": "regression",
+      "start": "2026-10-23T22:36:19.524Z",
+      "end": "2026-10-23T22:44:39.717Z",
+      "executable": "C:\\Program Files\\nodejs\\node.exe",
+      "args": [
+        "tools/repository-gate.mjs",
+        "test"
+      ],
+      "timeout": 900000,
+      "pid": 136380,
+      "status": 0,
+      "signal": null,
+      "closure": {
+        "at": "2026-10-23T22:44:38.6499362Z",
+        "owned": 0,
+        "rootPid": 136380,
+        "inventory": 327,
+        "observerVisible": 1,
+        "pids": []
+      },
+      "candidateBefore": "a92602c544130e88b23bffcf2243f506e63d6508c1ede0657b216359810f4be0",
+      "candidateAfter": "a92602c544130e88b23bffcf2243f506e63d6508c1ede0657b216359810f4be0",
+      "configurationHash": "db279bcb0a523693b0d1e122861496ae27e3ec4c6f41837f8b56ceb921af6262"
+    },
+    {
+      "name": "lint",
+      "start": "2026-10-23T22:44:39.718Z",
+      "end": "2026-10-23T22:45:53.943Z",
+      "executable": "C:\\Program Files\\nodejs\\node.exe",
+      "args": [
+        "tools/repository-gate.mjs",
+        "lint"
+      ],
+      "timeout": 620282,
+      "pid": 145232,
+      "status": 0,
+      "signal": null,
+      "closure": {
+        "at": "2026-10-23T22:45:53.3084100Z",
+        "owned": 0,
+        "rootPid": 145232,
+        "inventory": 333,
+        "observerVisible": 1,
+        "pids": []
+      },
+      "candidateBefore": "a92602c544130e88b23bffcf2243f506e63d6508c1ede0657b216359810f4be0",
+      "candidateAfter": "a92602c544130e88b23bffcf2243f506e63d6508c1ede0657b216359810f4be0",
+      "configurationHash": "db279bcb0a523693b0d1e122861496ae27e3ec4c6f41837f8b56ceb921af6262"
+    },
+    {
+      "name": "build",
+      "start": "2026-10-23T22:45:53.946Z",
+      "end": "2026-10-23T22:46:22.736Z",
+      "executable": "C:\\Program Files\\nodejs\\node.exe",
+      "args": [
+        "tools/repository-gate.mjs",
+        "build"
+      ],
+      "timeout": 546054,
+      "pid": 142880,
+      "status": 0,
+      "signal": null,
+      "closure": {
+        "at": "2026-10-23T22:46:21.0821488Z",
+        "owned": 0,
+        "rootPid": 142880,
+        "inventory": 331,
+        "observerVisible": 1,
+        "pids": []
+      },
+      "candidateBefore": "a92602c544130e88b23bffcf2243f506e63d6508c1ede0657b216359810f4be0",
+      "candidateAfter": "a92602c544130e88b23bffcf2243f506e63d6508c1ede0657b216359810f4be0",
+      "configurationHash": "db279bcb0a523693b0d1e122861496ae27e3ec4c6f41837f8b56ceb921af6262"
+    },
+    {
+      "name": "backlog",
+      "start": "2026-10-23T22:46:22.737Z",
+      "end": "2026-10-23T22:46:24.540Z",
+      "executable": "C:\\Program Files\\nodejs\\node.exe",
+      "args": [
+        "tools/repository-gate.mjs",
+        "backlog"
+      ],
+      "timeout": 517263,
+      "pid": 22316,
+      "status": 0,
+      "signal": null,
+      "closure": {
+        "at": "2026-10-23T22:46:23.4396901Z",
+        "owned": 0,
+        "rootPid": 22316,
+        "inventory": 331,
+        "observerVisible": 1,
+        "pids": []
+      },
+      "candidateBefore": "a92602c544130e88b23bffcf2243f506e63d6508c1ede0657b216359810f4be0",
+      "candidateAfter": "a92602c544130e88b23bffcf2243f506e63d6508c1ede0657b216359810f4be0",
+      "configurationHash": "db279bcb0a523693b0d1e122861496ae27e3ec4c6f41837f8b56ceb921af6262"
+    }
+  ],
+  "criteria": [
+    {
+      "id": "N178-1",
+      "source": "Independent source R2; real component tests; local disclosure/navigation browser",
+      "status": "source verified; canonical live pending"
+    },
+    {
+      "id": "N178-2",
+      "source": "Actual local standalone/iframe DOM geometry with defect control",
+      "status": "partial",
+      "limit": "Native mobile occlusion and expanded reachability pending"
+    },
+    {
+      "id": "N178-3",
+      "source": "New draft preservation test, existing save/version regressions, synthetic browser close/reopen",
+      "status": "source verified; canonical live pending"
+    },
+    {
+      "id": "N178-4",
+      "source": "Explicit title/editor/disclosure semantics, Enter/Space/Tab/Escape local observations",
+      "status": "partial",
+      "limit": "Full native focus cycle and selection measurement pending"
+    },
+    {
+      "id": "N178-5",
+      "source": "Unchanged existing copy/Drive/version/template/census tests, independent actual source review",
+      "status": "source verified",
+      "limit": "Configured external Drive/template operations not invoked; handlers/guards unchanged"
+    },
+    {
+      "id": "N178-6",
+      "source": "Canonical https://resume-tailor-tan-psi.vercel.app/ after source publication and known candidate deployment",
+      "status": "pending"
+    }
+  ],
+  "browser": {
+    "evidence": ".agnostic-loop/preview-modal-ux/local-observation.json",
+    "independentCheck": ".agnostic-loop/preview-modal-ux/local-observation.check.md",
+    "verdict": "partial accepted",
+    "liveUrl": "https://resume-tailor-tan-psi.vercel.app/",
+    "deployedCandidate": "pending publication"
+  },
+  "decisions": [
+    "N177 formatting checker/export/save feature remains separate; no new formatting button in this chunk",
+    "Source R1 template-feedback blocker resolved in final R2, no third substantive review",
+    "Engine rejected product import after tests were modeled as accepted implementation activity. Preserve engine/test acceptance and manual source R1/R2 history; no review reset or engine completion claim"
+  ],
+  "engine": {
+    "status": "pending",
+    "reconciliation": ".agnostic-loop/preview-modal-ux/manual-reconciliation.json"
+  },
+  "delivery": {
+    "local": "Source independently checked; six required gates passed",
+    "remote": "Pending normal commit/push to main and loop:delivery",
+    "release": "No deployment command authorized or used"
+  },
+  "cleanup": {
+    "mutations": "restored exact source and tests",
+    "externalData": "none created in local fixture",
+    "fixture": "server stopped; process/port snapshot limits recorded"
+  },
+  "pending": [
+    "Normal main publication and fresh live remote equality",
+    "Known deployed candidate and actual canonical flow with reconciled bounded edits",
+    "Remaining native browser observations and independent evidence check",
+    "Final report independent acceptance; engine completion remains pending"
+  ]
+}

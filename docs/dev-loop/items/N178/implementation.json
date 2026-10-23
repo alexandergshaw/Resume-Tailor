@@ -1,0 +1,62 @@
+{
+  "schemaVersion": 1,
+  "item": "N178",
+  "round": 2,
+  "author": "/root/modal_ux_author",
+  "provenance": "host preparation of final correction before engine publication; not verification",
+  "acceptedInput": "source-r1.check.md COLLAPSED-TEMPLATE-OUTCOMES finding plus coordinator observed unchanged test flexWrap source oracle",
+  "r1Snapshots": "candidate-r1/hello-world/app/components/ exact R1 draft source bytes retained",
+  "manifest": [
+    {
+      "draftPath": ".agnostic-loop/preview-modal-ux/candidate/hello-world/app/components/DocumentPreviewDialog.js",
+      "intendedPath": "hello-world/app/components/DocumentPreviewDialog.js",
+      "sha256": "ec4cc9c1afd6331318ed05b9a99465d39d91bef6612602f196553b2003e47951",
+      "lineCountBySplitNewline": 967
+    },
+    {
+      "draftPath": ".agnostic-loop/preview-modal-ux/candidate/hello-world/app/components/preview/PreviewDocumentTools.js",
+      "intendedPath": "hello-world/app/components/preview/PreviewDocumentTools.js",
+      "sha256": "b6779f740f2ffd3ad3b96317c194e69445a01ed2c0fc85b063dcb133b20dae8a",
+      "lineCountBySplitNewline": 56
+    },
+    {
+      "draftPath": ".agnostic-loop/preview-modal-ux/candidate/hello-world/app/components/preview/previewWorkspaceSx.js",
+      "intendedPath": "hello-world/app/components/preview/previewWorkspaceSx.js",
+      "sha256": "f74bd4af207f98a93f6ff551d94ef30f8112d6a43b4451567c9b2f09995869bd",
+      "lineCountBySplitNewline": 55
+    }
+  ],
+  "interfaces": {
+    "DocumentToolsButton": [
+      "expanded",
+      "onClick"
+    ],
+    "PreviewDocumentTools": [
+      "expanded",
+      "tailoring",
+      "layout"
+    ],
+    "workspaceSx": "Adds revision section card style; other styles preserved"
+  },
+  "changes": [
+    "ReviseStrip followed by TemplateControlsRow moved into tagged always-mounted scrollable workspace section after document and scope feedback, outside hidden tools. Existing child guards and handlers preserved. Section omitted only when neither existing revise nor template guards allow content.",
+    "Removed revision slot from hidden tool component, so template completion/error aria-live feedback cannot be hidden by closing Document tools. Existing conditional children maintain lifecycle during disclosure changes.",
+    "DialogActions explicitly spells flexWrap:wrap beside workspaceSx.actions to preserve existing unmodified source contract; runtime flex wrapping unchanged."
+  ],
+  "preserved": [
+    "Actual document remains first untagged direct DialogContent child.",
+    "DialogActions direct children/census unchanged.",
+    "DriveResultRegion and CopyFeedbackStrip stay unconditional outside workspace/disclosure in existing order.",
+    "Document handlers, guards, loading and save/selection logic unchanged."
+  ],
+  "measurements": {
+    "instrument": "Node readFileSync, split newline, crypto SHA256 and trailing whitespace regex",
+    "trailingWhitespaceFound": false
+  },
+  "limitations": [
+    "No product source writes; coordinator must publish exact draft bytes.",
+    "No tests, gates, engine, browser or live execution by author.",
+    "Collapse-during-operation feedback, geometry, keyboard and persistence require independent measurements.",
+    "R2 is final substantive implementation correction round; independent delta check pending."
+  ]
+}

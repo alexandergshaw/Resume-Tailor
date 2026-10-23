@@ -1,0 +1,42 @@
+{
+  "schemaVersion": 1,
+  "item": "N178",
+  "author": "/root",
+  "at": "2026-10-23T22:47:11.498Z",
+  "status": "Source chunk ready for independent final check and normal main publication; full completion pending",
+  "verification": {
+    "path": "docs/dev-loop/items/N178/verification.json",
+    "sha256": "96cb05dcede11f9aa1ec78ee8e01ea12a17c58f35642f147f187c2481ac1152e"
+  },
+  "candidate": "a92602c544130e88b23bffcf2243f506e63d6508c1ede0657b216359810f4be0",
+  "source": [
+    {
+      "path": "hello-world/app/components/DocumentPreviewDialog.js",
+      "sha256": "ec4cc9c1afd6331318ed05b9a99465d39d91bef6612602f196553b2003e47951"
+    },
+    {
+      "path": "hello-world/app/components/preview/PreviewDocumentTools.js",
+      "sha256": "b6779f740f2ffd3ad3b96317c194e69445a01ed2c0fc85b063dcb133b20dae8a"
+    },
+    {
+      "path": "hello-world/app/components/preview/previewWorkspaceSx.js",
+      "sha256": "f74bd4af207f98a93f6ff551d94ef30f8112d6a43b4451567c9b2f09995869bd"
+    },
+    {
+      "path": "hello-world/app/components/DocumentPreviewDialog.workspace.test.js",
+      "sha256": "d42815a78edc57088aff313a9bfd5280f52bb50abb50250d7c08cc30361cb534"
+    }
+  ],
+  "sourceReview": "Final independent R2 clean; no third source round",
+  "gates": "All six exact registered gates passed for unchanged candidate; see producing commands and raw receipt references in verification report",
+  "remaining": [
+    "Normal main publication and fresh live remote equality",
+    "Known deployed candidate and actual canonical flow with reconciled bounded edits",
+    "Remaining native browser observations and independent evidence check",
+    "Final report independent acceptance; engine completion remains pending"
+  ],
+  "publication": "Normal commit/push to main, followed by fresh loop:delivery; exact verified commit belongs in ignored runtime delivery receipt to avoid a receipt commit",
+  "live": "Canonical candidate verification remains pending until deployed revision and actual host measurements are established; local fixture evidence is not live evidence",
+  "engine": "Manual activity reconciliation remains pending; no engine shipped/completion claim",
+  "backlog": "N178 retained while verification/delivery obligations remain; N176/N177 and unrelated owner requests preserved"
+}

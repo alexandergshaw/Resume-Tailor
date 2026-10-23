@@ -31,6 +31,8 @@ import { commitDraftSeed } from "@/lib/document/draftEditGuard";
 import { SCOPES, LEGACY_SCOPES, SCOPE_LABEL, DOCX_SCOPES, resolveActiveDocumentTitle, resolveLiveFileName } from "@/lib/tailor/documentScopes";
 import { useIsMobile } from "../hooks/useResponsive";
 import pageSx from "./documentPreviewPageSx";
+import PreviewDocumentTools, { DocumentToolsButton } from "./preview/PreviewDocumentTools";
+import workspaceSx from "./preview/previewWorkspaceSx";
 import SpacingControl from "./SpacingControl";
 import EditorToolbar from "./preview/EditorToolbar";
 import CombineDocumentsControl from "./preview/CombineDocumentsControl";
@@ -157,6 +159,7 @@ export default function DocumentPreviewDialog({
   const isEmbedded = engine === "embedded";
   const [tab, setTab] = useState(initialTab);
   const [mode, setMode] = useState("view"); // "view" | "edit"
+  const [toolsOpen, setToolsOpen] = useState(false);
   // Per-scope render state: { loading, html, error }.
   const [docState, setDocState] = useState({});
   // Steering box: free-text instructions to re-run the selected engine with.
@@ -280,6 +283,7 @@ export default function DocumentPreviewDialog({
       const startTab = available(initialTab) ? initialTab : SCOPES.find(available) || "resume";
       setTab(startTab);
       setMode("view");
+      setToolsOpen(false);
       setDocState({});
       draftHtmlRef.current = {};
       setSteerText("");
@@ -575,16 +579,11 @@ export default function DocumentPreviewDialog({
     typeof onResubmit === "function";
 
   return (
-    <Dialog open={open} onClose={handleClose} maxWidth="md" fullWidth fullScreen={isMobile}>
-      <DialogTitle
-        sx={{
-          pb: 0.5,
-          pr: isMobile ? 6 : 3,
-          position: "relative",
-          fontSize: { xs: "1.05rem", sm: "1.25rem" },
-        }}
-      >
-        Tailored documents{heading ? ` — ${heading}` : ""}
+    <Dialog open={open} onClose={handleClose} maxWidth="lg" fullWidth fullScreen={isMobile}
+      aria-labelledby="document-workspace-title" slotProps={{ paper: { sx: workspaceSx.paper } }}>
+      <DialogTitle id="document-workspace-title" sx={workspaceSx.title}>
+        <Box component="span" sx={{ display: "block", fontWeight: 700 }}>Tailored documents</Box>
+        {heading ? <Box component="span" sx={workspaceSx.context}>{heading}</Box> : null}
         {isMobile ? (
           <IconButton
             aria-label="Close"
@@ -596,8 +595,8 @@ export default function DocumentPreviewDialog({
         ) : null}
       </DialogTitle>
 
-      <Box sx={{ px: { xs: 1, sm: 2 }, display: "flex", alignItems: "center", gap: 1, flexWrap: "wrap", borderBottom: "1px solid var(--border)" }}>
-        <Tabs value={tab} onChange={(_e, v) => { commitDraft(); setTab(v); setMode("view"); }} sx={{ minHeight: 40, width: { xs: "100%", sm: "auto" } }}>
+      <Box data-testid="document-navigation" sx={workspaceSx.navigation}>
+        <Tabs value={tab} onChange={(_e, v) => { commitDraft(); setTab(v); setMode("view"); }} variant="scrollable" scrollButtons="auto" allowScrollButtonsMobile aria-label="Document" sx={workspaceSx.tabs}>
           {visibleScopes.map((scope) => (
             <Tab
               key={scope}
@@ -608,16 +607,31 @@ export default function DocumentPreviewDialog({
             />
           ))}
         </Tabs>
-        <Box sx={{ flex: 1, display: { xs: "none", sm: "block" } }} />
-        <Box
-          sx={{
-            display: "flex",
-            alignItems: "center",
-            gap: { xs: 0.5, sm: 1 },
-            flexWrap: "wrap",
-            width: { xs: "100%", sm: "auto" },
-          }}
-        >
+        <Box sx={workspaceSx.modeRow}>
+        {DOCX_SCOPES.includes(tab) && available(tab) ? (
+          <ToggleButtonGroup
+            aria-label="Document mode"
+            size="small"
+            exclusive
+            value={mode}
+            onChange={(_e, v) => { if (!v) return; if (v === "view") commitDraft(); setMode(v); }}
+            sx={{ my: 0.5 }}
+          >
+            <ToggleButton value="view" sx={{ textTransform: "none", px: 1.5 }}>Preview</ToggleButton>
+            <ToggleButton value="edit" sx={{ textTransform: "none", px: 1.5 }}>Edit</ToggleButton>
+          </ToggleButtonGroup>
+        ) : tab === "email" && available(tab) ? (
+          <Box component="span" sx={{ fontSize: "0.75rem", color: "var(--text-muted)", my: 0.5 }}>
+            Read-only — copy the text below into your email client.
+          </Box>
+        ) : null}
+          <DocumentToolsButton expanded={toolsOpen} onClick={() => setToolsOpen((value) => !value)} />
+        </Box>
+      </Box>
+
+      <DialogContent dividers sx={workspaceSx.content}>
+        <PreviewDocumentTools expanded={toolsOpen}
+          tailoring={<>
         {isEmbedded && onOpenFocusPicker ? (
           <Tooltip title="Wrong focus or letter framing? Pick the focus area, toggle the teaching/staff/industry letter, and adjust buzzwords — both documents regenerate.">
             <span>
@@ -732,34 +746,14 @@ export default function DocumentPreviewDialog({
             disabled={busyActive}
           />
         ) : null}
-        {/* AC-6: the hiring email isn't editable in place (it's short plain
-            text meant to be pasted into an email client, not auto-saved
-            through the docx-oriented edit path) — the Preview/Edit toggle is
-            restricted to the docx-backed scopes, with a visible reason shown
-            in its place below rather than presenting an editor that doesn't
-            persist. */}
-        {DOCX_SCOPES.includes(tab) && available(tab) ? (
-          <ToggleButtonGroup
-            size="small"
-            exclusive
-            value={mode}
-            onChange={(_e, v) => { if (!v) return; if (v === "view") commitDraft(); setMode(v); }}
-            sx={{ my: 0.5 }}
-          >
-            <ToggleButton value="view" sx={{ textTransform: "none", px: 1.5 }}>Preview</ToggleButton>
-            <ToggleButton value="edit" sx={{ textTransform: "none", px: 1.5 }}>Edit</ToggleButton>
-          </ToggleButtonGroup>
-        ) : tab === "email" && available(tab) ? (
-          <Box component="span" sx={{ fontSize: "0.75rem", color: "var(--text-muted)", my: 0.5 }}>
-            Read-only — copy the text below into your email client.
-          </Box>
-        ) : null}
+          </>}
+          layout={<>
         {DOCX_SCOPES.includes(tab) ? (
           <SpacingControl scope={tab} spacing={spacing} onSetSpacing={onSetSpacing} disabled={!available(tab)} />
         ) : null}
-        </Box>
-      </Box>
-
+          </>}
+        />
+        <Box data-testid="document-context">
       {focusControls}
       {insertedFactsStrip}
       {resultBands?.[tab]}
@@ -823,7 +817,7 @@ export default function DocumentPreviewDialog({
         </Box>
       ) : null}
 
-      <DialogContent dividers sx={{ bgcolor: "var(--surface-2)", px: { xs: 1.25, sm: 3 } }}>
+        </Box>
         {!hasContent ? (
           <Box sx={{ p: 4, textAlign: "center", color: "var(--text-muted)" }}>
             Nothing generated yet for this posting.
@@ -840,6 +834,7 @@ export default function DocumentPreviewDialog({
           <Box
             ref={editorRef}
             contentEditable
+            role="textbox" aria-label={`Edit ${SCOPE_LABEL[tab].toLowerCase()}`} aria-multiline="true"
             suppressContentEditableWarning
             onInput={(e) => { draftHtmlRef.current[tab] = e.currentTarget.innerHTML; saveSelection(); scheduleAutoSave(); }}
             onKeyUp={saveSelection}
@@ -858,8 +853,9 @@ export default function DocumentPreviewDialog({
         ) : activeNotice ? (
           <Box data-testid="scope-notice" sx={{ mt: 1.5, color: "var(--success)", fontSize: "0.85rem", textAlign: "center" }}>{activeNotice}</Box>
         ) : null}
-      </DialogContent>
-
+        {steeringEnabled || (DOCX_SCOPES.includes(tab) && available(tab)) ? (
+        <Box data-testid="document-revision-tools" sx={workspaceSx.revision}>
+          <Box component="h3" sx={{ m: 0, px: 2, pt: 1.5, fontSize: "0.8rem", color: "var(--text-secondary)" }}>Revise & templates</Box>
       {steeringEnabled ? (
         <ReviseStrip
           tab={tab}
@@ -874,24 +870,16 @@ export default function DocumentPreviewDialog({
         />
       ) : null}
 
-      {/* N97/AC-1: a SIBLING of DialogActions (design §4.5's alternative to
-          mounting inside the action bar), never a member of it --
-          DocumentPreviewDialog.copy.test.js's AC-C12 census pins the bar's
-          button-shaped-control count exactly, so a new top-level control has
-          to land here, outside `.MuiDialogActions-root`, to avoid silently
-          invalidating that pin. Structurally absent on the email tab -- there
-          is no email template path (resume_templates.kind excludes 'email'). */}
       {DOCX_SCOPES.includes(tab) && available(tab) ? (
         <TemplateControlsRow scope={tab} busy={busyActive} onSetDefault={handleSetAsDefaultTemplate} currentUser={currentUser}
           hasVersions={(documentVersions?.[tab] || []).length > 0} commitDraft={commitDraft} onRegenerate={onRegenerateIntoTemplate} />
       ) : null}
 
-      {/* UX.md rev 2 §3/§13: a SIBLING of DialogActions, in the slot
-          ReviseStrip already occupies above -- never inside the action bar.
-          Mounted UNCONDITIONALLY (not gated on `steeringEnabled` or any tab
-          check) because its two live regions must exist for the dialog's
-          whole open lifetime (AC-A5), independent of whether there is
-          currently anything visible to show. */}
+        </Box>
+        ) : null}
+      </DialogContent>
+
+      {/* Unconditional live feedback stays outside the workspace and tools. */}
       <DriveResultRegion
         leadingLine={drive.leadingLine}
         rows={drive.rows}
@@ -908,7 +896,7 @@ export default function DocumentPreviewDialog({
           resolving to DriveResultRegion's node, not this strip's. */}
       <CopyFeedbackStrip {...copy.regionProps} />
 
-      <DialogActions sx={{ flexWrap: "wrap", gap: 1, px: { xs: 1.25, sm: 2 }, py: 1.5 }}>
+      <DialogActions sx={{ ...workspaceSx.actions, flexWrap: "wrap" }}>
         <Button onClick={handleClose} sx={{ textTransform: "none" }}>Close</Button>
         <Box sx={{ flex: 1 }} />
         <CombineDocumentsControl

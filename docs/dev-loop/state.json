@@ -1,6 +1,6 @@
 {
   "format": "manual-host-record-v1",
-  "revision": 75,
+  "revision": 76,
   "items": [
     {
       "id": "port",
@@ -539,6 +539,29 @@
       "planCheck": ".agnostic-loop/interview-preparation/corrected/N177-plan-tests-r1.check.md",
       "isolatedPacket": ".agnostic-loop/interview-preparation/corrected/N177-package-wave/packet.json",
       "reviewHistory": "Original architecture two rounds ended unresolved; owner full-scope ruling faithfully checked; new prerequisite contracts R2 clean and planR1 clean. No hidden review reset."
+    },
+    {
+      "id": "N178",
+      "objective": "Overhaul preview/edit modal UX",
+      "owner": "user",
+      "status": "verifying",
+      "automaticDispatch": "disabled",
+      "runtimeStore": ".agnostic-loop/preview-modal-ux/run",
+      "report": ".agnostic-loop/preview-modal-ux/local-observation.json",
+      "residuals": [
+        {
+          "requirement": "Mandatory gates and canonical live candidate verification",
+          "owner": "Repository operator",
+          "instrument": "Six exact repository gates and actual live browser",
+          "step": "Before claiming completion"
+        },
+        {
+          "requirement": "Engine semantic-activity import modeling conflict",
+          "owner": "Repository operator",
+          "instrument": "Preserved rejected import receipts and independent advice",
+          "step": "Manual verification recorded separately; no engine shipped claim"
+        }
+      ]
     }
   ],
   "limitations": [

@@ -630,6 +630,18 @@
   verify_proof: null
   blocked_by: []
 
+- id: "N178"
+  state: "actionable"
+  title: "OWNER REQUEST: Overhaul the resume/cover preview and edit modal UX/UI: restore useful document space, clarify Preview/Edit navigation, group secondary tools and keep delivery actions reachable on desktop and mobile. Preserve existing editing, versions, copy, download, Drive, templates and scope behavior."
+  owed_by: "Implement independently checked N178 UI contracts; verify real short-viewport geometry, keyboard/disclosure and existing document-action invariants, required repository gates and affected canonical live flow; normal push to main and fresh delivery guard. New formatting-check capability remains separate N177."
+  evidence: ["Owner direct UX/UI-overhaul request.", "Live baseline1280x720: document viewport34px; footer extends beyond paper/viewport. Checked brief docs/dev-loop/items/N178/brief-r2.md; bounded manual workflow .agnostic-loop/preview-modal-ux/workflow.json. Scope/proof not invented for automatic backlog intake."]
+  blocked_reason: null
+  instrument: null
+  owns: null
+  verify: null
+  verify_proof: null
+  blocked_by: []
+
 # OWNER (2)
 - id: "N29"
   state: "actionable"
