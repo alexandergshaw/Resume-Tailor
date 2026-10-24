@@ -10,12 +10,16 @@ import PreparationRehearsal from "./PreparationRehearsal";
 import PreparationReference from "./PreparationReference";
 import PreparationReview from "./PreparationReview";
 import PreparationNavigation from "./PreparationNavigation";
+import PreparationOverview from "./PreparationOverview";
+import { useInterviewResearch } from "./useInterviewResearch";
+import { createResearchState, createPracticeQueue } from "@/lib/interviewPreparation/interviewResearch";
 import { usePreparationWorkspace } from "./usePreparationWorkspace";
 import { usePreparationSources } from "./usePreparationSources";
 import { usePreparationReview } from "./usePreparationReview";
 import styles from "./preparation.module.css";
 
 const EMPTY = Object.freeze([]);
+const EMPTY_RESEARCH = createResearchState();
 export default function PreparationWorkspace({ userId, posting = null, onOpenExisting, aggressiveness = 3, tailorMode = "", onChangeStrength }) {
   const store = usePreparationWorkspace(userId, posting?.id); const workspace = store.workspace;
   const { engine } = useEngine();
@@ -27,7 +31,16 @@ export default function PreparationWorkspace({ userId, posting = null, onOpenExi
   useEffect(() => { let cancelled = false; sha256(generationInputs).then((hash) => { if (!cancelled) setDependencyState({ key: generationInputs, id: `sha256:${hash}` }); }).catch(() => { if (!cancelled) setDependencyState({ key: generationInputs, id: null }); }); return () => { cancelled = true; }; }, [generationInputs]);
   const dependencyId = dependencyState.key === generationInputs ? dependencyState.id : null;
   const sources = usePreparationSources(posting, generationInputs, manualInputs, strength, supplements); const context = sources.candidateContext;
-  const [stage, setStage] = useState("brief"); const [notice, setNotice] = useState(""); const [resetRequested, setResetRequested] = useState(false);
+  const [stage, setStage] = useState("plan"); const [notice, setNotice] = useState(""); const [resetRequested, setResetRequested] = useState(false);
+  const [practiceRequest, setPracticeRequest] = useState(null); const [practiceBlocked, setPracticeBlocked] = useState(false);
+  const practiceGuard = useRef({ blocked: false, reason: "" }); const practiceSerial = useRef(0);
+  const research = workspace?.research || EMPTY_RESEARCH;
+  const userEditIdentity = canonicalJSON({ inputs: workspace?.inputs || null, artifacts: workspace?.artifacts || null, attempts: workspace?.attempts || [], candidate: workspace?.candidate || null, sources: workspace?.sources || null, reviewHistory: workspace?.reviewHistory || [], reviewAttempts: workspace?.reviewAttempts || [], practiceQueue: workspace?.practiceQueue || [], rehearsalDraft: workspace?.rehearsalDraft || null, researchOverrides: research.overrides, researchSelection: research.selection });
+  const onResearchChange = useCallback((change) => store.update((previous) => ({ ...previous, research: change(previous.research) })), [store.update]);
+  const interviewResearch = useInterviewResearch({ posting, engine, userEditIdentity, research, onResearchChange });
+  const onPracticeGuard = useCallback((guard) => { practiceGuard.current = guard; setPracticeBlocked(guard.blocked); }, []);
+  const onRehearsalDraft = useCallback((draft) => store.update((previous) => ({ ...previous, rehearsalDraft: draft })), [store.update]);
+  const onPracticeConsumed = useCallback(() => setPracticeRequest(null), []);
   const activeId = stage === "mock" ? "sample" : stage === "repair" ? "repairSuggestion" : stage;
   const bundle = useMemo(() => !dependencyId ? [] : Object.entries(workspace?.artifacts || {}).filter(([, item]) => (item.suggestion?.text || item.draft || "").trim()).map(([id, item]) => {
     const text = item.suggestion?.text || item.draft;
@@ -97,8 +110,30 @@ export default function PreparationWorkspace({ userId, posting = null, onOpenExi
   const completed = Object.values(artifacts).filter((value) => value.draft?.trim()).length;
   const hasStaleInputs = !dependencyId || bundle.some((draft) => draft.generatedFrom !== dependencyId || draft.generatedContextId !== context?.id);
   const scopedReview = { ...reviewState, status: hasStaleInputs ? "stale" : reviewState.status, acceptance: hasStaleInputs ? { allowed: false, status: "stale", reason: "Source inputs changed. Rebuild affected preparation or edit the retained draft explicitly before reviewing again." } : reviewState.acceptance, reviewNow: () => { if (hasStaleInputs) { setNotice("Draft inputs are stale. Rebuild preparation or explicitly edit the retained draft, then review."); return; } if ((workspace.reviewAttempts || []).length >= 12) setNotice("Saved review history is full. Export/reset this workspace before making another review call; all existing findings are retained."); else reviewState.reviewNow(); } };
+  const persistedPracticeBlocked = !!workspace.rehearsalDraft && (!!workspace.rehearsalDraft.text.trim() || !!workspace.rehearsalDraft.revision.trim());
+  const practiceReserved = practiceBlocked || persistedPracticeBlocked;
+  const requestDestination = (id) => {
+    if (practiceGuard.current.blocked || (persistedPracticeBlocked && id !== "mock")) { setNotice(practiceGuard.current.reason || "Resume unfinished practice, then save or explicitly discard its draft before changing activities."); return false; }
+    setStage(id); requestAnimationFrame(() => document.getElementById("active-preparation-tool")?.focus()); return true;
+  };
+  const practice = (selection) => {
+    if (practiceGuard.current.blocked || persistedPracticeBlocked) { setNotice(practiceGuard.current.reason || "Resume unfinished practice before replacing its questions."); return; }
+    if (!interviewResearch.identityReady) { setNotice("Checking the selected application context. Try again when it is ready."); return; }
+    if (interviewResearch.stale) { setNotice("This research belongs to earlier application details; research the current role first."); return; }
+    try {
+      const queue = createPracticeQueue(research.adopted, research.overrides, selection);
+      store.update((previous) => ({ ...previous, practiceQueue: queue }));
+      setPracticeRequest({ id: `practice-${++practiceSerial.current}`, queue }); setStage("mock");
+      requestAnimationFrame(() => document.getElementById("active-preparation-tool")?.focus());
+    } catch (error) { setNotice(error?.message || "Choose a researched question first."); }
+  };
+  const planStatus = interviewResearch.status === "researching" ? "Researching" : research.adopted ? interviewResearch.stale ? "Earlier application details" : research.adopted.status === "ready" ? "Research ready" : "Insufficient evidence" : "Not researched";
+  const guardedResearch = { ...interviewResearch, adoptPending: (options) => {
+    if (practiceGuard.current.blocked || persistedPracticeBlocked) { setNotice("Resume unfinished practice, then save or explicitly discard its draft before replacing the plan."); return false; }
+    return interviewResearch.adoptPending(options);
+  } };
   return <div className={styles.workbench}>
-    <div className={styles.overview}><div><h3>{posting?.label || "Manual interview preparation"}</h3><p>{completed} written drafts · {attempts.length} saved answers. Counts describe saved work, not readiness.</p></div><div className={styles.actions}><button className={styles.primary} onClick={buildAll}>Build preparation</button><button onClick={exportAll}>Export workspace</button></div></div>
+    <div className={styles.overview}><div><h3>{posting?.label || "Manual interview preparation"}</h3><p>{completed} written drafts · {attempts.length} saved answers. Counts describe saved work, not readiness.</p></div><div className={styles.actions}><button onClick={buildAll} title="Build local suggestions from existing materials; this does not research the web.">Build preparation</button><button onClick={exportAll}>Export workspace</button><small>Build preparation creates local drafts; research starts in Interview plan.</small></div></div>
     <div className={styles.storageBar}><p className={styles.localNote}>Browser-local account/application notes, no device syncing. Local drafting is unreviewed until a distinct semantic review succeeds. <a className={styles.skipTool} href="#active-preparation-tool">Skip to active tool</a></p>
     <div role="status" aria-live="polite" className={store.error ? styles.warning : styles.saved}>{store.corrupt ? `Saved data is corrupt: ${store.error}. Original bytes retained until confirmed reset.` : store.readFailure ? `Saved data could not be read: ${store.error}. Retry loading; current edits retained.` : store.recovered ? store.error : store.unsaved ? `Unsaved: ${store.error}. Current edits retained; retry or export.` : "Saved in this browser."}</div></div>
     {store.readFailure && <button onClick={store.retryRead}>Retry loading saved workspace</button>}{!store.corrupt && !store.readFailure && !store.recovered && store.unsaved && <button onClick={store.retrySave}>Retry saving</button>}
@@ -112,8 +147,8 @@ export default function PreparationWorkspace({ userId, posting = null, onOpenExi
       <h4>Supplemental experience — confirmation required</h4>{supplements.map((fact, index) => <div key={index}><label className={styles.field}><span>Supplemental experience {index + 1}</span><textarea aria-label={`Supplemental experience ${index + 1}`} maxLength={1000} value={fact.text} onChange={(event) => store.update((previous) => ({ ...previous, candidate: { ...previous.candidate, supplements: previous.candidate.supplements.map((item, i) => i === index ? { ...item, text: event.target.value, confirmed: false } : item) } }))} /></label><label><input type="checkbox" checked={fact.confirmed} onChange={(event) => store.update((previous) => ({ ...previous, candidate: { ...previous.candidate, supplements: previous.candidate.supplements.map((item, i) => i === index ? { ...item, confirmed: event.target.checked } : item) } }))} /> I confirm this is my real experience; it remains user supplied</label></div>)}<button disabled={supplements.length >= 12} onClick={() => store.update((previous) => ({ ...previous, candidate: { ...previous.candidate, supplements: [...previous.candidate.supplements, { text: "", confirmed: false }] } }))}>Add supplemental experience</button>
     </section></details></div>
     {notice && <p role="status">{notice}</p>}
-    <div className={styles.layout}><PreparationNavigation stage={stage} stages={STAGES} artifacts={artifacts} attempts={attempts} onSelect={setStage} />
-      <section className={styles.panel} aria-label="Active preparation tool"><div className={styles.toolHeading}><h3 id="active-preparation-tool" tabIndex={-1}>{STAGES.find((entry) => entry.id === stage)?.label}</h3></div>{["mock", "repair"].includes(stage) ? <PreparationRehearsal stage={stage} inputs={inputs} artifacts={artifacts} attempts={attempts} update={store.update} context={context} groundedArtifact={artifact} onBuildGrounded={(originalAnswer) => build(activeId, originalAnswer)} onGroundedDraft={onDraft} /> : ["reference", "followup"].includes(stage) ? <PreparationReference {...common} /> : <PreparationTools {...common} sources={sources} workspaceSources={workspace.sources} update={store.update} onOpenExisting={posting ? onOpenExisting : null} />}</section></div>
+    <div className={styles.layout}><PreparationNavigation stage={stage} stages={STAGES} artifacts={artifacts} attempts={attempts} onSelect={requestDestination} planStatus={planStatus} />
+      <section className={styles.panel} aria-label="Active preparation tool"><div className={styles.toolHeading}><h3 id="active-preparation-tool" tabIndex={-1}>{stage === "plan" ? "Interview plan" : STAGES.find((entry) => entry.id === stage)?.label}</h3>{stage !== "plan" && <button onClick={() => requestDestination("plan")}>Back to interview plan</button>}</div>{stage === "plan" ? <PreparationOverview posting={posting} engine={engine} research={research} state={guardedResearch} onOverride={(questionId, text) => onResearchChange((previous) => ({ ...previous, overrides: { ...previous.overrides, [questionId]: text } }))} onSelectStage={(id) => onResearchChange((previous) => ({ ...previous, selection: id }))} onPractice={practice} onOpenTool={requestDestination} practiceBlocked={practiceReserved} /> : ["mock", "repair"].includes(stage) ? <PreparationRehearsal stage={stage} inputs={inputs} artifacts={artifacts} attempts={attempts} update={store.update} context={context} groundedArtifact={artifact} onBuildGrounded={(originalAnswer) => build(activeId, originalAnswer)} onGroundedDraft={onDraft} practiceRequest={practiceRequest} rehearsalDraft={workspace.rehearsalDraft} onDraftChange={onRehearsalDraft} onGuardChange={onPracticeGuard} onRequestConsumed={onPracticeConsumed} /> : ["reference", "followup"].includes(stage) ? <PreparationReference {...common} /> : <PreparationTools {...common} sources={sources} workspaceSources={workspace.sources} update={store.update} onOpenExisting={posting ? onOpenExisting : null} />}</section></div>
     <div className={styles.reviewStatus}><strong>Independent review · {scopedReview.status}</strong><p role="status">Review status: {scopedReview.status}. {scopedReview.error} {scopedReview.acceptance.reason}</p></div>
     <details className={styles.reviewDisclosure}><summary><span>Review and accept preparation</span><small>Explicit provider call · may incur cost · acceptance is gated</small></summary><PreparationReview context={context} bundle={bundle} engine={engine} reviewState={scopedReview} onAccept={acceptReviewed} onRevise={() => setNotice("Edit your active draft below its tool, rebuild if needed, and request a fresh review. Original answers and earlier findings remain retained.")} /></details>
     {(workspace.reviewHistory || []).length > 0 && <details><summary>Saved historical reviews — not current-session receipts</summary><pre>{JSON.stringify(workspace.reviewHistory, null, 2)}</pre></details>}

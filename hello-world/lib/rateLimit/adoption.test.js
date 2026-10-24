@@ -41,6 +41,12 @@ const APP_API = path.join(process.cwd(), "app", "api");
  */
 const BOUNDED = [
   {
+    route: "app/api/interview-preparation/research/route.js",
+    limit: 4,
+    windowMs: 600_000,
+    why: "N180 -- one explicit search-grounded interview research request per action; four per ten minutes per authenticated user per instance. This per-instance limiter is not a fleet-wide spend guarantee or a bound on Google's internal search queries.",
+  },
+  {
     route: "app/api/interview-preparation/route.js",
     limit: 6,
     windowMs: 600_000,

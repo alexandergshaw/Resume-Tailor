@@ -1,0 +1,81 @@
+# N180 implementation interfaces — D7040B bindings only
+
+Policy31AE97, accepted contract D7040BECE16A7116EB350DC09772369FAED3FD1B10302CF6E9E8578F5ACE1E4F. Sole write this report. Product code not authored. All exports below are proposed implementation bindings, not claims existing modules already export them. No change to accepted behavior, bounds or authority.
+
+## interviewResearch.js public exports
+
+`export const RESEARCH_LIMITS`: frozen named numeric constants matching contract (bodyBytes4096,rawChars48000,proseChars16000,jsonChars24000,promptChars16000,sources24,spans48,stages6,questionsPerStage5,steps128,annotations128).
+
+`normalizeResearchSelection({applicationId,company,title,description}) -> {applicationId,company,title,description}` throws Error on invalid types; id/title/company trimmed, description exact string; all identity inputs full text, no truncation before hashing. No location in selection identity. Unknown fields ignored for identity only, request/model schema rejects unknown fields separately.
+
+`async researchSelectionKey(selection) -> 'sha256:'+hex` uses canonicalJSON(normalizeResearchSelection(selection)) and existing sha256. `async researchContextKey(selectionKey,location) -> 'sha256:'+hex`, location trimmed string. Both browser and route use same implementation; no labels, dates, engine or resume in identity.
+
+`buildInterviewResearchPrompt({company,title,location,description}) -> {prompt,truncatedDescription:boolean}` throws missingcompany/title/overlongmetadata; truncates description to12000, fixed frame instructions and exact JSON schema; prompt cap16000. String data delimited/quoted, never instructions authority. This is not SDK response_format.
+
+`parseInterviewResearchFrame(raw) -> {narrative,proseStart,proseEnd,plan}` throws malformed/duplicate markers/extraneous text/length/JSON/plan schema. proseStart/end offsets within exact raw UTF16, narrative exact raw.slice(start,end), no trimming that shifts offsets. Plan is validated model shape only (status,stages[name,purpose,questions[text,reason]],unknowns), not public host result; no URLs/type/provenance fields accepted.
+
+`async buildInterviewResearchResult({interaction,applicationId,company,title,location,description,researchedAt}) -> ResearchResult` host normalization/parser/existing extraction+span helpers, full contract shape checks and accepted-source grounding. Throws shape/no-search/truncated/malformed rather than return a pretend ready. Valid unsupported/no-source returns status insufficient-evidence, stages empty, explicitcoverage warning. Host creates stage IDs `stage-1` and question IDs `stage-1-question-1`, sets every type prediction. Source IDs `source-1` in first accepted URL order. Returns JSON-safe strict schema below; parser never uses model types as trust.
+
+`validateInterviewResearchResult(value) -> value` strict allfields/nestedbounds/offsets/types, throws invalid; may return normalized copy, no provider effect. Used by route/hook/store. It accepts ready only with>=1valid source and1–6 stages each5; insufficient-evidence empty stages. No dates invented.
+
+`createResearchState() -> {adopted:null,pending:null,previous:null,overrides:{},selection:null}`. `validateResearchState(value) -> value` validates shared optional persistence record, result objects and override keys against adopted question IDs. WorkspaceStore supplies defaults only when absent, rejects malformed supplied values.
+
+`createPracticeQueue(result,overrides,{stageId,questionId=null}) -> QueueItem[]` throws unknownselection/nonready; output exact displayed text in original ranked order, no shuffling, original text retained. Overrides keys questionId, value string<=600. `validatePracticeQueue(value) -> value`, `validateRehearsalDraft(value) -> value` throws invalid; null accepted for draft.
+
+ResearchResult exact shape: {version:1,applicationId,selectionKey,contextKey,company,title,location,researchedAt,status,narrative,sources:[{id,url,title}],spans:[{start,end,sourceId}],stages:[{id,rank,name,purpose,type:'prediction',questions:[{id,rank,text,reason,type:'prediction'}]}],unknowns:string[],coverage:{searched:true,truncated:false,acceptedSources:number,rejectedCitations:number,warnings:string[],descriptionTruncated:boolean},provider:{name:'gemini',model:string|null}}. Span offsets refer only unchanged narrative, bounds0<=start<end<=length, sourceId must exist. Provider observed model null unless response explicitlyasserts; configuredmodel is not observedmodel.
+
+QueueItem exact shape: {id,questionId,stageId,stageName,text,originalQuestion,sourceContextKey}; id questionId; text user's displayedoverride if nonblank else original; all strings, text/original<=600; queue<=30. Source fullsnapshot remains research.adopted/previous; attempt metadata reference doesn't claim current evidence ifcontext differs.
+
+RehearsalDraft exact shape or null: {question,text,revision,sourceContextKey,stageId,questionId,elapsedSeconds}; question<=600,text/revision<=20000, metadata strings<=200 (empty allowed for generic), seconds finite>=0; draft restored stopped. For current mock bank generic bank text can exceed600? existing generic generator length derives role excerpt; if bound violated persist failure visibly rather than truncate question silently. This question bound follows new research exacttext bound; existing completed genericattempt schema unchanged.
+
+## Route
+
+`export const runtime='nodejs',dynamic='force-dynamic',maxDuration=120; export async function POST(request)`. Request exact applicationId/engine fields. Response success `{result:ResearchResult}`200; standard `{error:string}` for400/401/404/429/503/502 (provider/invalidresponse). No raw provider text/secrets in errors. Existing request gate order/transport fixed incontract. Route only allowed existing auth/query/provider imports and new puremodule; global provider module unchanged.
+
+## useInterviewResearch.js
+
+`export function useInterviewResearch({posting,engine,userEditIdentity,research,onResearchChange})`.
+posting existingPickerobject ornull. research shared persistent record. onResearchChange `(updater:(previousResearch)=>nextResearch)=>void`; Workspace wraps store.update without overwriting otherfields. No hook update accepts replacement wholeworkspace. Hook computes selectionKey from posting.id/company/title/description. No injectedfetch/providermock arguments inproductionAPI; tests stubglobalfetch likeexistinghooks.
+
+Return `{status,error,selectionKey,identityReady,stale,pendingStale,canResearch,run,cancel,adoptPending,keepCurrent}`.
+status idle|researching|ready|insufficient-evidence|error|cancelled; canResearch requires posting/identityready/enginegemini/notinflight. `run()` explicit newresearch/refresh same API, no implicitforce/cache call; currentresultretained. cancel() aborts localwait/tokenfences and says servercompletionunknown. Latecurrentcontext/revisionchecked; successfulresult setspending, neverauto-adopt. stale comparesadopted.selectionKey tocurrentkey; location change unseen remainscapturedcontextdisclosure. pendingStale is the latched captured-user-edit comparison described below (does not block explicit adoption after warning).
+`adoptPending({replaceConfirmed:false}={}) -> boolean` false if overrides wouldbediscarded and no confirmation, true persists previous/adopted, clearspending/overrides and selection; UI obtains explicitconfirmation first. `keepCurrent()` clearspending only, preservesadopted/overrides/queue. Hookdoesnotchangepracticequeue.
+
+## PreparationOverview props
+
+`PreparationOverview({posting,engine,research,state,onOverride,onSelectStage,onPractice,onOpenTool,practiceBlocked})`.
+research persistentrecord, state hookreturn. onOverride `(questionId,text)=>void` callerupdatesscopedresearch.overrides. onSelectStage `(stageId)=>void` updatesresearch.selection; selection null defaultsfirstavailable. onPractice `({stageId,questionId:null|string})=>void` parent guards, createsqueue andadmitsevent; no Overviewprovider call. onOpenTool `(destinationId)=>void` guardedparentnavigation. practiceBlocked boolean displaysfinish/saveguidance and disablesreplacement. All generatedclaimslabelledprediction, citeonlynarrative/background. Use hook actions on explicit buttons; no hook engine default.
+
+Stable accessible control names: `Research this interview`, `Cancel research`, `Use this plan`, `Keep current plan`, `Replace plan and retain previous version` (explicitconfirm), `Upcoming interview stage`, `Practice this stage`; perquestion action accessible `Practice question {rank}: {text}`; override label `Edit question {rank} for {stageName}`; evidence disclosure `Research and background sources`. Empty/sparse/loading/error states use role status/alert asappropriate. User override original wording inspectable. These names aid tests without dependingonlayoutmarkup.
+
+## Navigation / Workspace
+
+Extend existing Navigation signature `({stage,stages,artifacts,attempts,onSelect,planStatus='Not researched'})`; existingstages remains12. New unnumberedbutton `Interview plan` stageidplan, aria-currentstep exactcurrent only. Summary `Interview plan` and planStatus whenplan, unchangedlabel/status otherwise. Workspace initialstageplan, activeh3Interviewplan; toolsretain exactlabels. `requestDestination(id)` parentfunction guardsvia practiceGuardref then setstageandfocush3 afteruseraction; asyncresultdoesn'tfocusswitch. Backbutton `Back to interview plan` usesrequestDestination.
+
+Workspace owns `practiceRequest` ephemeral `{id:string,queue:QueueItem[]}` ornull, persisted workspace.practiceQueue latestadmittedqueue. onPractice makesqueue and setsrequest onlyafterguardclear, setsstage mock; request id monotonic serial useraction, no research rerenderrestarts timer. persistedqueue alone doesnotautostartonreload. Cancel/restore draft canopenmockstopped. Research neverenters candidateContext or existingbundleclaimEvidence.
+
+## Rehearsal additive props
+
+Keep ALL existing props. Add `practiceRequest=null,rehearsalDraft=null,onDraftChange,onGuardChange,onRequestConsumed`.
+`practiceRequest` eventshapeabove; accepted onlyonce perid; if busyref running/typed/revision false initialize exactbankandtimer; ifbusy refuse withnotice and leaveanswerunchanged, onRequestConsumed(id,false). On success onRequestConsumed(id,true). Parent alreadyguards, childisdefensive.
+`onGuardChange({blocked:boolean,reason:string})`: invoked synchronously from input/start/capture/revisionchanges BEFORE next React render; parentmaintainsref, no setState duringchildrender. Cleanuponunmount removesrefregistration only after latestdraft persisted; no falseclean whiledirty. Reason finish/savecurrentpractice.
+`onDraftChange(draft|null)` invoked synchronously each transcript/revisionedit andclockcapture; parent persists scopedworkspace.rehearsalDraft immediately. Startcreates stoppedrecoverabledraft content, timerelapsed saved at input/capture boundaries (not every250mstick). Unmount needs latestelapsed snapshot viaeffectcleanup; no new paid/statecallbackafteraccountscopechanged. Existingstorecallbackkey fences writes.
+`rehearsalDraft` restore initializes text/revision/currentquestion+elapsed stopped, visible `Restored practice draft — timer stopped`; doesnotcreateattempt orautomaticallyresume. Newexplicitbank refused while nonblank restoreddraft; Save answer or explicit `Discard practice draft` confirmation clears. Completedanswercapturekeeps oldcapture/reviewbehavior plus optionalmetadata; neverremoveolderattempts. Genericbuttonrenamed`Start general timed mock`, generatesoldbankonly explicitclick. Existing running finishcontrolstillworks. Revisionsavedseparately preservesparentId etc.
+
+WorkspaceStore createWorkspace additive defaults research:createResearchState(),practiceQueue:[],rehearsalDraft:null; validated appliesdefaultonly absent and callssharedvalidators. All oldsource/artifact/review invariants unchanged. Existing attempt optionalmetadata keys sourceContextKey/stageId/questionId/originalQuestion mustbestringifpresent; no requiredmigration.
+
+## Tests/callers
+
+Independent tests import namedpurefunctions above; hook andcomponentrendersexactsignatures; routewire checksSDKrequestoptions notimaginary responseformat. Existing UXdefault expectsplanand13navdestinations intentionally, all12oldtoolheadings retained. Genericmocktestbuttonlabel adjusts only realrename, testsselectedexplicitbank+dirtyguard additionally. Allmandatorygates/liveobligations fromD7040B unchanged. This interface plan grants no codeexecution/provider call or expansionofwritepaths.
+
+## P1 sole round-2 bookkeeping correction
+
+Replace the hook workspaceRevision parameter with `userEditIdentity:string`. Workspace computes this synchronously with existing canonicalJSON from exactly `{inputs:workspace.inputs,artifacts:workspace.artifacts,attempts:workspace.attempts,candidate:workspace.candidate,sources:workspace.sources,reviewHistory:workspace.reviewHistory,reviewAttempts:workspace.reviewAttempts,practiceQueue:workspace.practiceQueue,rehearsalDraft:workspace.rehearsalDraft,researchOverrides:workspace.research.overrides,researchSelection:workspace.research.selection}`. Optional newly defaulted values use their schema defaults. No SHA/async delay needed; string equality is enough for edit detection. This identity is not the server selection/context key and does not authorize data transfer. It is kept only in memory, not sent or logged. It deliberately excludes workspace revision/updatedAt and research adopted/pending/previous bookkeeping.
+
+Hook maintains latest `userEditIdentity` ref updated during render; at explicit run admission capture its current value. On response arrival after application/selection/engine/generation fences pass, compare captured identity against latest identity and latch `{resultContextKey,editedDuringRequest:boolean,comparisonIdentity:latestIdentity}` BEFORE onResearchChange writes pending. The hook's pending persistence increments workspace revision but cannot change userEditIdentity, so it cannot create a stale warning. No blind postwrite workspaceRevision comparison remains.
+
+For the currently pending result, `pendingStale = editedDuringRequest || latestUserEditIdentity !== comparisonIdentity`. Thus real user edits after arrival also warn; hook's own pending storage and keep-current persistence do not. Adoption or keep-current clears this latch when that pending result is removed. A persisted pending restored on mount has no historical in-memory dispatch identity: label `Captured research result — review before using`, not falsely `you edited during this request`; initialize a neutral comparisonIdentity at restore and editedDuringRequest false. Future real edits still make pendingStale true. Any model-context staleness is separately derived from result selectionKey versus current key.
+
+Explicit adoption may clear overrides/selection or subsequently choose a practice queue: those are meaningful user-directed edits and may change userEditIdentity, but pending is already removed and its latch cleared; no future request starts with an inherited dirty flag. Keep-current only removes pending, leaves all meaningful fields unchanged, and cannot create a false edit generation. New run always captures a new baseline identity. If user changes a meaningful value and restores it to the exact original before response, the content identity is equal and no warning is needed: the result is not being applied over different user content.
+
+Required independent oracles to coordinate through root: unchanged request -> pending persisted -> parent rerender with increased workspace revision -> pendingStale remains false; actual question override or transcript edit during request -> response/pending save rerender -> pendingStale true and exact edit retained; edit after response -> true; keep-current preserves meaningful identity and clears pending/latch; adopt with no overrides does not manufacture dirty state for the next unchanged run. These are P1 positive/negative controls, not changes to closed C1–C4.

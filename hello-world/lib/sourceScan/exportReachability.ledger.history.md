@@ -21,7 +21,7 @@ table in the main ledger.
 
 ---
 
-## 4. TEST_REFERENCED, rule TR-1: movement notes (pinned at 450)
+## 4. TEST_REFERENCED, rule TR-1: movement notes (pinned at 453)
 
 ```text
 299 -> 300, and NOT because the tree grew. This number was pinned at
@@ -742,11 +742,21 @@ N166 camera source: 451 -> 450 (+0, -1), OUT lib/scrape/screenshotOcr.js#ocrImag
 which now has a real shipping importer in app/api/copilot/camera-question/route.js.
 MAX_CAMERA_WIDTH and MAX_CAMERA_HEIGHT are private implementation constants in cameraQuestion.js,
 not public exports; no new orphan allowance or test-only entry is introduced.
+N180 interview research: 450 -> 453 (+3, -0), IN
+lib/interviewPreparation/interviewResearch.js#normalizeResearchSelection,
+lib/interviewPreparation/interviewResearch.js#researchContextKey, and
+lib/interviewPreparation/interviewResearch.js#parseInterviewResearchFrame.
+These pure helpers are explicitly imported by name in interviewResearch.test.js to pin
+selection normalization, context/location identity, and strict frame/bounds rejection.
+Their public research entry points retain real shipping route, hook, validator and question-queue
+consumers; this is widened white-box helper coverage, not three unwired features.
+ORPHAN_EXPORTS remains the identical 65-symbol set. No classification logic, orphan exemption,
+or unreachable-module allowance changes. Fresh post-repair scan must confirm these exact identities.
 ```
 
 ---
 
-## 5. UNUSED_IN_SHIPPING_MODULES total: movement notes (pinned at 515)
+## 5. UNUSED_IN_SHIPPING_MODULES total: movement notes (pinned at 518)
 
 ```text
 356 -> 354: exactly the two orphan symbols that were deleted
@@ -997,4 +1007,9 @@ N166 camera source: 516 -> 515 (TEST_REFERENCED's +0 -1, the named ocrImage
 shipping transition in section 4). ORPHAN_EXPORTS remains 65 in main ledger section 3;
 the two camera dimension constants are private, not orphan exemptions. Classifier and
 unreachable-module allowances are unchanged. TEST_REFERENCED 450 + ORPHANS 65 = 515.
+N180 interview research: 515 -> 518 (TEST_REFERENCED's +3, -0, the three named
+interviewResearch.js helpers and individual white-box purposes recorded in section 4).
+ORPHAN_EXPORTS stays 65, identical set-for-set; no orphan allowance or classification rule changes.
+No unreachable-module allowance changes. TEST_REFERENCED 453 + ORPHANS 65 = 518.
+Fresh post-repair measurement remains required; this derivation does not claim a passing gate.
 ```

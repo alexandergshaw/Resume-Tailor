@@ -1,4 +1,5 @@
 import { createInputs } from "./workbench";
+import { createResearchState, validateResearchState, validatePracticeQueue, validateRehearsalDraft } from "./interviewResearch";
 
 const MAX_BYTES = 512 * 1024;
 const STAGE_IDS = new Set(["brief", "role", "company", "interviewer", "candidacy", "examples", "practical", "questions", "mock", "repair", "reference", "followup", "sample", "repairSuggestion"]);
@@ -8,7 +9,7 @@ export function workspaceKey(userId, applicationId) {
   return `interview-preparation:v1:${userId ? `account-${encodeURIComponent(userId)}` : "guest"}:${applicationId ? `application-${encodeURIComponent(applicationId)}` : "manual"}`;
 }
 export function createWorkspace() {
-  return { version: 1, inputs: createInputs(), artifacts: {}, attempts: [], sources: { articles: [] }, candidate: { contextId: null, sourceMode: null, supplements: [] }, reviewHistory: [], reviewAttempts: [], revision: 0, updatedAt: null };
+  return { version: 1, inputs: createInputs(), artifacts: {}, attempts: [], sources: { articles: [] }, candidate: { contextId: null, sourceMode: null, supplements: [] }, reviewHistory: [], reviewAttempts: [], research: createResearchState(), practiceQueue: [], rehearsalDraft: null, revision: 0, updatedAt: null };
 }
 function bounded(value, depth = 0) {
   if (depth > 12) throw new Error("Workspace nesting is too deep.");
@@ -50,6 +51,8 @@ function validated(value) {
   if (!record(value) || value.version !== 1) throw new Error("This saved workspace version is not supported. Export or reset it to recover.");
   if (!record(value.inputs) || !record(value.artifacts) || !Array.isArray(value.attempts) || !record(value.sources)) throw new Error("Saved workspace has an invalid structure.");
   value = { ...value, candidate: value.candidate === undefined ? { contextId: null, sourceMode: null, supplements: [] } : value.candidate, reviewHistory: value.reviewHistory === undefined ? [] : value.reviewHistory, reviewAttempts: value.reviewAttempts === undefined ? [] : value.reviewAttempts };
+  value = { ...value, research: value.research === undefined ? createResearchState() : value.research, practiceQueue: value.practiceQueue === undefined ? [] : value.practiceQueue, rehearsalDraft: value.rehearsalDraft === undefined ? null : value.rehearsalDraft };
+  validateResearchState(value.research); validatePracticeQueue(value.practiceQueue); validateRehearsalDraft(value.rehearsalDraft);
   if (!record(value.candidate) || !(value.candidate.contextId === null || typeof value.candidate.contextId === "string") || ![null, "manual", "application"].includes(value.candidate.sourceMode) || !Array.isArray(value.candidate.supplements) || value.candidate.supplements.length > 12) throw new Error("Invalid candidate context record.");
   for (const fact of value.candidate.supplements) if (!record(fact) || typeof fact.text !== "string" || fact.text.length > 1000 || typeof fact.confirmed !== "boolean") throw new Error("Invalid confirmed supplemental experience.");
   if (!Array.isArray(value.reviewHistory) || value.reviewHistory.length > 12 || !Array.isArray(value.reviewAttempts) || value.reviewAttempts.length > 12) throw new Error("Review history is invalid or full.");
@@ -90,7 +93,7 @@ function validated(value) {
   if (value.sources.existingPrep !== undefined && (!record(value.sources.existingPrep) || ["about", "why", "questions", "status"].some((key) => typeof value.sources.existingPrep[key] !== "string"))) throw new Error("Invalid existing prep snapshot.");
   for (const attempt of value.attempts) {
     if (!record(attempt) || ["id", "answer", "question"].some((key) => typeof attempt[key] !== "string")) throw new Error("Invalid rehearsal answer.");
-    for (const key of ["category", "createdAt", "parentId", "previousAnswer"]) if (attempt[key] !== undefined && typeof attempt[key] !== "string") throw new Error("Invalid rehearsal answer metadata.");
+    for (const key of ["category", "createdAt", "parentId", "previousAnswer", "sourceContextKey", "stageId", "questionId", "originalQuestion"]) if (attempt[key] !== undefined && typeof attempt[key] !== "string") throw new Error("Invalid rehearsal answer metadata.");
     if (attempt.seconds !== undefined && (!Number.isFinite(attempt.seconds) || attempt.seconds < 0)) throw new Error("Invalid answer duration.");
     if (attempt.review !== undefined && attempt.review !== null) validateReview(attempt.review);
   }

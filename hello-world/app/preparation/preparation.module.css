@@ -162,6 +162,39 @@
   .overview > div:first-child > p { margin-top: 3px; }
 }
 
+/* N180: action-first interview research and exact-question practice. */
+.interviewPlan { display: grid; gap: 1rem; min-width: 0; }
+.researchHero { display: grid; gap: .7rem; padding: 1rem; border: 1px solid var(--border); border-radius: 12px; background: var(--bg-soft); }
+.researchHero h4, .planStageHeader h4 { margin: 0 0 .4rem; font-size: 1.15rem; }
+.researchHero p { margin: 0; line-height: 1.5; }
+.researchHero > button { justify-self: start; min-height: 44px; }
+.researchCost { font-size: .8rem; color: var(--text-secondary); }
+.planCandidate { padding: 1rem; border: 1px solid var(--accent); border-radius: 12px; }
+.predictionNote { margin: 0; padding: .8rem; background: var(--bg-soft); border-left: 3px solid var(--accent); line-height: 1.5; }
+.stageMap { display: flex; gap: .5rem; flex-wrap: wrap; }
+.stageMap button { display: grid; gap: .3rem; min-height: 60px; flex: 1 1 140px; text-align: left; white-space: normal; }
+.stageMap button[aria-pressed="true"] { border-color: var(--accent); background: var(--bg-soft); }
+.stageMap small { font-size: .75rem; color: var(--text-secondary); }
+.planStageHeader { display: flex; align-items: flex-start; justify-content: space-between; gap: 1rem; margin: .5rem 0 1rem; }
+.planStageHeader p { margin: 0; line-height: 1.5; }
+.planStageHeader button { flex-shrink: 0; min-height: 44px; }
+.planQuestions { list-style: none; margin: 0; padding: 0; display: grid; gap: .8rem; }
+.planQuestion { padding: 1rem; border: 1px solid var(--border); border-radius: 10px; min-width: 0; }
+.planQuestionHeading { display: flex; align-items: start; justify-content: space-between; gap: .7rem; }
+.planQuestionHeading h5 { font-size: 1rem; line-height: 1.45; margin: 0; overflow-wrap: anywhere; }
+.planQuestionHeading > span { flex-shrink: 0; font-size: .72rem; color: var(--text-secondary); }
+.planQuestion p { line-height: 1.5; }
+.planQuestion > button { min-height: 44px; }
+.planQuestion details { margin-top: .8rem; }
+.researchEvidence { min-width: 0; padding: .7rem; border: 1px solid var(--border); border-radius: 8px; }
+.researchEvidence summary { min-height: 44px; cursor: pointer; display: flex; align-items: center; }
+.researchEvidence a { color: var(--accent); overflow-wrap: anywhere; }
+.researchNarrative { white-space: pre-wrap; line-height: 1.65; overflow-wrap: anywhere; }
+@media (max-width: 700px) {
+  .planStageHeader, .planQuestionHeading { flex-direction: column; }
+  .planStageHeader button, .researchHero > button { width: 100%; }
+  .planQuestion, .researchHero, .planCandidate { padding: .8rem; }
+}
 @media print {
   :global(body[data-preparation-print="true"]) .root { visibility: hidden; }
   :global(body[data-preparation-print="true"]) .printReference,

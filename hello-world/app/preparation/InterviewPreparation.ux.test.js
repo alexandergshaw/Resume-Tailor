@@ -17,7 +17,8 @@ const labels = ["1. Interview brief", "2. Role and evidence", "3. Company resear
 const key = workspaceKey("UX-TEST", null);
 let host, root;
 const compact = node => node.textContent.replace(/\s+/g, " ").trim();
-const buttons = () => [...host.querySelectorAll('nav[aria-label="Interview preparation activities"] button')];
+const allButtons = () => [...host.querySelectorAll('nav[aria-label="Interview preparation activities"] button')];
+const buttons = () => allButtons().filter(node => /^\d+\.\s/.test(compact(node)));
 function button(text) { const found = [...host.querySelectorAll("button")].find(node => compact(node) === text); expect(found, text).toBeTruthy(); return found; }
 function field(label) { const found = [...host.querySelectorAll("input,textarea,select")].find(node => node.getAttribute("aria-label") === label); expect(found, label).toBeTruthy(); return found; }
 async function click(node) { await act(async () => node.click()); }
@@ -32,16 +33,16 @@ beforeEach(() => { window.localStorage.clear(); host = document.createElement("d
 afterEach(async () => { await act(async () => root.unmount()); host.remove(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
 describe("N179 focused workbench contract", () => {
-  it("groups exactly twelve truthful activity buttons and selects every existing tool with one current step", async () => {
+  it("defaults to the interview plan plus twelve truthful tools with one current destination", async () => {
     await mount();
-    expect(buttons()).toHaveLength(12);
+    expect(buttons()).toHaveLength(12); expect(allButtons()).toHaveLength(13); expect(host.querySelector("#active-preparation-tool").textContent).toBe("Interview plan"); expect(allButtons().filter(node=>node.getAttribute("aria-current")==="step")).toHaveLength(1); expect(compact(allButtons()[0])).toMatch(/Interview plan/);
     const nav = host.querySelector('nav[aria-label="Interview preparation activities"]');
     for (const group of ["Understand", "Prepare answers", "Practice", "Interview day"]) expect(compact(nav)).toContain(group);
     // Independent expected controls, not imported from the implementation STAGES table.
     const controls = ["Job title", "Job description", "Products, services and problem solved", "Supplied professional biography or notes", "Your relevant background", "Example 1 title", "Start date and notice", null, null, null, null, "What you promised to provide"];
     for (let index = 0; index < labels.length; index++) {
       const selected = await select(index);
-      expect(buttons().filter(node => node.getAttribute("aria-current") === "step")).toEqual([selected]);
+      expect(allButtons().filter(node => node.getAttribute("aria-current") === "step")).toEqual([selected]);
       expect(selected.disabled).toBe(false);
       if (controls[index]) field(controls[index]);
       else {
@@ -97,7 +98,7 @@ describe("N179 focused workbench contract", () => {
   });
 
   it("retains unsaved drafts and exposes storage failure and retry outside closed disclosures", async () => {
-    await mount(); const writer = vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => { throw new Error("UX quota failure sentinel"); });
+    await mount(); await select(0); const writer = vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => { throw new Error("UX quota failure sentinel"); });
     await edit("Company", "RETAIN UNSAVED COMPANY"); expect(outsideText()).toContain("UX quota failure sentinel");
     const retry = button("Retry saving"); expect(retry).toBeTruthy(); expect(retry.closest("details:not([open])")).toBeNull();
     expect(field("Company").value).toBe("RETAIN UNSAVED COMPANY"); writer.mockRestore(); await click(retry);

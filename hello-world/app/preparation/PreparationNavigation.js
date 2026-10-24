@@ -9,7 +9,7 @@ const PHASES = [
   { label: "Interview day", ids: ["reference", "followup"] },
 ];
 
-export default function PreparationNavigation({ stage, stages, artifacts, attempts, onSelect }) {
+export default function PreparationNavigation({ stage, stages, artifacts, attempts, onSelect, planStatus = "Not researched" }) {
   const status = (id) => {
     const artifact = artifacts[id === "mock" ? "sample" : id === "repair" ? "repairSuggestion" : id];
     if (artifact?.suggestion) return "Unreviewed suggestion";
@@ -18,9 +18,10 @@ export default function PreparationNavigation({ stage, stages, artifacts, attemp
     return "Not started";
   };
   return <details className={styles.activityDisclosure}>
-    <summary><span>Choose an activity</span><strong>{stages.find((entry) => entry.id === stage)?.label}</strong><small>{status(stage)}</small></summary>
+    <summary><span>Choose an activity</span><strong>{stage === "plan" ? "Interview plan" : stages.find((entry) => entry.id === stage)?.label}</strong><small>{stage === "plan" ? planStatus : status(stage)}</small></summary>
     <nav className={styles.steps} aria-label="Interview preparation activities">
       <p className={styles.navigationTitle}>PREPARATION PATH</p>
+      <button type="button" aria-current={stage === "plan" ? "step" : undefined} className={stage === "plan" ? styles.activeStep : ""} onClick={() => onSelect("plan")}><span>Interview plan</span><small>{planStatus}</small></button>
       {PHASES.map((phase) => <div className={styles.phase} key={phase.label}>
         <h4>{phase.label}</h4>
         {stages.filter((entry) => phase.ids.includes(entry.id)).map((entry) => <button type="button" key={entry.id} aria-current={stage === entry.id ? "step" : undefined} className={stage === entry.id ? styles.activeStep : ""} onClick={() => onSelect(entry.id)}><span>{entry.label}</span><small>{status(entry.id)}</small></button>)}
