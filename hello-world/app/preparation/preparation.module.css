@@ -122,6 +122,46 @@
   .actions > button { max-width: 100%; overflow-wrap: anywhere; }
 }
 
+
+
+/* Measured geometry correction: keep healthy setup on compact shared rows.
+   Errors and expanded context remain unrestricted normal-flow content. */
+.overview { padding: 8px 18px; }
+.overview h3 { margin: 0 0 2px; }
+.storageBar { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; padding: 4px 18px; }
+.storageBar .localNote { flex: 1 1 540px; margin: 0; }
+.storageBar .saved, .storageBar .warning { flex: 0 1 auto; margin: 0; padding: 4px 7px; }
+.storageBar .warning { overflow-wrap: anywhere; }
+.contextBar { display: flex; flex-wrap: wrap; align-items: center; gap: 0 14px; padding: 0 18px; border-top: 1px solid var(--border); }
+.contextBar > .contextStatus { flex: 1 1 400px; margin: 3px 0; font-size: .71rem; }
+.contextBar > .setupDisclosure { flex: 0 1 auto; margin: 0; min-width: 0; }
+.contextBar > .setupDisclosure > summary { white-space: normal; font-size: .76rem; }
+.contextBar:has(> .setupDisclosure[open]) > .setupDisclosure { flex-basis: 100%; }
+.contextBar .setupDisclosure > .card { margin: 0 0 10px; }
+.panel { padding-top: 8px; }
+.toolHeading { padding-bottom: 6px; margin-bottom: 6px; }
+.toolHeading h3 { margin: 0; font-size: 1.1rem; }
+.panel > p { font-size: .82rem; line-height: 1.5; margin: 4px 0; }
+.panel > section > p:first-child { font-size: .82rem; line-height: 1.5; margin: 4px 0; }
+.panel .field { margin: 8px 0; gap: 5px; }
+.field input, .field select { min-height: 44px; }
+@media (max-width: 700px) {
+  .overview { padding: 10px 12px; }
+  .storageBar { padding: 6px 12px; }
+  .storageBar .localNote, .storageBar .saved, .storageBar .warning { flex-basis: 100%; }
+  .contextBar { padding: 0 12px; gap: 0; }
+  .contextBar > .contextStatus, .contextBar > .setupDisclosure { flex-basis: 100%; }
+  .contextBar > .setupDisclosure > summary { font-size: .8rem; }
+  .panel { padding-top: 12px; }
+}
+.overview > div:first-child { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 12px; min-width: 0; }
+.overview > div:first-child > p { margin: 0; }
+.panel .editor > p:first-child { font-size: .82rem; line-height: 1.5; margin: 0 0 4px; }
+@media (max-width: 700px) {
+  .overview > div:first-child { display: block; }
+  .overview > div:first-child > p { margin-top: 3px; }
+}
+
 @media print {
   :global(body[data-preparation-print="true"]) .root { visibility: hidden; }
   :global(body[data-preparation-print="true"]) .printReference,
