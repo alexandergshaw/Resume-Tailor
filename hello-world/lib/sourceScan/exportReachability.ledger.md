@@ -24,7 +24,7 @@ Current pinned values, as of the last entry in each section:
 | Assertion                                   | Pinned |
 | ------------------------------------------- | ------ |
 | `ALLOWED_UNREACHABLE_MODULES.length`        | 14     |
-| `UNWIRED_MODULES` (exact list of 5 files)   | 5      |
+| `UNWIRED_MODULES` (exact list of 6 files)   | 6      |
 | `ORPHAN_EXPORTS.length`                     | 65     |
 | `TEST_REFERENCED.length` (rule TR-1)        | 450    |
 | `UNUSED_IN_SHIPPING_MODULES.length`         | 515    |
@@ -63,7 +63,7 @@ pipeline. ONE entry added, none removed; same shape as predictionCorpus.js.
 
 ---
 
-## 2. UNWIRED_MODULES (pinned at 5, exact file list)
+## 2. UNWIRED_MODULES (pinned at 6, exact file list)
 
 Findings, not allow-listed: modules built and tested but not yet imported by
 anything that ships. Wiring one up (or removing it) fails the exact module
@@ -243,6 +243,22 @@ CopilotClient.js, PracticeClient.js), and the store module was already out of se
 Wave B reconcile. The computed unreachable set stays 19 = ALLOWED 14 + UNWIRED 5. THIS change
 does move one symbol bucket: TR-1 452 -> 451 (-1, section 4), total 517 -> 516 (section 5),
 ORPHAN_EXPORTS unmoved at 65 (section 3).
+
+5 -> 6 (N177 package foundation): ONE entry added, none removed, by name:
+lib/document/resumeFormattingPackage.js. The Node DOCX package validator has
+no shipping caller; its package tests are not a production importer. The
+accepted N177 full-cleanup plan names lib/document/resumeFormattingCommit.js
+and app/api/resume-formatting/route.js as the missing service/route chain.
+This is an unfinished-feature finding, not ALLOWED sweep infrastructure.
+The exact census changes from 19 to 20 = ALLOWED 14 + UNWIRED 6; the original
+five findings and ALLOWED 14 are unchanged. As a whole-module finding it does
+not change the symbol buckets: ORPHAN 65, TR-1 450, total 515 remain pinned.
+The prior full verification failure remains a failure; this amendment needs
+fresh verification against its own candidate and does not relabel that run.
+Remove the finding when a genuine shipping caller reaches the validator.
+N177 still owns the formatting-check button, current-editor cleanup,
+reversible saved before/cleanup versions, pinned exports and candidate-bound
+live verification; foundation publication establishes none of those flows.
 ```
 
 ---

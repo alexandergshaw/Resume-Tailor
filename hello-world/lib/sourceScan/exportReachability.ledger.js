@@ -264,6 +264,10 @@ export const UNWIRED_MODULES = [
     file: "lib/tracking/digestRoleScreen.js",
     finding: "the digest name screen (isWithheldDigestLine/withholdDigestLines), proven against digestRoleScreen.test.js including the 800-real-name superset property. Its shipping call sites -- DigestPanel.js's three presentation paths, applicationDigest.js's digestSummaryLine -- are N49's plan.r4.md section 8.4 step, not yet built",
   },
+  {
+    file: "lib/document/resumeFormattingPackage.js",
+    finding: "N177 foundation only: the Node DOCX package validator and its independent package tests precede the accepted full-cleanup plan's strict lib/document/resumeFormattingCommit.js service and app/api/resume-formatting/route.js import chain. No shipping caller reaches this module yet; the formatting-check button, current-editor cleanup, persisted before/cleanup versions, pinned export and live verification remain pending N177 obligations. This is an unfinished-feature finding, not sweep infrastructure or a delivered user feature. Remove this entry when a genuine shipping caller reaches the validator through that chain; a test importer does not satisfy the removal trigger.",
+  },
 ];
 
 // ---------------------------------------------------------------------------
